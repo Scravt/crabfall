@@ -54,9 +54,9 @@ En el repo del usuario:
 Cada rebanada funciona de punta a punta antes de pasar a la siguiente.
 
 **0. Fundaciones**
-- [ ] Cargo workspace con `lt-core`, `lt-cli` y `lab-server`
-- [ ] Spike: cliente sobre `hyper` con timings por fase (DNS, connect, TLS, TTFB) → ADR-003
-- [ ] Spike: scheduler de tasa constante que mide desde el instante planificado
+- [x] Cargo workspace con `lt-core`, `lt-cli` y `lab-server`
+- [x] Spike: cliente sobre `hyper` con timings por fase (DNS, connect, TTFB, receiving) → ADR-003 (TLS pendiente)
+- [x] Spike: scheduler de tasa constante que mide desde el instante planificado → ADR-003
 - [ ] Elegir crate de YAML con línea y columna en los errores
 - Listo cuando: 10.000 requests contra `lab-server` dan percentiles parecidos a `oha`, y la tasa se mantiene aunque el servidor se frene.
 
@@ -108,10 +108,12 @@ Más reglas de diagnóstico, reporte HTML, comparación contra una corrida base,
 | Fecha | Decisión | Dónde |
 | --- | --- | --- |
 | 7 oct 2026 | Claude diseña y analiza; nunca dispara carga | Principio 1 |
-| 7 oct 2026 | `hyper` directo en lugar de `reqwest`, a confirmar con el spike | ADR-003 (pendiente) |
+| 7 oct 2026 | `hyper` directo en lugar de `reqwest` (confirmado con el spike el 12 oct) | ADR-003 |
 | 7 oct 2026 | Diagnóstico en dos capas: reglas en el motor, hipótesis en Claude | Principio 3 |
 | 10 oct 2026 | Claude puede hacer smoke checks solo contra loopback | ADR-004 |
 | 10 oct 2026 | Formato de escenario YAML declarativo, aprobación derivada | ADR-002 |
 | 12 oct 2026 | Claude-first: CLI con JSON + plugin de Claude Code; MCP e importadores después | ADR-001 |
 | 12 oct 2026 | Trabajo por rebanadas verticales, sin fechas | Este documento |
 | 12 oct 2026 | Toolchain Rust MSVC en Windows | — |
+| 12 oct 2026 | Scheduler de modelo abierto: latencia desde el instante planificado, iteraciones descartadas cuando no hay VU | ADR-003 |
+| 12 oct 2026 | En Windows se sube la resolución del timer a 1 ms | ADR-003 |
