@@ -61,7 +61,7 @@ Es un campo opcional y libre: `file`, `symbol` y `operation_id`. El motor no lo 
 
 ### 7. Estricto con lo desconocido
 
-Un campo desconocido es un **error**, no un aviso, porque atrapa errores de tipeo de humanos y alucinaciones de LLM. Para extensiones de terceros se permiten campos con prefijo `x-`, que el motor ignora.
+Un campo desconocido es un **error**, no un aviso, porque atrapa errores de tipeo de humanos y alucinaciones de LLM. Para extensiones de terceros se van a permitir campos con prefijo `x-`, que el motor ignora (**todavía no implementado**: `serde` no permite aceptarlos sin perder la ubicación de los errores; hay que resolverlo con un paso previo sobre el YAML).
 
 ### 8. `todo` explícito para lo que falta
 
@@ -283,10 +283,10 @@ load:
 | flow | `weight`, `steps` | `weight` opcional, por defecto `1` |
 | defaults | `headers`, `timeout` | Solo para pasos de `flows`, no de `setup` |
 | paso | `name`, `request`, `checks`, `extract`, `tags`, `source` | `name` único en todo el escenario |
-| request | `method`, `url`, `headers`, `query`, `timeout` + uno de `json` / `form` / `body` | `url` relativa a `base_url` o absoluta; los hosts se validan contra `allowed_hosts` |
+| request | `method`, `url`, `headers`, `query`, `timeout` + uno de `json` / `form` / `body` | `timeout` por defecto 30s. `url` relativa a `base_url` o absoluta; los hosts se validan contra `allowed_hosts` |
 | check | `status`, `status_in`, `json` + (`exists` / `equals` / `matches`), `header` + (`equals` / `contains` / `matches`), `body` + `matches` | No bloqueantes: cuentan para `checks.pass_rate` |
 | extract | `{ json: <path> }`, `{ header: <nombre> }`, `{ regex: <patrón> }` | En `setup`: global de solo lectura. En flows: por iteración |
-| load | `constant_vus` (`vus`, `duration`), `constant_rate` (`rate`, `duration`, `max_vus`), `ramping_rate` (`start_rate`, `stages`, `max_vus`), `breakpoint` (futuro) | Todos aceptan `graceful_stop` |
+| load | `executor` + los campos de ese executor: `constant_rate` (`rate`, `duration`, `max_vus`); más adelante `constant_vus` (`vus`, `duration`), `ramping_rate` (`start_rate`, `stages`, `max_vus`), `breakpoint` | Todos aceptan `graceful_stop` (por defecto 30s). Es un bloque plano: qué campos aplican a cada executor lo valida `lt validate` |
 | threshold | `metric`, `step` o `tag` opcional, uno de `lt` / `lte` / `gt` / `gte` | Métricas: `http.latency.pXX`, `http.error_rate`, `http.rps`, `checks.pass_rate` |
 
 Unidades: duraciones `500ms`, `30s`, `2m`; tasas `50/s`, `3000/m`; porcentajes `1%`.

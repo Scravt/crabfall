@@ -61,10 +61,11 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente.
 - Listo cuando: 10.000 requests contra `lab-server` dan percentiles parecidos a `oha`, y la tasa se mantiene aunque el servidor se frene.
 
 **1. Primera corrida**
-- [ ] Modelo mínimo: un flow, pasos sin `extract`, executor `constant_rate`
-- [ ] `lt validate [--json]` con ruta exacta del error y `todo` pendientes
-- [ ] `lt run` → resumen en terminal y `results.json` con p50/p90/p95/p99 por paso
-- Listo cuando: corro una prueba real del trabajo con un YAML escrito a mano.
+- [x] Modelo mínimo: flows con peso, pasos sin `extract`, executor `constant_rate`, bodies `json`/`body`, HTTPS
+- [x] `lt validate [--json]` con ruta exacta del error y `todo` pendientes
+- [x] `lt run` → resumen en terminal y `results.json` con p50/p90/p95/p99 por paso
+- [x] Guarda interina hasta la rebanada 3: un destino que no es loopback exige terminal y tipear el host
+- Listo cuando: corro una prueba real del trabajo con un YAML escrito a mano. **Pendiente** (también verifica TLS contra un servidor real).
 
 **2. Claude diseña**
 - [ ] `lt check [--json]` según ADR-004
