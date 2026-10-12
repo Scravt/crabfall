@@ -47,6 +47,8 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Imprime el JSON Schema del escenario (para editores y agentes).
+    Schema,
     /// Smoke check: corre cada flow una vez, en serie, solo contra loopback. No necesita aprobación.
     Check {
         /// Nombre (busca en .loadtest/scenarios/) o ruta al archivo.
@@ -75,6 +77,11 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
     let code = match cli.command {
         Command::Validate { scenario, json } => cmd_validate(&scenario, json),
+        Command::Schema => {
+            let schema = lt_core::scenario::json_schema();
+            println!("{}", serde_json::to_string_pretty(&schema).unwrap());
+            exit::OK
+        }
         Command::Run {
             scenario,
             env,

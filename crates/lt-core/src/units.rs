@@ -101,6 +101,34 @@ macro_rules! serde_via_str {
 serde_via_str!(HumanDuration);
 serde_via_str!(Rate);
 
+impl schemars::JsonSchema for HumanDuration {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "Duration".into()
+    }
+
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "type": "string",
+            "pattern": "^[0-9]+(ms|s|m|h)$",
+            "description": "Entero + unidad: 500ms, 30s, 2m, 1h.",
+        })
+    }
+}
+
+impl schemars::JsonSchema for Rate {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "Rate".into()
+    }
+
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "type": "string",
+            "pattern": "^[0-9]+/(s|m)$",
+            "description": "Entero por segundo o por minuto: 50/s, 3000/m.",
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
