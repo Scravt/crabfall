@@ -35,6 +35,9 @@ pub struct Scenario {
     /// Headers y timeout que heredan todos los pasos de `flows` (no los de `setup`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub defaults: Option<Defaults>,
+    /// Pasos que corren una vez, en orden, antes de la carga (por ejemplo, login). Sus `extract` quedan como variables para todos los flows. Si alguno falla, la corrida se aborta.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub setup: Vec<Step>,
     /// Flujos de usuario. Cada iteración elige uno según su `weight` y ejecuta sus pasos en orden.
     pub flows: IndexMap<String, Flow>,
     /// Perfil de carga. La tasa se mide en iteraciones por segundo, no en requests.
@@ -80,6 +83,24 @@ pub struct Step {
     /// Dónde está el código que atiende este paso. Completalo siempre que lo conozcas: el diagnóstico lo usa para ir al código.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<Source>,
+    /// Valores de la respuesta que pasan a ser variables (`{{nombre}}`) para los pasos siguientes.
+    #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
+    pub extract: IndexMap<String, Extract>,
+}
+
+/// De dónde sale un valor extraído. Usá exactamente uno de los tres.
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Extract {
+    /// JSONPath simple sobre el body: `$.token`, `$.items[0].id`, `$['a-b']`. Conserva el tipo.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub json: Option<String>,
+    /// Nombre de un header de la respuesta.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub header: Option<String>,
+    /// Regex sobre el body: se toma el primer grupo de captura, o todo el match.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub regex: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]

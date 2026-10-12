@@ -43,6 +43,7 @@ pub struct Timings {
 #[derive(Debug)]
 pub struct Response {
     pub status: u16,
+    pub headers: hyper::HeaderMap,
     pub content_type: Option<String>,
     pub body: Bytes,
     pub timings: Timings,
@@ -59,6 +60,8 @@ pub enum FailureKind {
     Protocol,
     /// No se pudo armar el request (una plantilla sin valor, un header inválido).
     Template,
+    /// La respuesta llegó, pero un `extract` no encontró su valor.
+    Extract,
 }
 
 #[derive(Debug)]
@@ -156,6 +159,7 @@ impl Client {
         timings.ttfb = sent.elapsed();
 
         let status = response.status().as_u16();
+        let headers = response.headers().clone();
         let content_type = response
             .headers()
             .get(hyper::header::CONTENT_TYPE)
@@ -180,6 +184,7 @@ impl Client {
         }
         Ok(Response {
             status,
+            headers,
             content_type,
             body,
             timings,

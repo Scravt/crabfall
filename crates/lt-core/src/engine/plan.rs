@@ -21,6 +21,7 @@ use url::{Url, form_urlencoded};
 use super::http::{Body, Origin};
 use crate::{
     config::Environment,
+    extract::Extractor,
     scenario::{Defaults, LoadPlan, Scenario, Source, Step},
     template::{Scope, Template, ValueTemplate, to_text},
     units::HumanDuration,
@@ -46,6 +47,8 @@ pub struct Inputs {
 
 pub struct Plan {
     pub scenario: String,
+    /// Pasos que corren una vez antes de la carga.
+    pub setup: Vec<StepPlan>,
     pub flows: Vec<FlowPlan>,
     pub load: LoadPlan,
     /// Hosts a los que se va a conectar.
@@ -92,6 +95,8 @@ pub struct StepPlan {
     headers: Vec<(HeaderName, Template)>,
     pub body: BodyPlan,
     pub timeout: Duration,
+    /// Variables que salen de la respuesta.
+    pub extract: Vec<(String, Extractor)>,
 }
 
 impl StepPlan {
@@ -202,38 +207,56 @@ impl Plan {
         let mut vars: BTreeMap<String, Value> = scenario.vars.clone().into_iter().collect();
         vars.extend(env.vars.clone());
         vars.extend(inputs.vars.clone());
-        let known: BTreeSet<&str> = vars.keys().map(String::as_str).collect();
-
         let mut hosts = BTreeSet::new();
-        let mut flows = Vec::new();
-        let mut id = 0;
-        for (flow_name, flow) in &scenario.flows {
-            let mut steps = Vec::new();
-            for step in &flow.steps {
-                match build_step(
-                    id,
-                    flow_name,
-                    step,
-                    scenario.defaults.as_ref(),
-                    &base,
-                    &allowed,
-                ) {
+        // `id` indexa las métricas de los flows; `setup` lleva su propia numeración.
+        let mut flow_ids = 0;
+        let mut setup_ids = 0;
+        // Arma los pasos en orden; cada uno ve las variables globales y las extraídas antes.
+        let mut build_steps = |steps: &[Step],
+                               flow: &str,
+                               defaults: Option<&Defaults>,
+                               known: &mut BTreeSet<String>,
+                               id: &mut usize| {
+            let mut out = Vec::new();
+            for step in steps {
+                match build_step(*id, flow, step, defaults, &base, &allowed) {
                     Ok(plan) => {
-                        let problems = check_references(&plan, &known, &inputs.secrets);
+                        let problems = check_references(&plan, known, &inputs.secrets);
                         errors.extend(problems.into_iter().map(|p| format!("{}: {p}", step.name)));
+                        known.extend(plan.extract.iter().map(|(name, _)| name.clone()));
                         hosts.insert(plan.origin.host.clone());
-                        steps.push(plan);
+                        out.push(plan);
                     }
                     Err(e) => errors.push(format!("{}: {e}", step.name)),
                 }
-                id += 1;
+                *id += 1;
             }
-            flows.push(FlowPlan {
+            out
+        };
+
+        let mut after_setup: BTreeSet<String> = vars.keys().cloned().collect();
+        let setup = build_steps(
+            &scenario.setup,
+            "setup",
+            None,
+            &mut after_setup,
+            &mut setup_ids,
+        );
+        let flows: Vec<FlowPlan> = scenario
+            .flows
+            .iter()
+            .map(|(flow_name, flow)| FlowPlan {
                 name: flow_name.clone(),
                 weight: flow.weight,
-                steps,
-            });
-        }
+                steps: build_steps(
+                    &flow.steps,
+                    flow_name,
+                    scenario.defaults.as_ref(),
+                    &mut after_setup.clone(),
+                    &mut flow_ids,
+                ),
+            })
+            .collect();
 
         let secrets = inputs
             .secrets
@@ -242,6 +265,7 @@ impl Plan {
             .collect();
         let plan = Self {
             scenario: scenario.name.clone(),
+            setup,
             flows,
             load: scenario.load.plan(),
             hosts,
@@ -274,38 +298,39 @@ impl Plan {
             .collect();
         allowed.sort();
         allowed.dedup();
+        let step = |s: &StepPlan| {
+            let mut headers: Vec<(String, String)> = s
+                .headers
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.source().to_string()))
+                .collect();
+            headers.sort();
+            let body = match &s.body {
+                BodyPlan::None => Value::Null,
+                BodyPlan::Json { source, .. } => json!({ "json": source }),
+                BodyPlan::Text(t) => json!({ "text": t.source() }),
+            };
+            let extract: Vec<Value> = s
+                .extract
+                .iter()
+                .map(|(name, e)| json!([name, e.source()]))
+                .collect();
+            json!({
+                "name": s.name,
+                "method": s.method.as_str(),
+                "url": s.url(),
+                "headers": headers,
+                "body": body,
+                "timeout": d(s.timeout),
+                "tags": s.tags,
+                "extract": extract,
+            })
+        };
+        let setup: Vec<Value> = self.setup.iter().map(step).collect();
         let flows: Vec<Value> = self
             .flows
             .iter()
-            .map(|f| {
-                let steps: Vec<Value> = f
-                    .steps
-                    .iter()
-                    .map(|s| {
-                        let mut headers: Vec<(String, String)> = s
-                            .headers
-                            .iter()
-                            .map(|(k, v)| (k.to_string(), v.source().to_string()))
-                            .collect();
-                        headers.sort();
-                        let body = match &s.body {
-                            BodyPlan::None => Value::Null,
-                            BodyPlan::Json { source, .. } => json!({ "json": source }),
-                            BodyPlan::Text(t) => json!({ "text": t.source() }),
-                        };
-                        json!({
-                            "name": s.name,
-                            "method": s.method.as_str(),
-                            "url": s.url(),
-                            "headers": headers,
-                            "body": body,
-                            "timeout": d(s.timeout),
-                            "tags": s.tags,
-                        })
-                    })
-                    .collect();
-                json!({ "name": f.name, "weight": f.weight, "steps": steps })
-            })
+            .map(|f| json!({ "name": f.name, "weight": f.weight, "steps": f.steps.iter().map(step).collect::<Vec<_>>() }))
             .collect();
         json!({
             "scenario": self.scenario,
@@ -326,12 +351,19 @@ impl Plan {
                 "max_vus": max_vus,
                 "graceful_stop": d(graceful_stop),
             },
+            "setup": setup,
             "flows": flows,
         })
     }
 
+    /// Pasos de los flows (los que generan carga y tienen métricas).
     pub fn steps(&self) -> impl Iterator<Item = &StepPlan> {
         self.flows.iter().flat_map(|f| &f.steps)
+    }
+
+    /// `setup` y flows: todo lo que se envía.
+    pub fn all_steps(&self) -> impl Iterator<Item = &StepPlan> {
+        self.setup.iter().chain(self.steps())
     }
 
     /// Límites duros del entorno (ADR-004). `run` los exige; `check` no los necesita
@@ -371,15 +403,21 @@ impl Plan {
     }
 }
 
-/// Variables globales del plan más las locales de una iteración (de `extract`).
+/// Dónde se buscan las variables: iteración > `setup` > globales del plan.
 pub struct Vars<'a> {
     pub plan: &'a Plan,
+    /// Extraídas en `setup`.
+    pub setup: &'a HashMap<String, Value>,
+    /// Extraídas en esta iteración.
     pub locals: &'a HashMap<String, Value>,
 }
 
 impl Scope for Vars<'_> {
     fn var(&self, name: &str) -> Option<&Value> {
-        self.locals.get(name).or_else(|| self.plan.vars.get(name))
+        self.locals
+            .get(name)
+            .or_else(|| self.setup.get(name))
+            .or_else(|| self.plan.vars.get(name))
     }
 
     fn secret(&self, name: &str) -> Option<&str> {
@@ -390,7 +428,7 @@ impl Scope for Vars<'_> {
 /// Variables sin definir y secretos sin declarar o sin valor.
 fn check_references(
     step: &StepPlan,
-    known: &BTreeSet<&str>,
+    known: &BTreeSet<String>,
     secrets: &BTreeMap<String, Option<String>>,
 ) -> Vec<String> {
     let mut problems = BTreeSet::new();
@@ -398,7 +436,7 @@ fn check_references(
         for var in t.vars() {
             if !known.contains(var) {
                 problems.insert(format!(
-                    "`{{{{{var}}}}}` no está definida: agregala en `vars`, en el entorno o con --var"
+                    "`{{{{{var}}}}}` no está definida: agregala en `vars`, en el entorno o con --var, o extraéla en un paso anterior"
                 ));
             }
         }
@@ -434,6 +472,15 @@ fn build_step(
     allowed: &BTreeSet<String>,
 ) -> Result<StepPlan, String> {
     let r = &step.request;
+    let extract = step
+        .extract
+        .iter()
+        .map(|(name, spec)| {
+            Extractor::parse(spec)
+                .map(|e| (name.clone(), e))
+                .map_err(|e| format!("extract.{name}: {e}"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     let (origin_url, path, raw_query) = split_url(base, &r.url)?;
 
     let https = match origin_url.scheme() {
@@ -514,6 +561,7 @@ fn build_step(
         query,
         headers,
         body,
+        extract,
         timeout: r
             .timeout
             .or(defaults.and_then(|d| d.timeout))
@@ -600,6 +648,7 @@ mod tests {
             query: vec![QueryPart::Pair("q".into(), Template::literal("x y&z"))],
             headers: vec![],
             body: BodyPlan::None,
+            extract: vec![],
             timeout: DEFAULT_TIMEOUT,
         };
         assert_eq!(step.target(&NoVars).unwrap(), "/a%20b/1?q=x+y%26z");

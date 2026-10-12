@@ -132,6 +132,15 @@ impl Collector {
         }
     }
 
+    /// La respuesta ya se registró con `record`; esto suma la falla del `extract`.
+    pub fn record_extract_failure(&mut self, step: usize, message: String) {
+        let s = &mut self.steps[step];
+        *s.failures.entry(FailureKind::Extract).or_default() += 1;
+        if s.error_samples.len() < 3 && !s.error_samples.contains(&message) {
+            s.error_samples.push(message);
+        }
+    }
+
     pub fn finish(self, plan: &Plan) -> Vec<StepResult> {
         plan.steps()
             .zip(self.steps)
@@ -217,8 +226,51 @@ pub struct Totals {
 #[derive(Debug, Serialize)]
 pub struct RunResult {
     pub duration_s: f64,
+    /// Por qué no se generó carga, si el `setup` falló.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub aborted: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub setup: Vec<SetupStep>,
     pub totals: Totals,
     pub scheduler_lag_ms: Option<Percentiles>,
     pub steps: Vec<StepResult>,
     pub warnings: Vec<String>,
+}
+
+/// Un paso de `setup`. No entra en las métricas de carga.
+#[derive(Debug, Serialize)]
+pub struct SetupStep {
+    pub name: String,
+    pub status: Option<u16>,
+    pub duration_ms: f64,
+    /// Nombres de las variables extraídas (sin sus valores).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub extracted: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+impl RunResult {
+    /// Corrida abortada antes de generar carga.
+    pub fn aborted(plan: &Plan, setup: Vec<SetupStep>, reason: String) -> Self {
+        Self {
+            duration_s: 0.0,
+            aborted: Some(reason),
+            setup,
+            totals: Totals {
+                planned: 0,
+                started: 0,
+                dropped: 0,
+                interrupted: 0,
+                requests: 0,
+                failed: 0,
+                non_2xx: 0,
+                iteration_rate: 0.0,
+                request_rate: 0.0,
+            },
+            scheduler_lag_ms: None,
+            steps: Collector::new(plan).finish(plan),
+            warnings: vec![],
+        }
+    }
 }

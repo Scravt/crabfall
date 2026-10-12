@@ -6,7 +6,10 @@ use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::scenario::{Executor, FORMAT_VERSION, Load, Scenario};
+use crate::{
+    extract::Extractor,
+    scenario::{Executor, FORMAT_VERSION, Load, Scenario, Step},
+};
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Issue {
@@ -168,6 +171,9 @@ fn check_rules(s: &Scenario, errors: &mut Vec<Issue>) {
     }
 
     let mut seen = HashSet::new();
+    for (i, step) in s.setup.iter().enumerate() {
+        check_step(step, &format!("setup[{i}]"), &mut seen, errors);
+    }
     for (flow_name, flow) in &s.flows {
         let flow_path = format!("flows.{flow_name}");
         if flow.weight == 0 {
@@ -183,57 +189,83 @@ fn check_rules(s: &Scenario, errors: &mut Vec<Issue>) {
             ));
         }
         for (i, step) in flow.steps.iter().enumerate() {
-            let path = format!("{flow_path}.steps[{i}]");
-            if !valid_name(&step.name) {
-                errors.push(Issue::at(
-                    format!("{path}.name"),
-                    "usá solo letras, números, `_`, `.` y `-`",
-                ));
-            } else if !seen.insert(step.name.as_str()) {
-                errors.push(Issue::at(
-                    format!("{path}.name"),
-                    format!(
-                        "`{}` está repetido: el nombre de cada paso tiene que ser único",
-                        step.name
-                    ),
-                ));
-            }
-            let r = &step.request;
-            if !METHODS.contains(&r.method.as_str()) {
-                errors.push(Issue::at(
-                    format!("{path}.request.method"),
-                    format!(
-                        "método `{}` no soportado (usá uno de {})",
-                        r.method,
-                        METHODS.join(", ")
-                    ),
-                ));
-            }
-            let url_ok = r.url.starts_with('/')
-                || r.url.starts_with("http://")
-                || r.url.starts_with("https://");
-            if !url_ok {
-                errors.push(Issue::at(
-                    format!("{path}.request.url"),
-                    "tiene que empezar con `/` (relativa a base_url) o con http:// o https://",
-                ));
-            }
-            if r.json.is_some() && r.body.is_some() {
-                errors.push(Issue::at(
-                    format!("{path}.request"),
-                    "usá `json` o `body`, no los dos",
-                ));
-            }
-            if r.timeout.is_some_and(|t| t.0.is_zero()) {
-                errors.push(Issue::at(
-                    format!("{path}.request.timeout"),
-                    "tiene que ser mayor que 0",
-                ));
-            }
+            check_step(step, &format!("{flow_path}.steps[{i}]"), &mut seen, errors);
         }
     }
 
     check_load(&s.load, errors);
+}
+
+fn check_step<'a>(
+    step: &'a Step,
+    path: &str,
+    seen: &mut HashSet<&'a str>,
+    errors: &mut Vec<Issue>,
+) {
+    if !valid_name(&step.name) {
+        errors.push(Issue::at(
+            format!("{path}.name"),
+            "usá solo letras, números, `_`, `.` y `-`",
+        ));
+    } else if !seen.insert(step.name.as_str()) {
+        errors.push(Issue::at(
+            format!("{path}.name"),
+            format!(
+                "`{}` está repetido: el nombre de cada paso tiene que ser único",
+                step.name
+            ),
+        ));
+    }
+    let r = &step.request;
+    if !METHODS.contains(&r.method.as_str()) {
+        errors.push(Issue::at(
+            format!("{path}.request.method"),
+            format!(
+                "método `{}` no soportado (usá uno de {})",
+                r.method,
+                METHODS.join(", ")
+            ),
+        ));
+    }
+    let url_ok =
+        r.url.starts_with('/') || r.url.starts_with("http://") || r.url.starts_with("https://");
+    if !url_ok {
+        errors.push(Issue::at(
+            format!("{path}.request.url"),
+            "tiene que empezar con `/` (relativa a base_url) o con http:// o https://",
+        ));
+    }
+    if r.json.is_some() && r.body.is_some() {
+        errors.push(Issue::at(
+            format!("{path}.request"),
+            "usá `json` o `body`, no los dos",
+        ));
+    }
+    if r.timeout.is_some_and(|t| t.0.is_zero()) {
+        errors.push(Issue::at(
+            format!("{path}.request.timeout"),
+            "tiene que ser mayor que 0",
+        ));
+    }
+    for (name, spec) in &step.extract {
+        if !valid_var_name(name) {
+            errors.push(Issue::at(
+                format!("{path}.extract.{name}"),
+                "el nombre de la variable usa letras, números y `_`, y no empieza con un número",
+            ));
+        }
+        if let Err(e) = Extractor::parse(spec) {
+            errors.push(Issue::at(format!("{path}.extract.{name}"), e));
+        }
+    }
+}
+
+fn valid_var_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 fn check_load(load: &Load, errors: &mut Vec<Issue>) {

@@ -97,7 +97,11 @@ pub fn cmd_run(target: &crate::Target, as_json: bool) -> u8 {
     match saved {
         Ok(file) => {
             eprintln!("resultados: {}", display(&file));
-            exit::OK
+            if result.aborted.is_some() {
+                exit::FAILED
+            } else {
+                exit::OK
+            }
         }
         Err(e) => {
             eprintln!("✗ no se pudieron guardar los resultados: {e}");
@@ -171,6 +175,22 @@ fn save(project: &Project, run_id: &str, doc: &Value) -> std::io::Result<std::pa
 fn print_summary(r: &RunResult) {
     let t = &r.totals;
     println!();
+    for s in &r.setup {
+        let status = s.status.map_or("-".into(), |c| c.to_string());
+        let extracted = if s.extracted.is_empty() {
+            String::new()
+        } else {
+            format!("  → {}", s.extracted.join(", "))
+        };
+        println!(
+            "setup  {}  {status}  {} ms{extracted}",
+            s.name, s.duration_ms
+        );
+    }
+    if let Some(reason) = &r.aborted {
+        println!("✗ {reason}. No se generó carga.");
+        return;
+    }
     println!(
         "iteraciones  planificadas {}  iniciadas {}  descartadas {}  interrumpidas {}  ({}/s)",
         t.planned, t.started, t.dropped, t.interrupted, t.iteration_rate

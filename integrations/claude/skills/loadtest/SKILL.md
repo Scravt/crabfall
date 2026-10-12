@@ -61,7 +61,18 @@ Podés usar libremente: `lt validate`, `lt check` (solo contra loopback), `lt sc
    - Si no conocés un valor, escribí `{ todo: "qué hace falta" }`. No inventes IDs ni credenciales.
    - **Variables:** `vars:` en la raíz y `{{nombre}}` en `url`, `query`, `headers` y bodies. Si un valor JSON es exactamente `"{{x}}"`, conserva el tipo (número, booleano). Dinámicos: `{{$uuid}}`, `{{$timestamp}}`, `{{$randomInt(1,100)}}`. Credenciales: `{{env.NOMBRE}}`, declarando `NOMBRE` en `secrets:` de `config.yaml` (el valor sale del entorno o de `.env`; nunca lo escribas en el escenario). El host de una URL no puede tener variables.
    - **`defaults:`** `headers` y `timeout` comunes a todos los pasos de `flows`.
-   - **Todavía no soportado:** `setup`, `extract` (encadenar login → token), checks, thresholds y otros executors. Si el flujo los necesita, usá valores fijos (un token de desarrollo, un ID existente) y avisale a la persona.
+   - **Encadenar requests:** `setup:` (lista de pasos en la raíz) corre una vez antes de la carga; usalo para el login. `extract:` en un paso saca valores de la respuesta para los pasos siguientes:
+     ```yaml
+     setup:
+       - name: login
+         request: { method: POST, url: /auth/login, json: { user: "{{env.LT_USER}}", password: "{{env.LT_PASSWORD}}" } }
+         extract:
+           token: { json: $.access_token }      # también { header: location } o { regex: "id=(\d+)" }
+     defaults:
+       headers: { Authorization: "Bearer {{token}}" }
+     ```
+     Lo extraído en `setup` vale para todos los flows; lo extraído en un flow, solo para los pasos siguientes de esa iteración. Si el `setup` falla, la corrida se aborta; si un `extract` falla, se corta esa iteración.
+   - **Todavía no soportado:** checks, thresholds y otros executors.
 4. **Validá:** `lt validate <nombre> --json`. Corregí hasta que `valid` sea `true`. Cada error trae `path`, `line` y `message`.
 5. **Verificá:** `lt check <nombre> --json` corre cada flow una vez, en serie. Solo funciona si el entorno apunta a la máquina local; si no, saltealo y decilo. Revisá `status` y `body` de cada paso: un 404 suele ser un ID inexistente, un 401 la auth y un 400 el body.
 6. **Entregá** un resumen corto (flows y pesos, tasa, duración, requests/s máximos, pasos que escriben) y los comandos exactos para la persona:

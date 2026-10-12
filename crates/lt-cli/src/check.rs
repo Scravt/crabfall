@@ -62,6 +62,14 @@ pub fn cmd_check(target: &crate::Target, as_json: bool) -> u8 {
                 "{mark} {label:<width$}  {} {}  {outcome}  {} ms",
                 s.method, s.url, s.duration_ms
             );
+            for (name, value) in &s.extracted {
+                println!("    {name} = {value}");
+            }
+            if let Some(f) = &s.failure
+                && s.status.is_some()
+            {
+                println!("    {}", f.message);
+            }
             if !s.ok
                 && let Some(body) = &s.body
             {
