@@ -30,7 +30,11 @@ pub struct OsKeyring;
 
 impl OsKeyring {
     fn entry() -> Result<keyring::Entry, String> {
-        keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER).map_err(|e| format!("keyring: {e}"))
+        Self::entry_for(KEYRING_SERVICE)
+    }
+
+    fn entry_for(service: &str) -> Result<keyring::Entry, String> {
+        keyring::Entry::new(service, KEYRING_USER).map_err(|e| format!("keyring: {e}"))
     }
 }
 
@@ -221,4 +225,34 @@ fn from_hex(s: &str) -> Option<Vec<u8>> {
         .step_by(2)
         .map(|i| u8::from_str_radix(s.get(i..i + 2)?, 16).ok())
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Usa el keyring real con un servicio aparte y lo borra al terminar.
+    /// `cargo test -p lt-core -- --ignored os_keyring`
+    #[test]
+    #[ignore = "toca el keyring del sistema"]
+    fn os_keyring_roundtrip() {
+        let entry = OsKeyring::entry_for("lt-loadtest-test").unwrap();
+        let _ = entry.delete_credential();
+        assert!(matches!(entry.get_password(), Err(keyring::Error::NoEntry)));
+
+        let key = to_hex(&[7u8; 32]);
+        entry.set_password(&key).unwrap();
+        assert_eq!(
+            from_hex(&entry.get_password().unwrap()),
+            Some(vec![7u8; 32])
+        );
+        entry.delete_credential().unwrap();
+    }
+
+    #[test]
+    fn hex_roundtrip() {
+        assert_eq!(from_hex(&to_hex(&[0, 15, 255])), Some(vec![0, 15, 255]));
+        assert_eq!(from_hex("abc"), None);
+        assert_eq!(from_hex("zz"), None);
+    }
 }

@@ -1,7 +1,7 @@
 //! `lt run`: ejecuta un escenario y guarda los resultados en `.loadtest/runs/<id>/`.
 
 use std::{
-    io::{BufRead, IsTerminal, Write},
+    io::IsTerminal,
     path::Path,
     sync::{Arc, atomic::Ordering::Relaxed},
     time::{Duration, Instant},
@@ -56,9 +56,13 @@ pub fn cmd_run(arg: &str, env_name: Option<&str>, as_json: bool) -> u8 {
         plan.max_request_rate
     );
 
-    if !plan.loopback_only() && !confirm_target(&plan) {
+    let Ok(approval) = crate::approve::verify_for_run(&project, &plan, &env, &env_name) else {
         return exit::REFUSED;
-    }
+    };
+    eprintln!(
+        "  aprobado por {} el {}",
+        approval.approved_by, approval.approved_at
+    );
 
     timer::high_resolution();
     let started_at = jiff::Zoned::now();
@@ -77,7 +81,12 @@ pub fn cmd_run(arg: &str, env_name: Option<&str>, as_json: bool) -> u8 {
     });
 
     let run_id = started_at.strftime("%Y%m%d-%H%M%S").to_string();
-    let doc = results_document(&run_id, &started_at, &path, &env_name, &plan, &result);
+    let mut doc = results_document(&run_id, &started_at, &path, &env_name, &plan, &result);
+    doc["approval"] = json!({
+        "hash": approval.hash,
+        "approved_by": approval.approved_by,
+        "approved_at": approval.approved_at,
+    });
     let saved = save(&project, &run_id, &doc);
 
     if as_json {
@@ -94,33 +103,6 @@ pub fn cmd_run(arg: &str, env_name: Option<&str>, as_json: bool) -> u8 {
             eprintln!("✗ no se pudieron guardar los resultados: {e}");
             exit::RUNTIME
         }
-    }
-}
-
-/// Guarda interina hasta la rebanada 3 (ADR-004): si el destino no es loopback,
-/// una persona tiene que tipear el host en una terminal interactiva.
-fn confirm_target(plan: &Plan) -> bool {
-    let target = plan
-        .hosts
-        .iter()
-        .find(|h| !engine::plan::is_loopback(h))
-        .expect("hay al menos un host que no es loopback");
-    if !(std::io::stdin().is_terminal() && std::io::stderr().is_terminal()) {
-        eprintln!(
-            "✗ el destino `{target}` no es loopback y no hay una terminal interactiva.\n  \
-             La carga contra hosts remotos la confirma una persona (ADR-004)."
-        );
-        return false;
-    }
-    eprint!("Escribí el host destino para confirmar: ");
-    std::io::stderr().flush().ok();
-    let mut typed = String::new();
-    std::io::stdin().lock().read_line(&mut typed).ok();
-    if typed.trim().eq_ignore_ascii_case(target) {
-        true
-    } else {
-        eprintln!("✗ no coincide con `{target}`: no se ejecuta nada.");
-        false
     }
 }
 
@@ -178,10 +160,7 @@ fn results_document(
 }
 
 fn save(project: &Project, run_id: &str, doc: &Value) -> std::io::Result<std::path::PathBuf> {
-    let gitignore = project.dir.join(".gitignore");
-    if !gitignore.exists() {
-        std::fs::write(&gitignore, "runs/\napprovals/\n")?;
-    }
+    project.ensure_gitignore()?;
     let dir = project.runs_dir().join(run_id);
     std::fs::create_dir_all(&dir)?;
     let file = dir.join("results.json");
