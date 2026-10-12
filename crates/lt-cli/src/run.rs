@@ -11,7 +11,6 @@ use lt_core::{
     engine::{self, Progress, plan::Plan},
     metrics::RunResult,
     project::Project,
-    scenario::LoadPlan,
     timer,
 };
 use serde_json::{Value, json};
@@ -42,19 +41,10 @@ pub fn cmd_run(target: &crate::Target, as_json: bool) -> u8 {
     }
     let plan = Arc::new(plan);
 
-    let LoadPlan::ConstantRate {
-        rate,
-        duration,
-        max_vus,
-        graceful_stop,
-    } = plan.load;
     let hosts: Vec<&str> = plan.hosts.iter().map(String::as_str).collect();
     eprintln!("{} → {env_name} ({})", plan.scenario, hosts.join(", "));
-    eprintln!(
-        "  constant_rate {rate} durante {}, max_vus {max_vus} · hasta {:.1} req/s",
-        lt_core::units::HumanDuration(duration),
-        plan.max_request_rate
-    );
+    eprintln!("  {} · {}", plan.load.describe(), plan.rate_summary());
+    let (duration, graceful_stop) = (plan.load.duration(), plan.load.graceful_stop());
 
     let Ok(approval) = crate::approve::verify_for_run(&project, &plan, &env, &env_name) else {
         return exit::REFUSED;
@@ -134,12 +124,8 @@ fn results_document(
     plan: &Plan,
     result: &RunResult,
 ) -> Value {
-    let LoadPlan::ConstantRate {
-        rate,
-        duration,
-        max_vus,
-        graceful_stop,
-    } = plan.load;
+    let mut load = plan.load.canonical();
+    load["max_request_rate"] = json!(plan.max_request_rate);
     let mut doc = json!({
         "format": JSON_FORMAT,
         "run_id": run_id,
@@ -147,14 +133,7 @@ fn results_document(
         "scenario_file": display(path),
         "environment": env_name,
         "started_at": started_at.timestamp().to_string(),
-        "load": {
-            "executor": "constant_rate",
-            "rate": rate.to_string(),
-            "duration": lt_core::units::HumanDuration(duration).to_string(),
-            "max_vus": max_vus,
-            "graceful_stop": lt_core::units::HumanDuration(graceful_stop).to_string(),
-            "max_request_rate": plan.max_request_rate,
-        },
+        "load": load,
     });
     let Value::Object(result) = serde_json::to_value(result).unwrap() else {
         unreachable!()

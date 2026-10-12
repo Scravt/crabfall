@@ -7,7 +7,6 @@ use lt_core::{
     config::Environment,
     engine::plan::{Plan, is_loopback},
     project::Project,
-    scenario::LoadPlan,
     units::HumanDuration,
 };
 
@@ -163,14 +162,8 @@ enum Change {
 }
 
 fn print_summary(plan: &Plan, env: &Environment, env_name: &str, change: &Change) {
-    let LoadPlan::ConstantRate {
-        rate,
-        duration,
-        max_vus,
-        graceful_stop,
-    } = plan.load;
     let hosts: Vec<&str> = plan.hosts.iter().map(String::as_str).collect();
-    let iterations = (rate.per_second() * duration.as_secs_f64()).floor();
+    let (duration, graceful_stop) = (plan.load.duration(), plan.load.graceful_stop());
     let status = match change {
         Change::First => "primera aprobación",
         Change::Same => "sin cambios desde la última aprobación",
@@ -179,11 +172,11 @@ fn print_summary(plan: &Plan, env: &Environment, env_name: &str, change: &Change
 
     eprintln!("Escenario   {}  ({status})", plan.scenario);
     eprintln!("Entorno     {env_name} → {}", hosts.join(", "));
-    eprintln!(
-        "Carga       constant_rate {rate} durante {} (≈{iterations} iteraciones), max_vus {max_vus}",
-        HumanDuration(duration)
-    );
-    eprintln!("            hasta {:.1} requests/s", plan.max_request_rate);
+    eprintln!("Carga       {}", plan.load.describe());
+    if let Some(n) = plan.load.planned_iterations() {
+        eprintln!("            ≈{n} iteraciones");
+    }
+    eprintln!("            {}", plan.rate_summary());
     eprintln!(
         "Duración    {} + {} de graceful stop",
         HumanDuration(duration),
