@@ -81,7 +81,7 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente.
 - Listo cuando: apruebo un escenario de `shop-api` en mi terminal, lo ejecuto, y cualquier edición posterior hace que `lt run` lo rechace mostrando el diff. **Pendiente de probar a mano:** la parte interactiva no se puede probar desde la shell de Claude, que no tiene terminal.
 
 **4. Escenario completo**
-- [ ] `setup`, `extract`, `defaults`, varios flows con `weight`
+- [x] `setup`, `extract` (json, header, regex), `defaults`, varios flows con `weight`
 - [x] Interpolación con preservación de tipo y placeholders dinámicos, `{{env.X}}` para `secrets`, `--var`, `defaults`
 - [ ] Executors `constant_vus` y `ramping_rate`; checks y thresholds
 - [ ] Códigos de salida: pasa, thresholds fallidos, error de configuración

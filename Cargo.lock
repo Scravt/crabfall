@@ -1290,6 +1290,7 @@ dependencies = [
  "indexmap",
  "keyring",
  "percent-encoding",
+ "regex",
  "rustls",
  "rustls-native-certs",
  "schemars",

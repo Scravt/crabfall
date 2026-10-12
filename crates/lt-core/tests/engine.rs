@@ -258,3 +258,167 @@ fn reports_undefined_variables_and_secrets() {
     );
     assert!(errors.contains("`EMPTY` no tiene valor"), "{errors}");
 }
+
+/// API mínima con login: POST /login → token; las demás rutas exigen `Bearer abc`.
+async fn auth_server() -> String {
+    use axum::{
+        http::{HeaderMap, StatusCode},
+        routing::post,
+    };
+    fn authorized(h: &HeaderMap) -> bool {
+        h.get("authorization").is_some_and(|v| v == "Bearer abc")
+    }
+    let app = Router::new()
+        .route(
+            "/login",
+            post(|Json(body): Json<Value>| async move {
+                if body["password"] == "ok" {
+                    (StatusCode::OK, Json(json!({ "data": { "token": "abc" } })))
+                } else {
+                    (StatusCode::UNAUTHORIZED, Json(json!({ "error": "no" })))
+                }
+            }),
+        )
+        .route(
+            "/orders",
+            post(|h: HeaderMap| async move {
+                if !authorized(&h) {
+                    return (
+                        StatusCode::UNAUTHORIZED,
+                        [("location", "")],
+                        Json(json!({})),
+                    );
+                }
+                (
+                    StatusCode::CREATED,
+                    [("location", "/orders/5")],
+                    Json(json!({ "id": 5 })),
+                )
+            }),
+        )
+        .route(
+            "/orders/{id}",
+            get(
+                |h: HeaderMap, axum::extract::Path(id): axum::extract::Path<u32>| async move {
+                    match (authorized(&h), id) {
+                        (false, _) => StatusCode::UNAUTHORIZED,
+                        (true, 5) => StatusCode::OK,
+                        _ => StatusCode::NOT_FOUND,
+                    }
+                },
+            ),
+        );
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    format!("http://127.0.0.1:{}", addr.port())
+}
+
+fn chain_scenario(password: &str, order_path: &str) -> lt_core::scenario::Scenario {
+    let yaml = format!(
+        "version: 1
+name: chain
+setup:
+  - name: login
+    request: {{ method: POST, url: /login, json: {{ password: {password} }} }}
+    extract:
+      token: {{ json: $.data.token }}
+defaults:
+  headers: {{ Authorization: \"Bearer {{{{token}}}}\" }}
+flows:
+  buy:
+    steps:
+      - name: create_order
+        request: {{ method: POST, url: /orders }}
+        extract:
+          order_id: {{ json: {order_path} }}
+          location: {{ header: location }}
+      - name: get_order
+        request: {{ method: GET, url: \"/orders/{{{{order_id}}}}\" }}
+load:
+  executor: constant_rate
+  rate: 20/s
+  duration: 1s
+  max_vus: 10
+"
+    );
+    parse_scenario(&yaml).unwrap_or_else(|r| panic!("{r:?}"))
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn setup_and_extract_chain_requests() {
+    let base = auth_server().await;
+    let plan = Plan::build(
+        &chain_scenario("ok", "$.id"),
+        &environment(&base),
+        &Default::default(),
+    )
+    .unwrap();
+
+    let check = lt_core::check::check(&plan).await.unwrap();
+    assert!(check.ok, "{check:#?}");
+    assert_eq!(check.steps[0].extracted["token"], "abc");
+    assert_eq!(check.steps[1].extracted["order_id"], "5");
+    assert!(check.steps[2].url.ends_with("/orders/5"));
+
+    let r = engine::run(Arc::new(plan), Arc::new(Progress::default())).await;
+    assert!(r.aborted.is_none());
+    assert_eq!(r.setup[0].extracted, ["token"]);
+    assert_eq!(r.totals.requests, 40);
+    assert_eq!(r.totals.failed + r.totals.non_2xx, 0, "{:#?}", r.steps);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn failed_setup_aborts_without_load() {
+    let base = auth_server().await;
+    let plan = Plan::build(
+        &chain_scenario("mal", "$.id"),
+        &environment(&base),
+        &Default::default(),
+    )
+    .unwrap();
+    let r = engine::run(Arc::new(plan), Arc::new(Progress::default())).await;
+    assert!(
+        r.aborted.as_deref().unwrap().contains("respondió 401"),
+        "{:?}",
+        r.aborted
+    );
+    assert_eq!(r.totals.requests, 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn failed_extract_stops_the_iteration() {
+    let base = auth_server().await;
+    let plan = Plan::build(
+        &chain_scenario("ok", "$.missing"),
+        &environment(&base),
+        &Default::default(),
+    )
+    .unwrap();
+    let r = engine::run(Arc::new(plan), Arc::new(Progress::default())).await;
+    let create = &r.steps[0];
+    assert_eq!(create.failures.get(&FailureKind::Extract), Some(&20));
+    assert!(create.error_samples[0].contains("$.missing no existe"));
+    assert_eq!(r.steps[1].requests, 0);
+}
+
+#[test]
+fn undefined_extract_variable_is_reported() {
+    // `order_id` se usa antes de extraerse.
+    let s = chain_scenario("ok", "$.id");
+    let mut yaml = serde_json::to_value(&s).unwrap();
+    let steps = yaml["flows"]["buy"]["steps"].as_array_mut().unwrap();
+    steps.swap(0, 1);
+    let swapped: lt_core::scenario::Scenario = serde_json::from_value(yaml).unwrap();
+    let errors = Plan::build(
+        &swapped,
+        &environment("http://127.0.0.1:1"),
+        &Default::default(),
+    )
+    .err()
+    .unwrap();
+    assert!(
+        errors[0].contains("get_order") && errors[0].contains("order_id"),
+        "{errors:?}"
+    );
+}

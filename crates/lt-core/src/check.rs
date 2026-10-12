@@ -9,7 +9,7 @@ use serde_json::Value;
 use crate::engine::{
     http::{Client, FailureKind},
     plan::{Plan, StepPlan, Vars},
-    send_step,
+    run_step,
 };
 
 /// Tope total de requests de un check.
@@ -38,6 +38,9 @@ pub struct CheckStep {
     pub duration_ms: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub failure: Option<Failure>,
+    /// Variables extraídas (valores recortados).
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub extracted: std::collections::BTreeMap<String, String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -55,7 +58,7 @@ pub struct Failure {
 /// Verifica que todos los hosts del plan resuelvan solo a direcciones de loopback.
 pub async fn ensure_loopback(plan: &Plan) -> Result<(), String> {
     let mut checked = std::collections::BTreeSet::new();
-    for step in plan.steps() {
+    for step in plan.all_steps() {
         let o = &step.origin;
         if !checked.insert((&o.host, o.port)) {
             continue;
@@ -81,16 +84,32 @@ pub async fn check(plan: &Plan) -> Result<CheckResult, String> {
     let mut steps = Vec::new();
     let mut skipped = Vec::new();
 
+    // setup: una vez, en orden; si falla, no tiene sentido seguir.
+    let mut setup_vars = HashMap::new();
+    let mut setup_failed = false;
+    for step in &plan.setup {
+        if setup_failed {
+            skipped.push(step.name.clone());
+            continue;
+        }
+        let (result, extracted) =
+            check_step(&client, plan, step, &setup_vars, &HashMap::new()).await;
+        setup_failed = !result.ok;
+        setup_vars.extend(extracted);
+        steps.push(result);
+    }
+
     for flow in &plan.flows {
-        let locals = HashMap::new();
-        let mut flow_failed = false;
+        let mut locals = HashMap::new();
+        let mut flow_failed = setup_failed;
         for step in &flow.steps {
             if flow_failed || steps.len() >= MAX_REQUESTS {
                 skipped.push(step.name.clone());
                 continue;
             }
-            let result = run_step(&client, plan, step, &locals).await;
+            let (result, extracted) = check_step(&client, plan, step, &setup_vars, &locals).await;
             flow_failed = result.failure.is_some();
+            locals.extend(extracted);
             steps.push(result);
         }
     }
@@ -102,28 +121,30 @@ pub async fn check(plan: &Plan) -> Result<CheckResult, String> {
     })
 }
 
-async fn run_step(
+async fn check_step(
     client: &Client,
     plan: &Plan,
     step: &StepPlan,
+    setup: &HashMap<String, Value>,
     locals: &HashMap<String, Value>,
-) -> CheckStep {
-    let request = step.request(&Vars { plan, locals });
+) -> (CheckStep, Vec<(String, Value)>) {
     // La URL resuelta ayuda más que la plantilla para depurar.
-    let url = match &request {
-        Ok(r) => {
+    let url = match step.target(&Vars {
+        plan,
+        setup,
+        locals,
+    }) {
+        Ok(target) => {
             let scheme = if step.origin.https { "https" } else { "http" };
             format!(
-                "{scheme}://{}:{}{}",
-                step.origin.host,
-                step.origin.port,
-                r.uri()
+                "{scheme}://{}:{}{target}",
+                step.origin.host, step.origin.port
             )
         }
         Err(_) => step.url(),
     };
     let start = Instant::now();
-    let result = send_step(client, step, request).await;
+    let run = run_step(client, plan, step, setup, locals).await;
     let duration_ms = (start.elapsed().as_secs_f64() * 1000.0 * 1000.0).round() / 1000.0;
 
     let mut out = CheckStep {
@@ -135,18 +156,29 @@ async fn run_step(
         status: None,
         duration_ms,
         failure: None,
+        extracted: run
+            .extracted
+            .iter()
+            .map(|(n, v)| (n.clone(), preview(v)))
+            .collect(),
         content_type: None,
         body: None,
         body_truncated: false,
     };
-    match result {
+    match run.result {
         Ok(r) => {
-            out.ok = (200..300).contains(&r.status);
+            out.ok = (200..300).contains(&r.status) && run.extract_error.is_none();
             out.status = Some(r.status);
             out.content_type = r.content_type;
             out.body_truncated = r.body.len() > MAX_BODY;
             let shown = &r.body[..r.body.len().min(MAX_BODY)];
             out.body = Some(String::from_utf8_lossy(shown).into_owned());
+            if let Some(e) = run.extract_error {
+                out.failure = Some(Failure {
+                    kind: FailureKind::Extract,
+                    message: e,
+                });
+            }
         }
         Err(f) => {
             out.failure = Some(Failure {
@@ -155,5 +187,14 @@ async fn run_step(
             })
         }
     }
-    out
+    (out, run.extracted)
+}
+
+/// Valor extraído, recortado: alcanza para ver que el `extract` funcionó.
+fn preview(v: &Value) -> String {
+    let text = crate::template::to_text(v);
+    match text.char_indices().nth(40) {
+        Some((cut, _)) => format!("{}…", &text[..cut]),
+        None => text,
+    }
 }

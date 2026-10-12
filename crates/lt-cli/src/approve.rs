@@ -191,7 +191,7 @@ fn print_summary(plan: &Plan, env: &Environment, env_name: &str, change: &Change
     );
 
     let writes: Vec<String> = plan
-        .steps()
+        .all_steps()
         .filter(|s| {
             s.tags.iter().any(|t| t == "write")
                 || !matches!(s.method.as_str(), "GET" | "HEAD" | "OPTIONS")
