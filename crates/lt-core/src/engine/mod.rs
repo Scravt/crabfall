@@ -42,6 +42,7 @@ struct Sample {
     outcome: Outcome,
     /// La respuesta llegó, pero un `extract` falló.
     extract_error: Option<String>,
+    checks: Vec<Option<String>>,
 }
 
 /// Resultado de ejecutar un paso: la respuesta (o la falla) y lo extraído.
@@ -49,6 +50,8 @@ pub struct StepRun {
     pub result: Result<Response, Failure>,
     pub extracted: Vec<(String, Value)>,
     pub extract_error: Option<String>,
+    /// Por check: `None` si pasó, o por qué falló. Vacío si no hubo respuesta.
+    pub checks: Vec<Option<String>>,
 }
 
 impl StepRun {
@@ -74,7 +77,21 @@ pub async fn run_step(
     let result = send_step(client, step, request).await;
     let mut extracted = Vec::new();
     let mut extract_error = None;
+    let mut checks = Vec::new();
     if let Ok(response) = &result {
+        let scope = Vars {
+            plan,
+            setup,
+            locals,
+        };
+        checks = step
+            .checks
+            .iter()
+            .map(|c| {
+                c.evaluate(response.status, &response.headers, &response.body, &scope)
+                    .err()
+            })
+            .collect();
         for (name, extractor) in &step.extract {
             match extractor.apply(&response.headers, &response.body) {
                 Ok(value) => extracted.push((name.clone(), value)),
@@ -89,6 +106,7 @@ pub async fn run_step(
         result,
         extracted,
         extract_error,
+        checks,
     }
 }
 
@@ -108,7 +126,10 @@ pub async fn run_setup(
             (Err(f), _) => Some(f.message.clone()),
             (Ok(r), _) if r.status >= 400 => Some(format!("respondió {}", r.status)),
             (_, Some(e)) => Some(e.clone()),
-            _ => None,
+            _ => step.checks.iter().zip(&run.checks).find_map(|(c, r)| {
+                r.as_ref()
+                    .map(|why| format!("el check `{}` falló: {why}", c.label))
+            }),
         };
         steps.push(SetupStep {
             name: step.name.clone(),
@@ -156,6 +177,7 @@ pub async fn run(plan: Arc<Plan>, progress: Arc<Progress>) -> RunResult {
         let mut c = Collector::new(&collector_plan);
         while let Some(s) = rx.recv().await {
             c.record(s.step, s.latency, s.outcome);
+            c.record_checks(s.step, &s.checks);
             if let Some(e) = s.extract_error {
                 c.record_extract_failure(s.step, e);
             }
@@ -206,7 +228,10 @@ pub async fn run(plan: Arc<Plan>, progress: Arc<Progress>) -> RunResult {
     let interrupted = if drained { 0 } else { tasks.len() as u64 };
     tasks.shutdown().await;
     drop(tx);
-    let steps = collector.await.expect("el colector no falla").finish(&plan);
+    let elapsed = start.elapsed().as_secs_f64();
+    let collector = collector.await.expect("el colector no falla");
+    let thresholds = collector.thresholds(&plan, elapsed);
+    let steps = collector.finish(&plan);
 
     let started = progress.started.load(Relaxed);
     let dropped = progress.dropped.load(Relaxed);
@@ -219,17 +244,21 @@ pub async fn run(plan: Arc<Plan>, progress: Arc<Progress>) -> RunResult {
         requests,
         failed: steps.iter().map(|s| s.failed).sum(),
         non_2xx: steps.iter().map(|s| s.non_2xx).sum(),
+        checks_passed: steps.iter().flat_map(|s| &s.checks).map(|c| c.passed).sum(),
+        checks_failed: steps.iter().flat_map(|s| &s.checks).map(|c| c.failed).sum(),
         iteration_rate: round1(started as f64 / schedule_secs),
-        request_rate: round1(requests as f64 / start.elapsed().as_secs_f64()),
+        request_rate: round1(requests as f64 / elapsed),
     };
     let scheduler_lag = Percentiles::from(&lag);
     let warnings = warnings(&totals, scheduler_lag.as_ref());
 
     RunResult {
-        duration_s: round1(start.elapsed().as_secs_f64()),
+        passed: thresholds.iter().all(|t| t.passed),
+        duration_s: round1(elapsed),
         aborted: None,
         setup,
         totals,
+        thresholds,
         scheduler_lag_ms: scheduler_lag,
         steps,
         warnings,
@@ -272,6 +301,7 @@ async fn iteration(
             latency: done.saturating_duration_since(from),
             outcome,
             extract_error: run.extract_error,
+            checks: run.checks,
         });
         if broken {
             return;

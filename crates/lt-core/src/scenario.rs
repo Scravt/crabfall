@@ -42,6 +42,9 @@ pub struct Scenario {
     pub flows: IndexMap<String, Flow>,
     /// Perfil de carga. La tasa se mide en iteraciones por segundo, no en requests.
     pub load: Load,
+    /// Criterios de aprobación de la corrida. Si alguno falla, `lt run` sale con código 1.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub thresholds: Vec<Threshold>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
@@ -86,6 +89,67 @@ pub struct Step {
     /// Valores de la respuesta que pasan a ser variables (`{{nombre}}`) para los pasos siguientes.
     #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
     pub extract: IndexMap<String, Extract>,
+    /// Verificaciones de la respuesta. No cortan la iteración: se cuentan en `checks.pass_rate`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub checks: Vec<Check>,
+}
+
+/// Una verificación. Elegí un sujeto (`status`, `status_in`, `json`, `header`, `body_contains`, `body_matches`); `json` y `header` llevan además un predicado (`exists`, `equals`, `contains`, `matches`).
+#[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Check {
+    /// Código de estado esperado. Si un paso tiene checks de status, reemplazan la expectativa de 2xx en `lt check`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<u16>,
+    /// Alguno de estos códigos.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_in: Option<Vec<u16>>,
+    /// JSONPath sobre el body, como en `extract`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub json: Option<String>,
+    /// Nombre de un header de la respuesta.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub header: Option<String>,
+    /// El body contiene este texto.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body_contains: Option<String>,
+    /// El body coincide con esta regex.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body_matches: Option<String>,
+    /// Con `json` o `header`: existe (`true`) o no existe (`false`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exists: Option<bool>,
+    /// Con `json` o `header`: igual a este valor (admite `{{variables}}`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub equals: Option<Value>,
+    /// Con `header`: contiene este texto.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contains: Option<String>,
+    /// Con `json` o `header`: coincide con esta regex.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub matches: Option<String>,
+}
+
+/// Criterio sobre una métrica, por ejemplo `{ metric: http.latency.p95, lt: 300ms }`. Usá exactamente uno de `lt`, `lte`, `gt`, `gte`.
+#[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Threshold {
+    /// `http.latency.p50` … `http.latency.p99.9`, `http.latency.avg`, `http.latency.max` (duración, ej. `300ms`); `http.error_rate` y `checks.pass_rate` (porcentaje, ej. `1%`); `http.rps` (número).
+    pub metric: String,
+    /// Solo este paso.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step: Option<String>,
+    /// Solo los pasos con este tag.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tag: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lt: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lte: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gt: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gte: Option<Value>,
 }
 
 /// De dónde sale un valor extraído. Usá exactamente uno de los tres.

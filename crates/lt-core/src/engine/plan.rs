@@ -20,10 +20,12 @@ use url::{Url, form_urlencoded};
 
 use super::http::{Body, Origin};
 use crate::{
+    assertion::Assertion,
     config::Environment,
     extract::Extractor,
     scenario::{Defaults, LoadPlan, Scenario, Source, Step},
     template::{Scope, Template, ValueTemplate, to_text},
+    threshold::{Filter, ThresholdPlan},
     units::HumanDuration,
 };
 
@@ -58,6 +60,8 @@ pub struct Plan {
     pub vars: BTreeMap<String, Value>,
     /// Valores de los secretos usados. Nunca se muestran ni se firman.
     pub secrets: HashMap<String, String>,
+    /// No firman: no cambian el tráfico.
+    pub thresholds: Vec<ThresholdPlan>,
 }
 
 pub struct FlowPlan {
@@ -97,6 +101,8 @@ pub struct StepPlan {
     pub timeout: Duration,
     /// Variables que salen de la respuesta.
     pub extract: Vec<(String, Extractor)>,
+    /// Verificaciones de la respuesta.
+    pub checks: Vec<Assertion>,
 }
 
 impl StepPlan {
@@ -272,7 +278,26 @@ impl Plan {
             max_request_rate: scenario.max_request_rate(),
             vars,
             secrets,
+            thresholds: Vec::new(),
         };
+        let mut plan = plan;
+        for (i, t) in scenario.thresholds.iter().enumerate() {
+            match ThresholdPlan::parse(t) {
+                Ok(t) => {
+                    let exists = match &t.filter {
+                        Filter::All => true,
+                        Filter::Step(s) => plan.steps().any(|p| &p.name == s),
+                        Filter::Tag(tag) => plan.steps().any(|p| p.tags.contains(tag)),
+                    };
+                    if exists {
+                        plan.thresholds.push(t);
+                    } else {
+                        errors.push(format!("thresholds[{i}]: ningún paso de los flows coincide con el filtro de `{}`", t.label));
+                    }
+                }
+                Err(e) => errors.push(format!("thresholds[{i}]: {e}")),
+            }
+        }
         if errors.is_empty() {
             Ok(plan)
         } else {
@@ -432,6 +457,13 @@ fn check_references(
     secrets: &BTreeMap<String, Option<String>>,
 ) -> Vec<String> {
     let mut problems = BTreeSet::new();
+    for var in step.checks.iter().flat_map(|c| c.vars()) {
+        if !known.contains(var) {
+            problems.insert(format!(
+                "un check usa `{{{{{var}}}}}`, que no está definida"
+            ));
+        }
+    }
     for t in step.templates() {
         for var in t.vars() {
             if !known.contains(var) {
@@ -472,6 +504,12 @@ fn build_step(
     allowed: &BTreeSet<String>,
 ) -> Result<StepPlan, String> {
     let r = &step.request;
+    let checks = step
+        .checks
+        .iter()
+        .enumerate()
+        .map(|(i, c)| Assertion::parse(c).map_err(|e| format!("checks[{i}]: {e}")))
+        .collect::<Result<Vec<_>, _>>()?;
     let extract = step
         .extract
         .iter()
@@ -562,6 +600,7 @@ fn build_step(
         headers,
         body,
         extract,
+        checks,
         timeout: r
             .timeout
             .or(defaults.and_then(|d| d.timeout))
@@ -649,6 +688,7 @@ mod tests {
             headers: vec![],
             body: BodyPlan::None,
             extract: vec![],
+            checks: vec![],
             timeout: DEFAULT_TIMEOUT,
         };
         assert_eq!(step.target(&NoVars).unwrap(), "/a%20b/1?q=x+y%26z");

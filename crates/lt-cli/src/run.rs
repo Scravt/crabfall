@@ -97,10 +97,10 @@ pub fn cmd_run(target: &crate::Target, as_json: bool) -> u8 {
     match saved {
         Ok(file) => {
             eprintln!("resultados: {}", display(&file));
-            if result.aborted.is_some() {
-                exit::FAILED
-            } else {
+            if result.passed {
                 exit::OK
+            } else {
+                exit::FAILED
             }
         }
         Err(e) => {
@@ -250,6 +250,34 @@ fn print_summary(r: &RunResult) {
             for e in &s.error_samples {
                 println!("         {e}");
             }
+        }
+    }
+    for s in &r.steps {
+        for c in s.checks.iter().filter(|c| c.failed > 0) {
+            println!(
+                "check    {}: {}  ✗ {} de {}",
+                s.name,
+                c.check,
+                c.failed,
+                c.passed + c.failed
+            );
+            for why in &c.samples {
+                println!("         {why}");
+            }
+        }
+    }
+    if !r.thresholds.is_empty() {
+        println!();
+        for t in &r.thresholds {
+            let mark = if t.passed { '✓' } else { '✗' };
+            let actual = t
+                .actual
+                .map_or("sin datos".to_string(), |a| format!("{a} {}", t.unit));
+            println!("{mark} {}  (medido: {actual})", t.threshold);
+        }
+        let failed = r.thresholds.iter().filter(|t| !t.passed).count();
+        if failed > 0 {
+            println!("{failed} threshold(s) no se cumplieron.");
         }
     }
     for w in &r.warnings {

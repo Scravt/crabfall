@@ -41,12 +41,22 @@ pub struct CheckStep {
     /// Variables extraídas (valores recortados).
     #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub extracted: std::collections::BTreeMap<String, String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub checks: Vec<CheckOutcome>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub body: Option<String>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub body_truncated: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CheckOutcome {
+    pub check: String,
+    pub passed: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -161,13 +171,28 @@ async fn check_step(
             .iter()
             .map(|(n, v)| (n.clone(), preview(v)))
             .collect(),
+        checks: vec![],
         content_type: None,
         body: None,
         body_truncated: false,
     };
     match run.result {
         Ok(r) => {
-            out.ok = (200..300).contains(&r.status) && run.extract_error.is_none();
+            // Con checks de status, esos reemplazan la expectativa de 2xx.
+            let status_ok =
+                step.checks.iter().any(|c| c.is_status()) || (200..300).contains(&r.status);
+            out.checks = step
+                .checks
+                .iter()
+                .zip(&run.checks)
+                .map(|(c, r)| CheckOutcome {
+                    check: c.label.clone(),
+                    passed: r.is_none(),
+                    reason: r.clone(),
+                })
+                .collect();
+            out.ok =
+                status_ok && out.checks.iter().all(|c| c.passed) && run.extract_error.is_none();
             out.status = Some(r.status);
             out.content_type = r.content_type;
             out.body_truncated = r.body.len() > MAX_BODY;
