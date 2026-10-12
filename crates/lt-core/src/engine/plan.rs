@@ -71,7 +71,8 @@ impl StepPlan {
 }
 
 impl Plan {
-    /// Arma el plan. Requiere un escenario que pasó `validate`.
+    /// Arma el plan: resuelve URLs y verifica `allowed_hosts`. No aplica los límites
+    /// (ver `limit_violations`). Requiere un escenario que pasó `validate`.
     pub fn build(scenario: &Scenario, env: &Environment) -> Result<Self, Vec<String>> {
         let mut errors = Vec::new();
         let base = Url::parse(&env.base_url)
@@ -111,7 +112,6 @@ impl Plan {
             hosts,
             max_request_rate: scenario.max_request_rate(),
         };
-        errors.extend(plan.limit_violations(env));
         if errors.is_empty() {
             Ok(plan)
         } else {
@@ -123,8 +123,9 @@ impl Plan {
         self.flows.iter().flat_map(|f| &f.steps)
     }
 
-    /// Límites duros del entorno (ADR-004).
-    fn limit_violations(&self, env: &Environment) -> Vec<String> {
+    /// Límites duros del entorno (ADR-004). `run` los exige; `check` no los necesita
+    /// porque ignora `load`.
+    pub fn limit_violations(&self, env: &Environment) -> Vec<String> {
         let LoadPlan::ConstantRate {
             duration, max_vus, ..
         } = self.load;

@@ -11,6 +11,7 @@ hdrhistogram = "7.6.0"
 http-body-util = "0.1.5"
 hyper = { version = "1.12.0", features = ["client", "http1"] }
 hyper-util = { version = "0.1.21", features = ["tokio"] }
+indexmap = { version = "2.14.2", features = ["serde"] }
 rustls = { version = "0.23.45", default-features = false, features = ["ring", "std", "tls12"] }
 rustls-native-certs = "0.8.4"
 serde = { version = "1.0.229", features = ["derive"] }

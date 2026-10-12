@@ -1,5 +1,6 @@
 //! Núcleo de lt: escenario, motor, métricas y diagnóstico.
 
+pub mod check;
 pub mod config;
 pub mod engine;
 pub mod metrics;

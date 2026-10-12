@@ -1,3 +1,5 @@
+mod check;
+mod prepare;
 mod run;
 
 use std::{path::Path, process::ExitCode};
@@ -12,6 +14,8 @@ use serde_json::json;
 /// Códigos de salida. Son parte del contrato con Claude y con CI.
 mod exit {
     pub const OK: u8 = 0;
+    /// Corrió, pero falló: en `check`, algún paso sin respuesta 2xx.
+    pub const FAILED: u8 = 1;
     pub const INVALID: u8 = 2;
     /// No permitido: host fuera de allowed_hosts, límites superados o sin confirmación.
     pub const REFUSED: u8 = 3;
@@ -43,6 +47,17 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Smoke check: corre cada flow una vez, en serie, solo contra loopback. No necesita aprobación.
+    Check {
+        /// Nombre (busca en .loadtest/scenarios/) o ruta al archivo.
+        scenario: String,
+        /// Entorno de .loadtest/config.yaml (por defecto, default_environment).
+        #[arg(long)]
+        env: Option<String>,
+        /// Salida JSON para agentes (incluye los bodies, truncados a 2 KB).
+        #[arg(long)]
+        json: bool,
+    },
     /// Ejecuta un escenario contra un entorno y guarda los resultados.
     Run {
         /// Nombre (busca en .loadtest/scenarios/) o ruta al archivo.
@@ -65,6 +80,11 @@ fn main() -> ExitCode {
             env,
             json,
         } => run::cmd_run(&scenario, env.as_deref(), json),
+        Command::Check {
+            scenario,
+            env,
+            json,
+        } => check::cmd_check(&scenario, env.as_deref(), json),
     };
     ExitCode::from(code)
 }

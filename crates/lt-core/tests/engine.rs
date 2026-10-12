@@ -136,7 +136,41 @@ fn rejects_hosts_outside_allowlist_and_limits() {
     env.limits.max_rps = Some(150.0);
 
     let errors = Plan::build(&s, &env).err().unwrap();
+    assert_eq!(errors.len(), 1);
     assert!(errors[0].contains("evil.example.com"), "{errors:?}");
+
+    env.allowed_hosts.push("evil.example.com".into());
+    let plan = Plan::build(&s, &env).unwrap();
     // 100 it/s × 2 pasos = 200 req/s > 150.
-    assert!(errors[1].contains("max_rps"), "{errors:?}");
+    let violations = plan.limit_violations(&env);
+    assert!(violations[0].contains("max_rps"), "{violations:?}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn check_runs_each_flow_once_and_shows_bodies() {
+    let base = server().await;
+    let s = scenario(
+        TWO_FLOWS,
+        "  rate: 1000/s\n  duration: 1h\n  max_vus: 1000\n",
+    );
+    let plan = Plan::build(&s, &environment(&base)).unwrap();
+
+    let r = lt_core::check::check(&plan).await.unwrap();
+    let names: Vec<_> = r.steps.iter().map(|s| s.name.as_str()).collect();
+    assert_eq!(names, ["ok", "missing", "after_missing"]);
+    assert_eq!(r.steps[0].body.as_deref(), Some("ok"));
+    assert_eq!(r.steps[1].status, Some(404));
+    assert!(!r.ok);
+}
+
+#[tokio::test]
+async fn check_refuses_hosts_that_are_not_loopback() {
+    let flows = "  main:\n    steps:\n      - name: a\n        request: { method: GET, url: /x }\n";
+    let s = scenario(flows, "  rate: 1/s\n  duration: 1s\n  max_vus: 1\n");
+    let env: Environment =
+        serde_saphyr::from_str("base_url: http://192.0.2.1\nallowed_hosts: [192.0.2.1]\n").unwrap();
+    let plan = Plan::build(&s, &env).unwrap();
+
+    let e = lt_core::check::check(&plan).await.unwrap_err();
+    assert!(e.contains("loopback"), "{e}");
 }

@@ -10,65 +10,37 @@ use std::{
 use lt_core::{
     engine::{self, Progress, plan::Plan},
     metrics::RunResult,
-    project::{Project, describe},
+    project::Project,
     scenario::LoadPlan,
-    timer, validate,
+    timer,
 };
 use serde_json::{Value, json};
 
-use crate::{JSON_FORMAT, display, exit};
+use crate::{
+    JSON_FORMAT, display, exit,
+    prepare::{Prepared, prepare},
+};
 
 pub fn cmd_run(arg: &str, env_name: Option<&str>, as_json: bool) -> u8 {
-    let Some(project) = std::env::current_dir()
-        .ok()
-        .and_then(|cwd| Project::discover(&cwd))
-    else {
-        eprintln!("✗ no encontré .loadtest/ en este directorio ni en los superiores");
-        return exit::INVALID;
+    let Prepared {
+        project,
+        env_name,
+        env,
+        path,
+        plan,
+    } = match prepare(arg, env_name) {
+        Ok(p) => p,
+        Err(code) => return code,
     };
-    let config = match project.load_config() {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("✗ {e}");
-            return exit::INVALID;
+    let violations = plan.limit_violations(&env);
+    if !violations.is_empty() {
+        eprintln!("✗ {} supera los límites de `{env_name}`:", plan.scenario);
+        for v in violations {
+            eprintln!("  {v}");
         }
-    };
-    let (env_name, env) = match config.environment(env_name) {
-        Ok(e) => e,
-        Err(e) => {
-            eprintln!("✗ {e}");
-            return exit::INVALID;
-        }
-    };
-
-    let path = Project::scenario_path(Some(&project), arg);
-    let text = match std::fs::read_to_string(&path) {
-        Ok(t) => t,
-        Err(e) => {
-            eprintln!("✗ no se pudo leer {}: {e}", display(&path));
-            return exit::INVALID;
-        }
-    };
-    let scenario = match validate::parse_scenario(&text) {
-        Ok(s) => s,
-        Err(report) => {
-            eprintln!("✗ {} no es válido (corré `lt validate`):", display(&path));
-            for issue in report.errors.iter().chain(&report.todos) {
-                eprintln!("  {}", describe(issue));
-            }
-            return exit::INVALID;
-        }
-    };
-    let plan = match Plan::build(&scenario, env) {
-        Ok(p) => Arc::new(p),
-        Err(errors) => {
-            eprintln!("✗ no se puede ejecutar {} en `{env_name}`:", scenario.name);
-            for e in errors {
-                eprintln!("  {e}");
-            }
-            return exit::REFUSED;
-        }
-    };
+        return exit::REFUSED;
+    }
+    let plan = Arc::new(plan);
 
     let LoadPlan::ConstantRate {
         rate,

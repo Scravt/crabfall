@@ -43,6 +43,8 @@ pub struct Timings {
 #[derive(Debug)]
 pub struct Response {
     pub status: u16,
+    pub content_type: Option<String>,
+    pub body: Bytes,
     pub timings: Timings,
 }
 
@@ -152,12 +154,18 @@ impl Client {
         timings.ttfb = sent.elapsed();
 
         let status = response.status().as_u16();
+        let content_type = response
+            .headers()
+            .get(hyper::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .map(String::from);
         let receiving = Instant::now();
-        response
+        let body = response
             .into_body()
             .collect()
             .await
-            .map_err(|e| Retry::No(classify_hyper(&e)))?;
+            .map_err(|e| Retry::No(classify_hyper(&e)))?
+            .to_bytes();
         timings.receive = receiving.elapsed();
 
         if !conn.is_closed() {
@@ -168,7 +176,12 @@ impl Client {
                 .or_default()
                 .push(conn);
         }
-        Ok(Response { status, timings })
+        Ok(Response {
+            status,
+            content_type,
+            body,
+            timings,
+        })
     }
 
     async fn open(&self, origin: &Origin, timings: &mut Timings) -> Result<Conn, Failure> {

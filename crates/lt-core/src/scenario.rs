@@ -3,6 +3,8 @@
 
 use std::{collections::BTreeMap, time::Duration};
 
+use indexmap::IndexMap;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -19,7 +21,8 @@ pub struct Scenario {
     pub description: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub meta: Option<Value>,
-    pub flows: BTreeMap<String, Flow>,
+    /// En el orden del archivo.
+    pub flows: IndexMap<String, Flow>,
     pub load: Load,
 }
 
