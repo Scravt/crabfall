@@ -57,7 +57,7 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente.
 - [x] Cargo workspace con `lt-core`, `lt-cli` y `lab-server`
 - [x] Spike: cliente sobre `hyper` con timings por fase (DNS, connect, TTFB, receiving) → ADR-003 (TLS pendiente)
 - [x] Spike: scheduler de tasa constante que mide desde el instante planificado → ADR-003
-- [ ] Elegir crate de YAML con línea y columna en los errores
+- [x] Elegir crate de YAML con línea y columna en los errores → `serde-saphyr` (ADR-002 §10)
 - Listo cuando: 10.000 requests contra `lab-server` dan percentiles parecidos a `oha`, y la tasa se mantiene aunque el servidor se frene.
 
 **1. Primera corrida**
@@ -101,7 +101,6 @@ Más reglas de diagnóstico, reporte HTML, comparación contra una corrida base,
 | --- | --- | --- |
 | D2 | Nombre del proyecto y del binario | Corto, pronunciable en inglés, libre en crates.io y GitHub |
 | D4 | ¿El diagnóstico usa métricas del servidor? | No por ahora: solo lado cliente |
-| D5 | Crate de YAML | Evaluar en la rebanada 0 |
 
 ## Registro de decisiones
 
@@ -117,3 +116,4 @@ Más reglas de diagnóstico, reporte HTML, comparación contra una corrida base,
 | 12 oct 2026 | Toolchain Rust MSVC en Windows | — |
 | 12 oct 2026 | Scheduler de modelo abierto: latencia desde el instante planificado, iteraciones descartadas cuando no hay VU | ADR-003 |
 | 12 oct 2026 | En Windows se sube la resolución del timer a 1 ms | ADR-003 |
+| 12 oct 2026 | YAML con `serde-saphyr` + `serde_path_to_error` (D5) | ADR-002 §10 |

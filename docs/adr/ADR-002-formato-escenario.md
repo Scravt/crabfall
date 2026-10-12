@@ -71,6 +71,20 @@ Claude (y los futuros importadores) marcan los valores que no conocen con `{ tod
 
 `version: 1` es obligatorio. Agregar campos opcionales no sube la versión; un cambio incompatible sí, y viene con `lt migrate`. La herramienta rechaza versiones que no conoce, con un mensaje que dice qué versión de `lt` hace falta.
 
+### 10. Parser: `serde-saphyr` + `serde_path_to_error`
+
+Evaluado el 12 oct 2026 contra `serde_yaml_ng` y `serde_norway` (forks de `serde_yaml`, que está archivado; `serde_yml` está deprecado). Es el único que da línea y columna en todos los casos probados:
+
+| Caso | forks de serde_yaml | serde-saphyr + path_to_error |
+| --- | --- | --- |
+| campo mal escrito | ruta + línea | ruta + línea |
+| tipo incorrecto | ruta + línea | ruta + línea |
+| variante desconocida (`executor`) | ruta + línea | ruta + línea |
+| campo desconocido dentro de un enum etiquetado | **nada** | ruta + línea del bloque |
+| clave duplicada | **sin línea** | línea |
+
+Además está escrito en Rust puro, se mantiene activamente y ofrece `Spanned<T>`, que permite ubicar errores semánticos (por ejemplo, un `name` de paso repetido). `validate --json` reporta `path`, `line`, `column` y `message`.
+
 ## Ejemplos
 
 ### Configuración del proyecto: `.loadtest/config.yaml`
@@ -288,7 +302,6 @@ Cualquier escenario se puede verificar con `lt check <escenario>`. Corre el `set
 
 ## Puntos abiertos
 
-- **Crate de YAML:** `serde_yaml` está archivado. Hay que evaluar las alternativas mantenidas y verificar que reporten la línea y la columna de cada error.
 - **Setup por VU** (cada usuario virtual con su propio login): se deja para más adelante, salvo que un caso real lo necesite antes.
 - **Datasets** (CSV/JSON): el formato reserva el campo `data` en la raíz.
 - **Think time** entre pasos: queda en el backlog; reservar `think` en el paso.
