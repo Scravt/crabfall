@@ -1,14 +1,15 @@
 //! Smoke check (ADR-004 §4): corre cada flow una vez, en serie, solo contra loopback.
 //! Es lo único que un agente puede ejecutar sin aprobación.
 
-use std::time::Instant;
+use std::{collections::HashMap, time::Instant};
 
 use serde::Serialize;
-use tokio::time::timeout;
+use serde_json::Value;
 
 use crate::engine::{
     http::{Client, FailureKind},
-    plan::{Plan, StepPlan},
+    plan::{Plan, StepPlan, Vars},
+    send_step,
 };
 
 /// Tope total de requests de un check.
@@ -81,13 +82,14 @@ pub async fn check(plan: &Plan) -> Result<CheckResult, String> {
     let mut skipped = Vec::new();
 
     for flow in &plan.flows {
+        let locals = HashMap::new();
         let mut flow_failed = false;
         for step in &flow.steps {
             if flow_failed || steps.len() >= MAX_REQUESTS {
                 skipped.push(step.name.clone());
                 continue;
             }
-            let result = run_step(&client, step).await;
+            let result = run_step(&client, plan, step, &locals).await;
             flow_failed = result.failure.is_some();
             steps.push(result);
         }
@@ -100,16 +102,35 @@ pub async fn check(plan: &Plan) -> Result<CheckResult, String> {
     })
 }
 
-async fn run_step(client: &Client, step: &StepPlan) -> CheckStep {
+async fn run_step(
+    client: &Client,
+    plan: &Plan,
+    step: &StepPlan,
+    locals: &HashMap<String, Value>,
+) -> CheckStep {
+    let request = step.request(&Vars { plan, locals });
+    // La URL resuelta ayuda más que la plantilla para depurar.
+    let url = match &request {
+        Ok(r) => {
+            let scheme = if step.origin.https { "https" } else { "http" };
+            format!(
+                "{scheme}://{}:{}{}",
+                step.origin.host,
+                step.origin.port,
+                r.uri()
+            )
+        }
+        Err(_) => step.url(),
+    };
     let start = Instant::now();
-    let result = timeout(step.timeout, client.send(&step.origin, || step.request())).await;
+    let result = send_step(client, step, request).await;
     let duration_ms = (start.elapsed().as_secs_f64() * 1000.0 * 1000.0).round() / 1000.0;
 
     let mut out = CheckStep {
         flow: step.flow.clone(),
         name: step.name.clone(),
         method: step.method.to_string(),
-        url: step.url(),
+        url,
         ok: false,
         status: None,
         duration_ms,
@@ -119,7 +140,7 @@ async fn run_step(client: &Client, step: &StepPlan) -> CheckStep {
         body_truncated: false,
     };
     match result {
-        Ok(Ok(r)) => {
+        Ok(r) => {
             out.ok = (200..300).contains(&r.status);
             out.status = Some(r.status);
             out.content_type = r.content_type;
@@ -127,19 +148,10 @@ async fn run_step(client: &Client, step: &StepPlan) -> CheckStep {
             let shown = &r.body[..r.body.len().min(MAX_BODY)];
             out.body = Some(String::from_utf8_lossy(shown).into_owned());
         }
-        Ok(Err(f)) => {
+        Err(f) => {
             out.failure = Some(Failure {
                 kind: f.kind,
                 message: f.message,
-            })
-        }
-        Err(_) => {
-            out.failure = Some(Failure {
-                kind: FailureKind::Timeout,
-                message: format!(
-                    "sin respuesta en {}",
-                    crate::units::HumanDuration(step.timeout)
-                ),
             })
         }
     }

@@ -7,13 +7,13 @@ use crate::{
     prepare::{Prepared, prepare},
 };
 
-pub fn cmd_check(arg: &str, env_name: Option<&str>, as_json: bool) -> u8 {
+pub fn cmd_check(target: &crate::Target, as_json: bool) -> u8 {
     let Prepared {
         env_name,
         path,
         plan,
         ..
-    } = match prepare(arg, env_name) {
+    } = match prepare(&target.scenario, target.env.as_deref(), &target.vars) {
         Ok(p) => p,
         Err(code) => return code,
     };

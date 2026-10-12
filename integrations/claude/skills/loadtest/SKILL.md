@@ -59,7 +59,9 @@ Podés usar libremente: `lt validate`, `lt check` (solo contra loopback), `lt sc
    - La tasa de requests es `rate × pasos del flow más largo`. Tiene que quedar dentro de `limits.max_rps`.
    - `max_vus` ≈ `rate × latencia esperada (s) × 5`, con un mínimo de 10. Si es bajo, `lt` descarta iteraciones.
    - Si no conocés un valor, escribí `{ todo: "qué hace falta" }`. No inventes IDs ni credenciales.
-   - **Todavía no soportado:** `setup`, `extract` (encadenar login → token), variables `{{...}}`, checks, thresholds y otros executors. Si el flujo los necesita, usá valores fijos (un token de desarrollo, un ID existente) y avisale a la persona.
+   - **Variables:** `vars:` en la raíz y `{{nombre}}` en `url`, `query`, `headers` y bodies. Si un valor JSON es exactamente `"{{x}}"`, conserva el tipo (número, booleano). Dinámicos: `{{$uuid}}`, `{{$timestamp}}`, `{{$randomInt(1,100)}}`. Credenciales: `{{env.NOMBRE}}`, declarando `NOMBRE` en `secrets:` de `config.yaml` (el valor sale del entorno o de `.env`; nunca lo escribas en el escenario). El host de una URL no puede tener variables.
+   - **`defaults:`** `headers` y `timeout` comunes a todos los pasos de `flows`.
+   - **Todavía no soportado:** `setup`, `extract` (encadenar login → token), checks, thresholds y otros executors. Si el flujo los necesita, usá valores fijos (un token de desarrollo, un ID existente) y avisale a la persona.
 4. **Validá:** `lt validate <nombre> --json`. Corregí hasta que `valid` sea `true`. Cada error trae `path`, `line` y `message`.
 5. **Verificá:** `lt check <nombre> --json` corre cada flow una vez, en serie. Solo funciona si el entorno apunta a la máquina local; si no, saltealo y decilo. Revisá `status` y `body` de cada paso: un 404 suele ser un ID inexistente, un 401 la auth y un 400 el body.
 6. **Entregá** un resumen corto (flows y pesos, tasa, duración, requests/s máximos, pasos que escriben) y los comandos exactos para la persona:

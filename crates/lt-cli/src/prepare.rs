@@ -1,13 +1,17 @@
-//! Carga común de `run` y `check`: proyecto, entorno, escenario validado y plan.
+//! Carga común de `run`, `check` y `approve`: proyecto, entorno, escenario validado y plan.
 
-use std::path::PathBuf;
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+};
 
 use lt_core::{
-    config::Environment,
-    engine::plan::Plan,
+    config::{Config, Environment},
+    engine::plan::{Inputs, Plan},
     project::{Project, describe},
     validate,
 };
+use serde_json::Value;
 
 use crate::{display, exit};
 
@@ -20,7 +24,7 @@ pub struct Prepared {
 }
 
 /// Imprime los errores en stderr y devuelve el código de salida si algo falla.
-pub fn prepare(arg: &str, env_name: Option<&str>) -> Result<Prepared, u8> {
+pub fn prepare(arg: &str, env_name: Option<&str>, vars: &[String]) -> Result<Prepared, u8> {
     let fail = |code: u8, msg: String| {
         eprintln!("✗ {msg}");
         code
@@ -55,12 +59,13 @@ pub fn prepare(arg: &str, env_name: Option<&str>) -> Result<Prepared, u8> {
         }
         exit::INVALID
     })?;
-    let plan = Plan::build(&scenario, &env).map_err(|errors| {
-        eprintln!("✗ no se puede ejecutar {} en `{env_name}`:", scenario.name);
+    let inputs = inputs(&project, &config, vars).map_err(|e| fail(exit::INVALID, e))?;
+    let plan = Plan::build(&scenario, &env, &inputs).map_err(|errors| {
+        eprintln!("✗ no se puede armar {} en `{env_name}`:", scenario.name);
         for e in errors {
             eprintln!("  {e}");
         }
-        exit::REFUSED
+        exit::INVALID
     })?;
 
     Ok(Prepared {
@@ -70,4 +75,58 @@ pub fn prepare(arg: &str, env_name: Option<&str>) -> Result<Prepared, u8> {
         path,
         plan,
     })
+}
+
+/// `--var` y los secretos declarados en `config.yaml`, con su valor si lo tienen.
+pub fn inputs(project: &Project, config: &Config, vars: &[String]) -> Result<Inputs, String> {
+    let mut parsed = BTreeMap::new();
+    for var in vars {
+        let (name, raw) = var
+            .split_once('=')
+            .ok_or_else(|| format!("--var `{var}`: usá nombre=valor"))?;
+        // `42` es un número, `true` un booleano y el resto un string, como en YAML.
+        let value = validate::parse_yaml::<Value>(raw)
+            .ok()
+            .filter(|v| !v.is_object() && !v.is_array() && !v.is_null())
+            .unwrap_or_else(|| Value::String(raw.to_string()));
+        parsed.insert(name.trim().to_string(), value);
+    }
+
+    let root = project.dir.parent().unwrap_or(Path::new("."));
+    let dotenv = read_dotenv(&root.join(".env"));
+    let secrets = config
+        .secrets
+        .iter()
+        .map(|name| {
+            let value = std::env::var(name)
+                .ok()
+                .or_else(|| dotenv.get(name).cloned());
+            (name.clone(), value)
+        })
+        .collect();
+    Ok(Inputs {
+        vars: parsed,
+        secrets,
+    })
+}
+
+/// `.env` simple: `NOMBRE=valor`, comentarios con `#`, comillas opcionales.
+fn read_dotenv(path: &Path) -> BTreeMap<String, String> {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return BTreeMap::new();
+    };
+    text.lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .filter_map(|l| l.trim_start_matches("export ").split_once('='))
+        .map(|(k, v)| {
+            let v = v.trim();
+            let v = v
+                .strip_prefix('"')
+                .and_then(|v| v.strip_suffix('"'))
+                .or_else(|| v.strip_prefix('\'').and_then(|v| v.strip_suffix('\'')))
+                .unwrap_or(v);
+            (k.trim().to_string(), v.to_string())
+        })
+        .collect()
 }

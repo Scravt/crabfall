@@ -29,7 +29,7 @@ limits: { max_rps: 100 }
 ";
 
 fn plan(scenario: &str, env: &Environment) -> Plan {
-    Plan::build(&parse_scenario(scenario).unwrap(), env).unwrap()
+    Plan::build(&parse_scenario(scenario).unwrap(), env, &Default::default()).unwrap()
 }
 
 fn env(yaml: &str) -> Environment {

@@ -21,14 +21,14 @@ use crate::{
     prepare::{Prepared, prepare},
 };
 
-pub fn cmd_run(arg: &str, env_name: Option<&str>, as_json: bool) -> u8 {
+pub fn cmd_run(target: &crate::Target, as_json: bool) -> u8 {
     let Prepared {
         project,
         env_name,
         env,
         path,
         plan,
-    } = match prepare(arg, env_name) {
+    } = match prepare(&target.scenario, target.env.as_deref(), &target.vars) {
         Ok(p) => p,
         Err(code) => return code,
     };
