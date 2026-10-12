@@ -34,7 +34,7 @@ crates/
   lt-cli       binario `lt`
 tools/
   lab-server   servidor axum con patologías configurables, para tests
-plugin/        plugin de Claude Code: skill, comandos, hook
+integrations/claude/  skill de Claude Code (lo instala `lt claude install`)
 ```
 
 `lt-core` se parte en crates más chicos cuando un módulo lo justifique, no antes.
@@ -65,18 +65,18 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente.
 - [x] `lt validate [--json]` con ruta exacta del error y `todo` pendientes
 - [x] `lt run` → resumen en terminal y `results.json` con p50/p90/p95/p99 por paso
 - [x] Guarda interina hasta la rebanada 3: un destino que no es loopback exige terminal y tipear el host
-- Listo cuando: corro una prueba real del trabajo con un YAML escrito a mano. **Pendiente** (también verifica TLS contra un servidor real).
+- Listo: probado contra `shop-api` (API local de ejemplo, repo aparte). **Pendiente:** una API real del trabajo y TLS contra un servidor real.
 
 **2. Claude diseña**
-- [ ] `lt check [--json]` según ADR-004
-- [ ] JSON Schema generado (`schemars`) y `lt schema`
-- [ ] Plugin: skill de diseño + `/loadtest:design`
-- Listo cuando: Claude arma desde el código un escenario que pasa `validate` y `check` sin que yo toque el YAML.
+- [x] `lt check [--json]` según ADR-004
+- [x] JSON Schema generado (`schemars`) y `lt schema`
+- [x] Skill `loadtest` + `lt claude install` (ADR-001)
+- Listo cuando: Claude arma desde el código un escenario que pasa `validate` y `check` sin que yo toque el YAML. Probado con `shop-api` (escenario `buscar-y-comprar`) siguiendo el skill en esta sesión. **Pendiente:** repetirlo en una sesión nueva de Claude Code, que carga el skill sola.
 
 **3. Aprobación**
 - [ ] `lt approve` y la verificación en `lt run`, con firma, keyring y TTY (ADR-004)
-- [ ] `limits` y `allowed_hosts` en `config.yaml`
-- [ ] Hook `PreToolUse` en el plugin
+- [x] `limits` y `allowed_hosts` en `config.yaml` (hecho en la rebanada 1)
+- [x] Hook `PreToolUse` (`lt hook pre-tool-use`), adelantado a la rebanada 2
 - [ ] Tests de la guarda (lista en ADR-004)
 
 **4. Escenario completo**
@@ -89,7 +89,7 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente.
 - [ ] Series por segundo (latencia, RPS, errores) y desglose de timings
 - [ ] Primeras reglas: punto de quiebre, errores por umbral, resultado inválido (generador saturado)
 - [ ] `lt findings [--json]` con evidencia y `source` del paso
-- [ ] Plugin: `/loadtest:diagnose`
+- [ ] Skill: sección de diagnóstico con hallazgos
 - [ ] Validar cada regla con una patología de `lab-server`
 
 ## Backlog (sin orden)
@@ -112,7 +112,7 @@ Más reglas de diagnóstico, reporte HTML, comparación contra una corrida base,
 | 7 oct 2026 | Diagnóstico en dos capas: reglas en el motor, hipótesis en Claude | Principio 3 |
 | 10 oct 2026 | Claude puede hacer smoke checks solo contra loopback | ADR-004 |
 | 10 oct 2026 | Formato de escenario YAML declarativo, aprobación derivada | ADR-002 |
-| 12 oct 2026 | Claude-first: CLI con JSON + plugin de Claude Code; MCP e importadores después | ADR-001 |
+| 12 oct 2026 | Claude-first: CLI con JSON + skill y hook de Claude Code (`lt claude install`); MCP e importadores después | ADR-001 |
 | 12 oct 2026 | Trabajo por rebanadas verticales, sin fechas | Este documento |
 | 12 oct 2026 | Toolchain Rust MSVC en Windows | — |
 | 12 oct 2026 | Scheduler de modelo abierto: latencia desde el instante planificado, iteraciones descartadas cuando no hay VU | ADR-003 |

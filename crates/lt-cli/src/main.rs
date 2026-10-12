@@ -1,4 +1,6 @@
 mod check;
+mod claude;
+mod hook;
 mod prepare;
 mod run;
 
@@ -39,6 +41,17 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Integra lt con Claude Code en este repo: skill, hook y permisos.
+    Claude {
+        #[command(subcommand)]
+        action: ClaudeAction,
+    },
+    /// Hooks de Claude Code (los invoca Claude Code, no una persona).
+    #[command(hide = true)]
+    Hook {
+        #[command(subcommand)]
+        event: HookEvent,
+    },
     /// Valida un escenario: campos, tipos, unidades y valores pendientes (`todo`).
     Validate {
         /// Nombre (busca en .loadtest/scenarios/) o ruta al archivo.
@@ -77,6 +90,12 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
     let code = match cli.command {
         Command::Validate { scenario, json } => cmd_validate(&scenario, json),
+        Command::Claude {
+            action: ClaudeAction::Install,
+        } => claude::cmd_install(),
+        Command::Hook {
+            event: HookEvent::PreToolUse,
+        } => hook::cmd_pre_tool_use(),
         Command::Schema => {
             let schema = lt_core::scenario::json_schema();
             println!("{}", serde_json::to_string_pretty(&schema).unwrap());
@@ -155,4 +174,16 @@ fn cmd_validate(arg: &str, as_json: bool) -> u8 {
     } else {
         exit::INVALID
     }
+}
+
+#[derive(Subcommand)]
+enum ClaudeAction {
+    /// Escribe .claude/skills/loadtest/SKILL.md y agrega el hook y los permisos a .claude/settings.json.
+    Install,
+}
+
+#[derive(Subcommand)]
+enum HookEvent {
+    /// Bloquea `lt run` y `lt approve` invocados por Claude.
+    PreToolUse,
 }
