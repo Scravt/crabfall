@@ -245,6 +245,10 @@ fn print_summary(r: &RunResult) {
             }
         }
     }
+    if r.aborted.is_none() {
+        println!();
+        crate::findings::print_findings(&serde_json::to_value(&r.findings).unwrap());
+    }
     if !r.thresholds.is_empty() {
         println!();
         for t in &r.thresholds {

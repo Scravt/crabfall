@@ -90,10 +90,11 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente.
 
 **5. Diagnóstico**
 - [x] Series por segundo (iniciadas, descartadas, requests, errores, p50/p95/p99), globales y por paso, en `results.json`
-- [ ] Primeras reglas: punto de quiebre, errores por umbral, resultado inválido (generador saturado)
-- [ ] `lt findings [--json]` con evidencia y `source` del paso
-- [ ] Skill: sección de diagnóstico con hallazgos
-- [ ] Validar cada regla con una patología de `lab-server`
+- [x] Reglas: punto de quiebre, capacidad excedida, errores por umbral, degradación en el tiempo, cola larga, conexiones nuevas, resultado inválido (ADR-005)
+- [x] `lt findings [--json]` con evidencia y `source` del paso; hallazgos al final de `lt run`
+- [x] Skill: del hallazgo al código, separando lo medido de las hipótesis
+- [x] Validar cada regla con una patología (servidores de prueba en `tests/diagnose.rs`)
+- Listo cuando: en `shop-api`, `stress-ramp` da un `breaking_point` y Claude llega al código responsable. **Pendiente** (la corrida la aprueba y ejecuta una persona).
 
 ## Backlog (sin orden)
 
@@ -125,3 +126,4 @@ Más reglas de diagnóstico, reporte HTML, comparación contra una corrida base,
 | 12 oct 2026 | Cada trabajo en su rama, merge `--no-ff` a `dev`; `main` queda intacto hasta decidirlo | — |
 | 12 oct 2026 | Checks y thresholds no se firman (no cambian el tráfico); `setup`, `extract` y variables sí | ADR-004 |
 | 12 oct 2026 | `ramping_rate` con calendario exacto; `constant_vus` con pacer si hay `max_rps` | ADR-003 |
+| 12 oct 2026 | Diagnóstico en dos capas: reglas deterministas con evidencia en el motor, hipótesis sobre el código en Claude | ADR-005 |

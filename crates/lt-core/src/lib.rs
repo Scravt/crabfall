@@ -4,6 +4,7 @@ pub mod approval;
 pub mod assertion;
 pub mod check;
 pub mod config;
+pub mod diagnose;
 pub mod engine;
 pub mod extract;
 pub mod load;

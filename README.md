@@ -3,7 +3,7 @@
 Herramienta de pruebas de carga en Rust, pensada para usarse junto a Claude Code:
 Claude diseña el escenario y analiza los resultados; una persona aprueba y ejecuta la carga.
 
-Estado: **rebanada 4** (escenario completo: variables, setup, extract, checks, thresholds, executors). Ver el [roadmap](docs/roadmap.md).
+Estado: **rebanada 5** (diagnóstico: hallazgos deterministas con evidencia). Ver el [roadmap](docs/roadmap.md).
 
 ## Uso
 
@@ -57,7 +57,7 @@ lt claude install              # en el repo a probar: skill, hook y permisos en 
 
 Después, en una sesión de Claude Code: *"armame una prueba de carga del flujo de compra"*. Claude lee el código, escribe el escenario, lo verifica con `lt validate` y `lt check` (solo contra loopback) y te pasa los comandos `lt approve` y `lt run` para que los ejecutes vos. No puede aprobar ni ejecutar por su cuenta (ADR-001, ADR-004).
 
-`lt schema` imprime el JSON Schema del escenario.
+`lt findings [--json]` muestra los hallazgos de la última corrida (o de una por id); `lt schema` imprime el JSON Schema del escenario.
 
 Códigos de salida: `0` ok · `1` `check` con pasos fallidos · `2` escenario o configuración inválidos · `3` rechazado (sin aprobación válida, host no permitido, límites, sin terminal) · `4` error al guardar o al acceder al keyring.
 
@@ -79,3 +79,4 @@ Para probar contra una API más realista: [shop-api](../shop-api) (repo aparte),
 - [ADR-002 — Formato del escenario](docs/adr/ADR-002-formato-escenario.md)
 - [ADR-003 — hyper y scheduler](docs/adr/ADR-003-hyper-y-scheduler.md)
 - [ADR-004 — Aprobación y modelo de amenaza](docs/adr/ADR-004-aprobacion.md)
+- [ADR-005 — Diagnóstico](docs/adr/ADR-005-diagnostico.md)

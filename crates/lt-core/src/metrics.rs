@@ -510,6 +510,8 @@ pub struct RunResult {
     pub scheduler_lag_ms: Option<Percentiles>,
     pub steps: Vec<StepResult>,
     pub warnings: Vec<String>,
+    /// Hallazgos del diagnóstico, de más a menos grave.
+    pub findings: Vec<crate::diagnose::Finding>,
     /// Serie por segundo: la materia prima del diagnóstico.
     pub series: Series,
 }
@@ -540,6 +542,7 @@ impl RunResult {
             scheduler_lag_ms: None,
             steps: Collector::new(plan, Instant::now()).finish(plan),
             warnings: vec![],
+            findings: vec![],
             series: Series::default(),
         }
     }

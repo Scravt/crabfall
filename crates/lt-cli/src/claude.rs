@@ -12,7 +12,12 @@ use crate::{display, exit};
 
 const SKILL: &str = include_str!("../../../integrations/claude/skills/loadtest/SKILL.md");
 const HOOK_COMMAND: &str = "lt hook pre-tool-use";
-const ALLOWED: &[&str] = &["Bash(lt validate:*)", "Bash(lt check:*)", "Bash(lt schema)"];
+const ALLOWED: &[&str] = &[
+    "Bash(lt validate:*)",
+    "Bash(lt check:*)",
+    "Bash(lt schema)",
+    "Bash(lt findings:*)",
+];
 
 pub fn cmd_install() -> u8 {
     let cwd = std::env::current_dir().unwrap_or_default();
@@ -137,7 +142,7 @@ mod tests {
             HOOK_COMMAND
         );
         let allow = s["permissions"]["allow"].as_array().unwrap();
-        assert_eq!(allow.len(), 4);
+        assert_eq!(allow.len(), 5);
         assert_eq!(allow[0], "Bash(npm test)");
     }
 }

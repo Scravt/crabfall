@@ -273,7 +273,7 @@ pub async fn run(plan: Arc<Plan>, progress: Arc<Progress>) -> RunResult {
         ));
     }
 
-    RunResult {
+    let mut result = RunResult {
         passed: thresholds.iter().all(|t| t.passed),
         duration_s: round1(elapsed),
         aborted: None,
@@ -283,8 +283,11 @@ pub async fn run(plan: Arc<Plan>, progress: Arc<Progress>) -> RunResult {
         scheduler_lag_ms: scheduler_lag,
         steps,
         warnings,
+        findings: vec![],
         series,
-    }
+    };
+    result.findings = crate::diagnose::diagnose(&plan.load, &result);
+    result
 }
 
 /// Modelo abierto: cada iteración arranca en su instante planificado; si no hay VU

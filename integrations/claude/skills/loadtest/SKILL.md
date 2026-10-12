@@ -7,7 +7,7 @@ description: Diseña y verifica pruebas de carga con lt (escenarios YAML en .loa
 
 Vos diseñás, verificás y analizás. **La persona aprueba y ejecuta la carga.** Nunca corras `lt approve` ni `lt run` (un hook los bloquea, y `lt run` rechaza todo escenario sin una aprobación firmada): cuando el escenario esté listo, pedile que los corra ella.
 
-Podés usar libremente: `lt validate`, `lt check` (solo contra loopback), `lt schema`.
+Podés usar libremente: `lt validate`, `lt check` (solo contra loopback), `lt schema` y `lt findings`.
 
 ## Diseñar un escenario
 
@@ -98,13 +98,21 @@ Podés usar libremente: `lt validate`, `lt check` (solo contra loopback), `lt sc
 
 ## Analizar resultados
 
-Los resultados están en `.loadtest/runs/<id>/results.json`; el id más alto es el más reciente.
+Empezá siempre por `lt findings --json` (la corrida más reciente; `lt findings <id> --json` para otra). Es un resumen compacto: totales, thresholds, hallazgos y métricas por paso. Abrí `.loadtest/runs/<id>/results.json` solo si necesitás la serie por segundo (`series`).
 
-1. **Primero, si el resultado es válido.** Mirá `warnings`, `totals.dropped` y `scheduler_lag_ms`:
-   - Iteraciones descartadas: el servidor no dio abasto a esa tasa (o `max_vus` era bajo). Es un hallazgo en sí, y las latencias medidas subestiman la real.
-   - Lag del scheduler alto (p99 > 5 ms): el generador fue el cuello de botella. No saques conclusiones.
-2. **Después, thresholds y pasos:** `passed` y `thresholds[]` (valor medido contra el límite); por paso (`steps[]`): `latency_ms` (desde el instante planificado), `ttfb_ms`, `connect_ms`, `status_codes`, `failures`, `error_samples` y `checks[]`. Compará p50 con p99 y los pasos entre sí.
-3. **Por último, el código.** Usá `source` para ir al handler y proponé causas. Separá siempre lo **medido** (con números del resultado) de lo que es **hipótesis**.
+1. **¿El resultado es válido?** Si hay un hallazgo `invalid_result`, decilo primero y no saques conclusiones de esa corrida.
+2. **Hallazgos (`findings[]`)**, de más a menos grave. Cada uno trae `title`, `step`, `source`, `window`, `evidence` (los números) y `causes` (causas probables, no conclusiones):
+   - `breaking_point`: con `ramping_rate`, desde qué tasa se degrada y qué paso empeora más.
+   - `capacity_exceeded`: la tasa pedida supera lo que el sistema sostiene.
+   - `error_threshold`: un paso empieza a fallar desde cierta tasa (o desde el inicio: probablemente un error funcional).
+   - `degradation_over_time`: con carga constante, la latencia sube sostenidamente.
+   - `long_tail`: p99 muy lejos del p50 con carga estable.
+   - `new_connections`: no se reutilizan conexiones.
+3. **Ir al código.** Para cada hallazgo con `source`, abrí ese archivo y ese símbolo y buscá lo que explicaría la evidencia: trabajo de CPU sincrónico, pools chicos, locks, queries sin índice, colecciones que crecen, llamadas externas sin límite de concurrencia.
+4. **Reportá en dos partes, siempre separadas:**
+   - **Medido**: lo que dice el hallazgo, con sus números (`evidence`).
+   - **Hipótesis**: tu explicación desde el código, con archivo y línea, marcada como hipótesis, y cómo confirmarla (por ejemplo, "si es el pool, subirlo de 5 a 20 debería mover el quiebre de ~170 a ~650 it/s; correlo de nuevo con el mismo escenario").
+5. Si no hay hallazgos, mirá los thresholds y los p95/p99 por paso, y decí que no se detectó ningún patrón conocido; no inventes problemas.
 
 ## Referencia
 
