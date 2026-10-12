@@ -422,3 +422,83 @@ fn undefined_extract_variable_is_reported() {
         "{errors:?}"
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn checks_and_thresholds() {
+    let base = server().await;
+    let yaml = "version: 1
+name: t
+flows:
+  browse:
+    weight: 3
+    steps:
+      - name: ok
+        request: { method: GET, url: /ok }
+        checks:
+          - status: 200
+          - body_contains: ok
+  broken:
+    steps:
+      - name: missing
+        request: { method: GET, url: /missing }
+        checks:
+          - status: 404
+          - { json: $.id, exists: true }
+load:
+  executor: constant_rate
+  rate: 100/s
+  duration: 1s
+  max_vus: 50
+thresholds:
+  - { metric: http.latency.p95, lt: 1s }
+  - { metric: http.error_rate, lt: 1% }
+  - { metric: http.error_rate, step: ok, lt: 1% }
+  - { metric: checks.pass_rate, gt: 80% }
+  - { metric: http.rps, gte: 1000 }
+";
+    let s = parse_scenario(yaml).unwrap_or_else(|r| panic!("{r:?}"));
+    let plan = Plan::build(&s, &environment(&base), &Default::default()).unwrap();
+
+    let check = lt_core::check::check(&plan).await.unwrap();
+    assert!(check.steps[0].ok);
+    // El 404 era esperado, pero `$.id` no existe: el paso falla por el check, no por el status.
+    assert!(!check.steps[1].ok);
+    assert_eq!(
+        check.steps[1].checks[1].reason.as_deref(),
+        Some("no existe")
+    );
+
+    let r = engine::run(Arc::new(plan), Arc::new(Progress::default())).await;
+    let passed: Vec<(&str, bool)> = r
+        .thresholds
+        .iter()
+        .map(|t| (t.threshold.as_str(), t.passed))
+        .collect();
+    assert_eq!(
+        passed,
+        [
+            ("http.latency.p95 < 1s", true),
+            ("http.error_rate < 1%", false),
+            ("http.error_rate{step=ok} < 1%", true),
+            ("checks.pass_rate > 80%", true),
+            ("http.rps >= 1000", false),
+        ]
+    );
+    assert_eq!(r.thresholds[1].actual, Some(25.0)); // 25 de 100 respondieron 404
+    assert!(!r.passed);
+    assert_eq!((r.totals.checks_passed, r.totals.checks_failed), (175, 25));
+}
+
+#[test]
+fn threshold_filters_must_match_a_step() {
+    let flows = "  main:\n    steps:\n      - name: a\n        request: { method: GET, url: /x }\n";
+    let yaml = format!(
+        "version: 1\nname: t\nflows:\n{flows}load:\n  executor: constant_rate\n  rate: 1/s\n  duration: 1s\n  max_vus: 1\n\
+         thresholds:\n  - {{ metric: http.rps, step: nope, gt: 1 }}\n"
+    );
+    let s = parse_scenario(&yaml).unwrap();
+    let errors = Plan::build(&s, &environment("http://127.0.0.1:1"), &Default::default())
+        .err()
+        .unwrap();
+    assert!(errors[0].contains("ningún paso"), "{errors:?}");
+}

@@ -1,4 +1,4 @@
-//! Agregación de métricas por paso y resultados de una corrida.
+//! Agregación de métricas por paso, checks, thresholds y resultados de una corrida.
 
 use std::{collections::BTreeMap, time::Duration};
 
@@ -8,9 +8,10 @@ use serde::Serialize;
 use crate::{
     engine::{
         http::{FailureKind, Timings},
-        plan::Plan,
+        plan::{Plan, StepPlan},
     },
     scenario::Source,
+    threshold::{Filter, Metric, Stat, ThresholdResult},
 };
 
 pub fn histogram() -> Histogram<u64> {
@@ -64,11 +65,19 @@ pub enum Outcome {
     Failure { kind: FailureKind, message: String },
 }
 
-pub struct StepStats {
+struct CheckCount {
+    label: String,
+    passed: u64,
+    failed: u64,
+    samples: Vec<String>,
+}
+
+struct StepStats {
     requests: u64,
     statuses: BTreeMap<u16, u64>,
     failures: BTreeMap<FailureKind, u64>,
     error_samples: Vec<String>,
+    checks: Vec<CheckCount>,
     latency: Histogram<u64>,
     ttfb: Histogram<u64>,
     connect: Histogram<u64>,
@@ -77,18 +86,46 @@ pub struct StepStats {
 }
 
 impl StepStats {
-    fn new() -> Self {
+    fn new(step: &StepPlan) -> Self {
         Self {
             requests: 0,
             statuses: BTreeMap::new(),
             failures: BTreeMap::new(),
             error_samples: Vec::new(),
+            checks: step
+                .checks
+                .iter()
+                .map(|c| CheckCount {
+                    label: c.label.clone(),
+                    passed: 0,
+                    failed: 0,
+                    samples: vec![],
+                })
+                .collect(),
             latency: histogram(),
             ttfb: histogram(),
             connect: histogram(),
             tls: histogram(),
             dns: histogram(),
         }
+    }
+
+    fn sample(&mut self, message: String) {
+        if self.error_samples.len() < 3 && !self.error_samples.contains(&message) {
+            self.error_samples.push(message);
+        }
+    }
+
+    /// Requests sin respuesta, con `extract` fallido o con status >= 400.
+    fn errors(&self) -> u64 {
+        let failures: u64 = self.failures.values().sum();
+        let http_errors: u64 = self
+            .statuses
+            .iter()
+            .filter(|(c, _)| **c >= 400)
+            .map(|(_, n)| n)
+            .sum();
+        failures + http_errors
     }
 }
 
@@ -100,7 +137,7 @@ pub struct Collector {
 impl Collector {
     pub fn new(plan: &Plan) -> Self {
         Self {
-            steps: plan.steps().map(|_| StepStats::new()).collect(),
+            steps: plan.steps().map(StepStats::new).collect(),
         }
     }
 
@@ -125,9 +162,7 @@ impl Collector {
             }
             Outcome::Failure { kind, message } => {
                 *s.failures.entry(kind).or_default() += 1;
-                if s.error_samples.len() < 3 && !s.error_samples.contains(&message) {
-                    s.error_samples.push(message);
-                }
+                s.sample(message);
             }
         }
     }
@@ -136,9 +171,50 @@ impl Collector {
     pub fn record_extract_failure(&mut self, step: usize, message: String) {
         let s = &mut self.steps[step];
         *s.failures.entry(FailureKind::Extract).or_default() += 1;
-        if s.error_samples.len() < 3 && !s.error_samples.contains(&message) {
-            s.error_samples.push(message);
+        s.sample(message);
+    }
+
+    /// Un resultado por check del paso: `None` si pasó, o por qué falló.
+    pub fn record_checks(&mut self, step: usize, results: &[Option<String>]) {
+        for (count, result) in self.steps[step].checks.iter_mut().zip(results) {
+            match result {
+                None => count.passed += 1,
+                Some(why) => {
+                    count.failed += 1;
+                    if count.samples.len() < 3 && !count.samples.contains(why) {
+                        count.samples.push(why.clone());
+                    }
+                }
+            }
         }
+    }
+
+    /// Evalúa los thresholds del plan sobre lo acumulado.
+    pub fn thresholds(&self, plan: &Plan, duration_s: f64) -> Vec<ThresholdResult> {
+        plan.thresholds
+            .iter()
+            .map(|t| {
+                let selected: Vec<&StepStats> = plan
+                    .steps()
+                    .zip(&self.steps)
+                    .filter(|(p, _)| match &t.filter {
+                        Filter::All => true,
+                        Filter::Step(name) => &p.name == name,
+                        Filter::Tag(tag) => p.tags.contains(tag),
+                    })
+                    .map(|(_, s)| s)
+                    .collect();
+                let actual = measure(t.metric, &selected, duration_s);
+                ThresholdResult {
+                    threshold: t.label.clone(),
+                    op: t.op,
+                    limit: t.limit,
+                    actual: actual.map(round),
+                    unit: t.unit(),
+                    passed: actual.is_some_and(|a| t.passes(a)),
+                }
+            })
+            .collect()
     }
 
     pub fn finish(self, plan: &Plan) -> Vec<StepResult> {
@@ -168,6 +244,16 @@ impl Collector {
                         .collect(),
                     failures: s.failures,
                     error_samples: s.error_samples,
+                    checks: s
+                        .checks
+                        .into_iter()
+                        .map(|c| CheckResult {
+                            check: c.label,
+                            passed: c.passed,
+                            failed: c.failed,
+                            samples: c.samples,
+                        })
+                        .collect(),
                     latency_ms: Percentiles::from(&s.latency),
                     ttfb_ms: Percentiles::from(&s.ttfb),
                     connect_ms: Percentiles::from(&s.connect),
@@ -177,6 +263,48 @@ impl Collector {
             })
             .collect()
     }
+}
+
+/// Valor de la métrica sobre los pasos elegidos. `None` si no hubo datos.
+fn measure(metric: Metric, steps: &[&StepStats], duration_s: f64) -> Option<f64> {
+    let requests: u64 = steps.iter().map(|s| s.requests).sum();
+    match metric {
+        Metric::Latency(stat) => {
+            let mut merged = histogram();
+            for s in steps {
+                merged.add(&s.latency).ok()?;
+            }
+            if merged.is_empty() {
+                return None;
+            }
+            let us = match stat {
+                Stat::Quantile(p) => merged.value_at_quantile(p / 100.0) as f64,
+                Stat::Avg => merged.mean(),
+                Stat::Max => merged.max() as f64,
+            };
+            Some(us / 1000.0)
+        }
+        Metric::ErrorRate => (requests > 0).then(|| {
+            100.0 * steps.iter().map(|s| s.errors()).sum::<u64>() as f64 / requests as f64
+        }),
+        Metric::Rps => (duration_s > 0.0).then(|| requests as f64 / duration_s),
+        Metric::ChecksPassRate => {
+            let (passed, total) = steps
+                .iter()
+                .flat_map(|s| &s.checks)
+                .fold((0, 0), |(p, t), c| (p + c.passed, t + c.passed + c.failed));
+            (total > 0).then(|| 100.0 * passed as f64 / total as f64)
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct CheckResult {
+    pub check: String,
+    pub passed: u64,
+    pub failed: u64,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub samples: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -190,7 +318,7 @@ pub struct StepResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<Source>,
     pub requests: u64,
-    /// Requests sin respuesta (error de red, TLS, timeout).
+    /// Requests sin respuesta (error de red, TLS, timeout) o con `extract` fallido.
     pub failed: u64,
     /// Respuestas con código fuera de 2xx.
     pub non_2xx: u64,
@@ -198,6 +326,8 @@ pub struct StepResult {
     pub failures: BTreeMap<FailureKind, u64>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub error_samples: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub checks: Vec<CheckResult>,
     pub latency_ms: Option<Percentiles>,
     pub ttfb_ms: Option<Percentiles>,
     pub connect_ms: Option<Percentiles>,
@@ -205,7 +335,7 @@ pub struct StepResult {
     pub dns_ms: Option<Percentiles>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Default, Serialize)]
 pub struct Totals {
     /// Iteraciones que el scheduler planificó.
     pub planned: u64,
@@ -218,6 +348,8 @@ pub struct Totals {
     pub requests: u64,
     pub failed: u64,
     pub non_2xx: u64,
+    pub checks_passed: u64,
+    pub checks_failed: u64,
     /// Iteraciones iniciadas por segundo durante el período planificado.
     pub iteration_rate: f64,
     pub request_rate: f64,
@@ -225,6 +357,8 @@ pub struct Totals {
 
 #[derive(Debug, Serialize)]
 pub struct RunResult {
+    /// Verdadero si la corrida terminó y pasaron todos los thresholds.
+    pub passed: bool,
     pub duration_s: f64,
     /// Por qué no se generó carga, si el `setup` falló.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -232,6 +366,8 @@ pub struct RunResult {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub setup: Vec<SetupStep>,
     pub totals: Totals,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub thresholds: Vec<ThresholdResult>,
     pub scheduler_lag_ms: Option<Percentiles>,
     pub steps: Vec<StepResult>,
     pub warnings: Vec<String>,
@@ -254,20 +390,12 @@ impl RunResult {
     /// Corrida abortada antes de generar carga.
     pub fn aborted(plan: &Plan, setup: Vec<SetupStep>, reason: String) -> Self {
         Self {
+            passed: false,
             duration_s: 0.0,
             aborted: Some(reason),
             setup,
-            totals: Totals {
-                planned: 0,
-                started: 0,
-                dropped: 0,
-                interrupted: 0,
-                requests: 0,
-                failed: 0,
-                non_2xx: 0,
-                iteration_rate: 0.0,
-                request_rate: 0.0,
-            },
+            totals: Totals::default(),
+            thresholds: vec![],
             scheduler_lag_ms: None,
             steps: Collector::new(plan).finish(plan),
             warnings: vec![],

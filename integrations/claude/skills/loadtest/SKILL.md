@@ -72,7 +72,18 @@ Podés usar libremente: `lt validate`, `lt check` (solo contra loopback), `lt sc
        headers: { Authorization: "Bearer {{token}}" }
      ```
      Lo extraído en `setup` vale para todos los flows; lo extraído en un flow, solo para los pasos siguientes de esa iteración. Si el `setup` falla, la corrida se aborta; si un `extract` falla, se corta esa iteración.
-   - **Todavía no soportado:** checks, thresholds y otros executors.
+   - **Checks** (en cada paso, no bloqueantes): `- status: 201`, `- status_in: [200, 201]`, `- { json: $.id, exists: true }`, `- { json: $.status, equals: paid }` (admite `"{{variable}}"`), `- { json: $.name, matches: "^a" }`, `- { header: content-type, contains: json }`, `- body_contains: ok`, `- body_matches: "regex"`. Si un paso tiene checks de status, `lt check` no exige 2xx.
+   - **Thresholds** (en la raíz; si alguno falla, `lt run` sale con código 1):
+     ```yaml
+     thresholds:
+       - { metric: http.latency.p95, lt: 300ms }            # p50…p99.9, avg, max
+       - { metric: http.latency.p99, step: create_order, lt: 800ms }   # o tag: write
+       - { metric: http.error_rate, lt: 1% }                # sin respuesta o status >= 400
+       - { metric: checks.pass_rate, gt: 99% }
+       - { metric: http.rps, gte: 40 }
+     ```
+     Checks y thresholds no cambian el tráfico: editarlos no invalida la aprobación.
+   - **Todavía no soportado:** executors distintos de `constant_rate`.
 4. **Validá:** `lt validate <nombre> --json`. Corregí hasta que `valid` sea `true`. Cada error trae `path`, `line` y `message`.
 5. **Verificá:** `lt check <nombre> --json` corre cada flow una vez, en serie. Solo funciona si el entorno apunta a la máquina local; si no, saltealo y decilo. Revisá `status` y `body` de cada paso: un 404 suele ser un ID inexistente, un 401 la auth y un 400 el body.
 6. **Entregá** un resumen corto (flows y pesos, tasa, duración, requests/s máximos, pasos que escriben) y los comandos exactos para la persona:
@@ -89,11 +100,11 @@ Los resultados están en `.loadtest/runs/<id>/results.json`; el id más alto es 
 1. **Primero, si el resultado es válido.** Mirá `warnings`, `totals.dropped` y `scheduler_lag_ms`:
    - Iteraciones descartadas: el servidor no dio abasto a esa tasa (o `max_vus` era bajo). Es un hallazgo en sí, y las latencias medidas subestiman la real.
    - Lag del scheduler alto (p99 > 5 ms): el generador fue el cuello de botella. No saques conclusiones.
-2. **Después, por paso** (`steps[]`): `latency_ms` (desde el instante planificado), `ttfb_ms`, `connect_ms`, `status_codes`, `failures` y `error_samples`. Compará p50 con p99 y los pasos entre sí.
+2. **Después, thresholds y pasos:** `passed` y `thresholds[]` (valor medido contra el límite); por paso (`steps[]`): `latency_ms` (desde el instante planificado), `ttfb_ms`, `connect_ms`, `status_codes`, `failures`, `error_samples` y `checks[]`. Compará p50 con p99 y los pasos entre sí.
 3. **Por último, el código.** Usá `source` para ir al handler y proponé causas. Separá siempre lo **medido** (con números del resultado) de lo que es **hipótesis**.
 
 ## Referencia
 
 - `lt schema`: JSON Schema completo del escenario, con descripción de cada campo.
 - Unidades: duraciones `500ms`, `30s`, `2m`, `1h`; tasas `50/s`, `3000/m`.
-- Códigos de salida: `0` ok · `1` `check` con pasos fallidos · `2` escenario o configuración inválidos · `3` rechazado (host no permitido, límites, no es loopback, sin aprobación válida).
+- Códigos de salida: `0` ok · `1` falló (`check` con pasos fallidos, thresholds no cumplidos o `setup` fallido) · `2` escenario o configuración inválidos · `3` rechazado (host no permitido, límites, no es loopback, sin aprobación válida).

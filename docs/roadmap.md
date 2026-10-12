@@ -83,8 +83,9 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente.
 **4. Escenario completo**
 - [x] `setup`, `extract` (json, header, regex), `defaults`, varios flows con `weight`
 - [x] Interpolación con preservación de tipo y placeholders dinámicos, `{{env.X}}` para `secrets`, `--var`, `defaults`
-- [ ] Executors `constant_vus` y `ramping_rate`; checks y thresholds
-- [ ] Códigos de salida: pasa, thresholds fallidos, error de configuración
+- [x] Checks y thresholds
+- [ ] Executors `constant_vus` y `ramping_rate`
+- [x] Códigos de salida: pasa, thresholds fallidos (1), error de configuración (2)
 
 **5. Diagnóstico**
 - [ ] Series por segundo (latencia, RPS, errores) y desglose de timings

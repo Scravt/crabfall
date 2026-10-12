@@ -65,6 +65,13 @@ pub fn cmd_check(target: &crate::Target, as_json: bool) -> u8 {
             for (name, value) in &s.extracted {
                 println!("    {name} = {value}");
             }
+            for c in s.checks.iter().filter(|c| !c.passed) {
+                println!(
+                    "    ✗ {}: {}",
+                    c.check,
+                    c.reason.as_deref().unwrap_or_default()
+                );
+            }
             if let Some(f) = &s.failure
                 && s.status.is_some()
             {

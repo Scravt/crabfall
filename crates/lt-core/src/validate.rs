@@ -7,8 +7,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
+    assertion::Assertion,
     extract::Extractor,
     scenario::{Executor, FORMAT_VERSION, Load, Scenario, Step},
+    threshold::ThresholdPlan,
 };
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -194,6 +196,11 @@ fn check_rules(s: &Scenario, errors: &mut Vec<Issue>) {
     }
 
     check_load(&s.load, errors);
+    for (i, t) in s.thresholds.iter().enumerate() {
+        if let Err(e) = ThresholdPlan::parse(t) {
+            errors.push(Issue::at(format!("thresholds[{i}]"), e));
+        }
+    }
 }
 
 fn check_step<'a>(
@@ -256,6 +263,11 @@ fn check_step<'a>(
         }
         if let Err(e) = Extractor::parse(spec) {
             errors.push(Issue::at(format!("{path}.extract.{name}"), e));
+        }
+    }
+    for (i, check) in step.checks.iter().enumerate() {
+        if let Err(e) = Assertion::parse(check) {
+            errors.push(Issue::at(format!("{path}.checks[{i}]"), e));
         }
     }
 }
