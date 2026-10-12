@@ -4,7 +4,7 @@
 //! - `GET /ok`          responde al instante.
 //! - `GET /delay/{ms}`  responde después de `ms` milisegundos.
 //! - `GET /pool/{ms}`   como `/delay`, pero solo `--pool` requests a la vez;
-//!                      el resto espera. Capacidad: pool × 1000 / ms req/s.
+//!   el resto espera. Capacidad: pool × 1000 / ms req/s.
 
 use std::{sync::Arc, time::Duration};
 
