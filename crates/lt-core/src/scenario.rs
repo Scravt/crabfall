@@ -11,7 +11,10 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::units::{HumanDuration, Rate};
+use crate::{
+    load::{LoadPlan, Segment},
+    units::{HumanDuration, Rate},
+};
 
 pub const FORMAT_VERSION: u32 = 1;
 
@@ -210,7 +213,9 @@ pub struct Source {
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Load {
-    /// `constant_rate`: inicia `rate` iteraciones por segundo durante `duration`, sin esperar respuestas. Requiere `rate`, `duration` y `max_vus`.
+    /// `constant_rate`: `rate` iteraciones/s durante `duration` (requiere `rate`, `duration`, `max_vus`).
+    /// `ramping_rate`: la tasa va de `start_rate` a cada `target` de `stages` (requiere `stages`, `max_vus`).
+    /// `constant_vus`: `vus` usuarios en loop durante `duration`; la tasa depende de la latencia (requiere `vus`, `duration`).
     pub executor: Executor,
     /// Iteraciones por segundo, por ejemplo `50/s` o `3000/m`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -222,6 +227,16 @@ pub struct Load {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(range(min = 1))]
     pub max_vus: Option<u32>,
+    /// Tasa inicial de `ramping_rate`. Por defecto `0/s`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_rate: Option<Rate>,
+    /// Etapas de `ramping_rate`: la tasa cambia linealmente hasta `target` en `duration`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stages: Option<Vec<Stage>>,
+    /// Usuarios concurrentes de `constant_vus`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(range(min = 1))]
+    pub vus: Option<u32>,
     /// Cuánto se espera a las iteraciones en curso al terminar. Por defecto 30s.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub graceful_stop: Option<HumanDuration>,
@@ -231,17 +246,16 @@ pub struct Load {
 #[serde(rename_all = "snake_case")]
 pub enum Executor {
     ConstantRate,
+    RampingRate,
+    ConstantVus,
 }
 
-/// `load` ya validado, listo para el motor.
-#[derive(Debug, Clone, Copy)]
-pub enum LoadPlan {
-    ConstantRate {
-        rate: Rate,
-        duration: Duration,
-        max_vus: u32,
-        graceful_stop: Duration,
-    },
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Stage {
+    /// Tasa al final de la etapa, por ejemplo `100/s`.
+    pub target: Rate,
+    pub duration: HumanDuration,
 }
 
 pub const DEFAULT_GRACEFUL_STOP: Duration = Duration::from_secs(30);
@@ -249,12 +263,50 @@ pub const DEFAULT_GRACEFUL_STOP: Duration = Duration::from_secs(30);
 impl Load {
     /// Requiere que el escenario haya pasado `validate`.
     pub fn plan(&self) -> LoadPlan {
+        let graceful_stop = self.graceful_stop.map_or(DEFAULT_GRACEFUL_STOP, |g| g.0);
         match self.executor {
-            Executor::ConstantRate => LoadPlan::ConstantRate {
-                rate: self.rate.expect("validado"),
+            Executor::ConstantRate => {
+                let rate = self.rate.expect("validado").per_second();
+                LoadPlan::Open {
+                    ramping: false,
+                    segments: vec![Segment {
+                        from: rate,
+                        to: rate,
+                        duration: self.duration.expect("validado").0,
+                    }],
+                    max_vus: self.max_vus.expect("validado"),
+                    graceful_stop,
+                }
+            }
+            Executor::RampingRate => {
+                let mut from = self.start_rate.map_or(0.0, |r| r.per_second());
+                let segments = self
+                    .stages
+                    .as_deref()
+                    .expect("validado")
+                    .iter()
+                    .map(|s| {
+                        let to = s.target.per_second();
+                        let segment = Segment {
+                            from,
+                            to,
+                            duration: s.duration.0,
+                        };
+                        from = to;
+                        segment
+                    })
+                    .collect();
+                LoadPlan::Open {
+                    ramping: true,
+                    segments,
+                    max_vus: self.max_vus.expect("validado"),
+                    graceful_stop,
+                }
+            }
+            Executor::ConstantVus => LoadPlan::Closed {
+                vus: self.vus.expect("validado"),
                 duration: self.duration.expect("validado").0,
-                max_vus: self.max_vus.expect("validado"),
-                graceful_stop: self.graceful_stop.map_or(DEFAULT_GRACEFUL_STOP, |g| g.0),
+                graceful_stop,
             },
         }
     }
@@ -268,17 +320,16 @@ impl Scenario {
             .flat_map(|(flow, f)| f.steps.iter().map(move |s| (flow.as_str(), s)))
     }
 
-    /// Cota de requests por segundo: tasa de iteraciones × máximo de pasos por flow.
-    pub fn max_request_rate(&self) -> f64 {
+    /// Cota de requests/s: tasa máxima de iteraciones × máximo de pasos por flow.
+    /// `None` con `constant_vus`, cuya tasa depende de la latencia.
+    pub fn max_request_rate(&self) -> Option<f64> {
         let max_steps = self
             .flows
             .values()
             .map(|f| f.steps.len())
             .max()
             .unwrap_or(0);
-        match self.load.plan() {
-            LoadPlan::ConstantRate { rate, .. } => rate.per_second() * max_steps as f64,
-        }
+        self.load.plan().peak_rate().map(|r| r * max_steps as f64)
     }
 }
 

@@ -280,23 +280,38 @@ fn valid_var_name(name: &str) -> bool {
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
-fn check_load(load: &Load, errors: &mut Vec<Issue>) {
-    let l = load;
-    match l.executor {
-        Executor::ConstantRate => {
-            let required = [
-                ("rate", l.rate.is_some()),
-                ("duration", l.duration.is_some()),
-                ("max_vus", l.max_vus.is_some()),
-            ];
-            for (field, present) in required {
-                if !present {
-                    errors.push(Issue::at(
-                        format!("load.{field}"),
-                        format!("falta `{field}` (obligatorio en constant_rate)"),
-                    ));
-                }
-            }
+fn check_load(l: &Load, errors: &mut Vec<Issue>) {
+    let (required, allowed): (&[&str], &[&str]) = match l.executor {
+        Executor::ConstantRate => (&["rate", "duration", "max_vus"], &["graceful_stop"]),
+        Executor::RampingRate => (&["stages", "max_vus"], &["start_rate", "graceful_stop"]),
+        Executor::ConstantVus => (&["vus", "duration"], &["graceful_stop"]),
+    };
+    let present = [
+        ("rate", l.rate.is_some()),
+        ("duration", l.duration.is_some()),
+        ("max_vus", l.max_vus.is_some()),
+        ("start_rate", l.start_rate.is_some()),
+        ("stages", l.stages.is_some()),
+        ("vus", l.vus.is_some()),
+        ("graceful_stop", l.graceful_stop.is_some()),
+    ];
+    let executor = serde_json::to_value(l.executor).unwrap();
+    let executor = executor.as_str().unwrap_or_default();
+    for (field, is_present) in present {
+        if required.contains(&field) && !is_present {
+            errors.push(Issue::at(
+                format!("load.{field}"),
+                format!("falta `{field}` (obligatorio en {executor})"),
+            ));
+        }
+        if is_present && !required.contains(&field) && !allowed.contains(&field) {
+            errors.push(Issue::at(
+                format!("load.{field}"),
+                format!(
+                    "`{field}` no aplica a {executor} (usá: {})",
+                    [required, allowed].concat().join(", ")
+                ),
+            ));
         }
     }
     if l.rate.is_some_and(|r| r.count == 0) {
@@ -305,8 +320,36 @@ fn check_load(load: &Load, errors: &mut Vec<Issue>) {
     if l.duration.is_some_and(|d| d.0.is_zero()) {
         errors.push(Issue::at("load.duration", "tiene que ser mayor que 0"));
     }
-    if l.max_vus == Some(0) {
-        errors.push(Issue::at("load.max_vus", "tiene que ser mayor que 0"));
+    for (field, value) in [("max_vus", l.max_vus), ("vus", l.vus)] {
+        if value == Some(0) {
+            errors.push(Issue::at(
+                format!("load.{field}"),
+                "tiene que ser mayor que 0",
+            ));
+        }
+    }
+    if let Some(stages) = &l.stages {
+        if stages.is_empty() {
+            errors.push(Issue::at(
+                "load.stages",
+                "tiene que haber al menos una etapa",
+            ));
+        }
+        for (i, s) in stages.iter().enumerate() {
+            if s.duration.0.is_zero() {
+                errors.push(Issue::at(
+                    format!("load.stages[{i}].duration"),
+                    "tiene que ser mayor que 0",
+                ));
+            }
+        }
+        let start = l.start_rate.map_or(0, |r| r.count);
+        if start == 0 && stages.iter().all(|s| s.target.count == 0) {
+            errors.push(Issue::at(
+                "load.stages",
+                "todas las tasas son 0: no se generaría carga",
+            ));
+        }
     }
 }
 
@@ -338,7 +381,7 @@ load:
     fn accepts_minimal_scenario() {
         let s = parse_scenario(OK).unwrap();
         assert_eq!(s.flows["main"].weight, 1);
-        assert_eq!(s.max_request_rate(), 50.0);
+        assert_eq!(s.max_request_rate(), Some(50.0));
     }
 
     #[test]
@@ -391,8 +434,33 @@ load:
     fn load_errors_have_path() {
         let e = &errors(&OK.replace("  max_vus: 10\n", ""))[0];
         assert_eq!(e.path, "load.max_vus");
-        let e = &errors(&OK.replace("constant_rate", "constant_vus"))[0];
+        let e = &errors(&OK.replace("constant_rate", "constant_arrival"))[0];
         assert_eq!((e.path.as_str(), e.line), ("load.executor", Some(11)));
+        // Campos que no aplican al executor elegido.
+        let paths: Vec<_> = errors(&OK.replace("constant_rate", "constant_vus"))
+            .into_iter()
+            .map(|e| e.path)
+            .collect();
+        assert_eq!(paths, ["load.rate", "load.max_vus", "load.vus"]);
+    }
+
+    #[test]
+    fn ramping_rate_needs_stages() {
+        let ramp = OK.replace(
+            "  rate: 50/s
+  duration: 30s
+",
+            "  start_rate: 0/s
+  stages:
+    - { target: 100/s, duration: 1m }
+    - { target: 0/s, duration: 10s }
+",
+        );
+        let ramp = ramp.replace("constant_rate", "ramping_rate");
+        let s = parse_scenario(&ramp).unwrap();
+        assert_eq!(s.max_request_rate(), Some(100.0));
+        let e = &errors(&ramp.replace("100/s", "0/s"))[0];
+        assert!(e.message.contains("todas las tasas son 0"), "{}", e.message);
     }
 
     #[test]

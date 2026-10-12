@@ -23,7 +23,8 @@ use crate::{
     assertion::Assertion,
     config::Environment,
     extract::Extractor,
-    scenario::{Defaults, LoadPlan, Scenario, Source, Step},
+    load::LoadPlan,
+    scenario::{Defaults, Scenario, Source, Step},
     template::{Scope, Template, ValueTemplate, to_text},
     threshold::{Filter, ThresholdPlan},
     units::HumanDuration,
@@ -55,7 +56,10 @@ pub struct Plan {
     pub load: LoadPlan,
     /// Hosts a los que se va a conectar.
     pub hosts: BTreeSet<String>,
-    pub max_request_rate: f64,
+    /// Cota de requests/s; `None` con `constant_vus`.
+    pub max_request_rate: Option<f64>,
+    /// `limits.max_rps` del entorno: el motor no lo supera aunque la tasa no esté acotada.
+    pub request_cap: Option<f64>,
     /// Variables globales: escenario < entorno < `--var`.
     pub vars: BTreeMap<String, Value>,
     /// Valores de los secretos usados. Nunca se muestran ni se firman.
@@ -276,6 +280,7 @@ impl Plan {
             load: scenario.load.plan(),
             hosts,
             max_request_rate: scenario.max_request_rate(),
+            request_cap: env.limits.max_rps,
             vars,
             secrets,
             thresholds: Vec::new(),
@@ -309,12 +314,6 @@ impl Plan {
     /// aprobación (ADR-004 §1). Incluye el entorno resuelto y las variables; excluye
     /// `description`, `meta`, `source` y los valores de los secretos. El orden es fijo.
     pub fn canonical(&self, env: &Environment) -> Value {
-        let LoadPlan::ConstantRate {
-            rate,
-            duration,
-            max_vus,
-            graceful_stop,
-        } = self.load;
         let d = |d: Duration| HumanDuration(d).to_string();
         let mut allowed: Vec<String> = env
             .allowed_hosts
@@ -369,16 +368,24 @@ impl Plan {
                 },
             },
             "vars": self.vars.iter().map(|(k, v)| json!([k, v])).collect::<Vec<_>>(),
-            "load": {
-                "executor": "constant_rate",
-                "rate": rate.to_string(),
-                "duration": d(duration),
-                "max_vus": max_vus,
-                "graceful_stop": d(graceful_stop),
-            },
+            "load": self.load.canonical(),
             "setup": setup,
             "flows": flows,
         })
+    }
+
+    /// Cuánta carga puede generar, en requests/s, para resúmenes.
+    pub fn rate_summary(&self) -> String {
+        match (self.max_request_rate, self.request_cap) {
+            (Some(rate), _) => format!("hasta {rate:.1} requests/s"),
+            (None, Some(cap)) => {
+                format!("según la latencia, con tope de {cap} requests/s (limits.max_rps)")
+            }
+            (None, None) => {
+                "según la latencia, sin tope (definí limits.max_rps en el entorno para acotarla)"
+                    .into()
+            }
+        }
     }
 
     /// Pasos de los flows (los que generan carga y tienen métricas).
@@ -394,30 +401,31 @@ impl Plan {
     /// Límites duros del entorno (ADR-004). `run` los exige; `check` no los necesita
     /// porque ignora `load`.
     pub fn limit_violations(&self, env: &Environment) -> Vec<String> {
-        let LoadPlan::ConstantRate {
-            duration, max_vus, ..
-        } = self.load;
         let limits = &env.limits;
         let mut out = Vec::new();
-        if let Some(max) = limits.max_rps
-            && self.max_request_rate > max
+        // Con `constant_vus` la tasa no está acotada de antemano: el motor la frena a `max_rps`.
+        if let (Some(max), Some(rate)) = (limits.max_rps, self.max_request_rate)
+            && rate > max
         {
             out.push(format!(
-                "la tasa máxima de requests ({:.1}/s) supera limits.max_rps ({max})",
-                self.max_request_rate
+                "la tasa máxima de requests ({rate:.1}/s) supera limits.max_rps ({max})"
             ));
         }
+        let concurrency = self.load.concurrency();
         if let Some(max) = limits.max_vus
-            && max_vus > max
+            && concurrency > max
         {
             out.push(format!(
-                "load.max_vus ({max_vus}) supera limits.max_vus ({max})"
+                "la concurrencia ({concurrency}) supera limits.max_vus ({max})"
             ));
         }
         if let Some(max) = limits.max_duration
-            && duration > max.0
+            && self.load.duration() > max.0
         {
-            out.push(format!("load.duration supera limits.max_duration ({max})"));
+            out.push(format!(
+                "la duración ({}) supera limits.max_duration ({max})",
+                HumanDuration(self.load.duration())
+            ));
         }
         out
     }

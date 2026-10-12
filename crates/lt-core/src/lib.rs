@@ -6,6 +6,7 @@ pub mod check;
 pub mod config;
 pub mod engine;
 pub mod extract;
+pub mod load;
 pub mod metrics;
 pub mod project;
 pub mod scenario;

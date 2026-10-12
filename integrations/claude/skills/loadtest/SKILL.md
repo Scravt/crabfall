@@ -83,7 +83,10 @@ Podés usar libremente: `lt validate`, `lt check` (solo contra loopback), `lt sc
        - { metric: http.rps, gte: 40 }
      ```
      Checks y thresholds no cambian el tráfico: editarlos no invalida la aprobación.
-   - **Todavía no soportado:** executors distintos de `constant_rate`.
+   - **Executors:**
+     - `constant_rate` (`rate`, `duration`, `max_vus`): tasa fija; el default para medir latencia.
+     - `ramping_rate` (`start_rate`, `stages: [{ target: 200/s, duration: 2m }, …]`, `max_vus`): la tasa cambia linealmente; usalo para buscar el punto de quiebre.
+     - `constant_vus` (`vus`, `duration`): N usuarios en loop; la tasa depende de la latencia. Usalo solo si piden "N usuarios concurrentes"; para medir latencia preferí los de tasa.
 4. **Validá:** `lt validate <nombre> --json`. Corregí hasta que `valid` sea `true`. Cada error trae `path`, `line` y `message`.
 5. **Verificá:** `lt check <nombre> --json` corre cada flow una vez, en serie. Solo funciona si el entorno apunta a la máquina local; si no, saltealo y decilo. Revisá `status` y `body` de cada paso: un 404 suele ser un ID inexistente, un 401 la auth y un 400 el body.
 6. **Entregá** un resumen corto (flows y pesos, tasa, duración, requests/s máximos, pasos que escriben) y los comandos exactos para la persona:

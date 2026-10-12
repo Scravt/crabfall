@@ -502,3 +502,59 @@ fn threshold_filters_must_match_a_step() {
         .unwrap();
     assert!(errors[0].contains("ningún paso"), "{errors:?}");
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn ramping_rate_follows_its_stages() {
+    let base = server().await;
+    let flows =
+        "  main:\n    steps:\n      - name: ok\n        request: { method: GET, url: /ok }\n";
+    let yaml = format!(
+        "version: 1\nname: ramp\nflows:\n{flows}load:\n  executor: ramping_rate\n  start_rate: 0/s\n  stages:\n\
+         \x20   - {{ target: 100/s, duration: 1s }}\n    - {{ target: 0/s, duration: 1s }}\n  max_vus: 20\n"
+    );
+    let plan = Plan::build(
+        &parse_scenario(&yaml).unwrap(),
+        &environment(&base),
+        &Default::default(),
+    )
+    .unwrap();
+    let r = engine::run(Arc::new(plan), Arc::new(Progress::default())).await;
+    // Área del triángulo: (100/s × 2 s) / 2 = 100 iteraciones.
+    assert_eq!(
+        (r.totals.planned, r.totals.started, r.totals.dropped),
+        (100, 100, 0)
+    );
+    assert!(r.warnings.is_empty(), "{:?}", r.warnings);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn constant_vus_loops_and_respects_max_rps() {
+    let base = server().await;
+    let flows =
+        "  main:\n    steps:\n      - name: slow\n        request: { method: GET, url: /slow }\n";
+    let yaml = format!(
+        "version: 1\nname: vus\nflows:\n{flows}load:\n  executor: constant_vus\n  vus: 2\n  duration: 1s\n"
+    );
+    let s = parse_scenario(&yaml).unwrap();
+
+    // Sin tope: 2 VUs × (1 s / 300 ms) ≈ 6-8 iteraciones, una detrás de otra.
+    let plan = Plan::build(&s, &environment(&base), &Default::default()).unwrap();
+    assert_eq!(plan.max_request_rate, None);
+    let r = engine::run(Arc::new(plan), Arc::new(Progress::default())).await;
+    assert!((6..=8).contains(&r.totals.started), "{}", r.totals.started);
+    assert_eq!(r.totals.planned, r.totals.started);
+    assert!(r.scheduler_lag_ms.is_none());
+
+    // Con limits.max_rps = 2: a lo sumo ~2 inicios por segundo, y se avisa.
+    let mut env = environment(&base);
+    env.limits.max_rps = Some(2.0);
+    let plan = Plan::build(&s, &env, &Default::default()).unwrap();
+    assert!(plan.limit_violations(&env).is_empty());
+    let r = engine::run(Arc::new(plan), Arc::new(Progress::default())).await;
+    assert!(r.totals.started <= 3, "{}", r.totals.started);
+    assert!(
+        r.warnings.iter().any(|w| w.contains("max_rps")),
+        "{:?}",
+        r.warnings
+    );
+}

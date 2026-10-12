@@ -84,8 +84,9 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente.
 - [x] `setup`, `extract` (json, header, regex), `defaults`, varios flows con `weight`
 - [x] Interpolación con preservación de tipo y placeholders dinámicos, `{{env.X}}` para `secrets`, `--var`, `defaults`
 - [x] Checks y thresholds
-- [ ] Executors `constant_vus` y `ramping_rate`
+- [x] Executors `ramping_rate` (calendario exacto por tramos) y `constant_vus` (con pacer si hay `limits.max_rps`)
 - [x] Códigos de salida: pasa, thresholds fallidos (1), error de configuración (2)
+- Listo: `shop-api` hace login real en `setup`, encadena `token` y `order_id`, y verifica con checks y thresholds.
 
 **5. Diagnóstico**
 - [ ] Series por segundo (latencia, RPS, errores) y desglose de timings
@@ -122,3 +123,5 @@ Más reglas de diagnóstico, reporte HTML, comparación contra una corrida base,
 | 12 oct 2026 | YAML con `serde-saphyr` + `serde_path_to_error` (D5) | ADR-002 §10 |
 | 12 oct 2026 | La aprobación firma el plan canónico resuelto; `approve` exige terminal siempre; `run` solo verifica la firma; sin vencimiento | ADR-004 |
 | 12 oct 2026 | Cada trabajo en su rama, merge `--no-ff` a `dev`; `main` queda intacto hasta decidirlo | — |
+| 12 oct 2026 | Checks y thresholds no se firman (no cambian el tráfico); `setup`, `extract` y variables sí | ADR-004 |
+| 12 oct 2026 | `ramping_rate` con calendario exacto; `constant_vus` con pacer si hay `max_rps` | ADR-003 |
