@@ -31,9 +31,9 @@ impl fmt::Display for HumanDuration {
         let ms = self.0.as_millis();
         match ms {
             0 => write!(f, "0s"),
-            _ if ms % 3_600_000 == 0 => write!(f, "{}h", ms / 3_600_000),
-            _ if ms % 60_000 == 0 => write!(f, "{}m", ms / 60_000),
-            _ if ms % 1000 == 0 => write!(f, "{}s", ms / 1000),
+            _ if ms.is_multiple_of(3_600_000) => write!(f, "{}h", ms / 3_600_000),
+            _ if ms.is_multiple_of(60_000) => write!(f, "{}m", ms / 60_000),
+            _ if ms.is_multiple_of(1000) => write!(f, "{}s", ms / 1000),
             _ => write!(f, "{ms}ms"),
         }
     }
