@@ -1,0 +1,4 @@
+/target/
+.loadtest/runs/
+.loadtest/approvals/
+.env
