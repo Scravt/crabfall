@@ -23,6 +23,7 @@ struct Args {
 
 #[tokio::main]
 async fn main() {
+    high_resolution_timer();
     let args = Args::parse();
     let pool = Arc::new(Semaphore::new(args.pool));
 
@@ -33,8 +34,20 @@ async fn main() {
         .with_state(pool);
 
     let listener = TcpListener::bind(("127.0.0.1", args.port)).await.unwrap();
-    println!("lab-server en http://127.0.0.1:{} (pool={})", args.port, args.pool);
+    println!(
+        "lab-server en http://127.0.0.1:{} (pool={})",
+        args.port, args.pool
+    );
     axum::serve(listener, app).await.unwrap();
+}
+
+/// En Windows el timer tiene ~15,6 ms de resolución por defecto y todo `sleep`
+/// se redondea hacia arriba. Pedimos 1 ms para todo el proceso.
+fn high_resolution_timer() {
+    #[cfg(windows)]
+    unsafe {
+        windows_sys::Win32::Media::timeBeginPeriod(1);
+    }
 }
 
 async fn delay(Path(ms): Path<u64>) -> &'static str {
