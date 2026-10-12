@@ -1,14 +1,14 @@
 //! Servidor de laboratorio con comportamientos conocidos, para probar el motor.
 //!
-//! Rutas:
-//! - `GET /ok`          responde al instante.
-//! - `GET /delay/{ms}`  responde después de `ms` milisegundos.
-//! - `GET /pool/{ms}`   como `/delay`, pero solo `--pool` requests a la vez;
+//! Rutas (aceptan cualquier método):
+//! - `/ok`          responde al instante.
+//! - `/delay/{ms}`  responde después de `ms` milisegundos.
+//! - `/pool/{ms}`   como `/delay`, pero solo `--pool` requests a la vez;
 //!   el resto espera. Capacidad: pool × 1000 / ms req/s.
 
 use std::{sync::Arc, time::Duration};
 
-use axum::{Router, extract::Path, extract::State, routing::get};
+use axum::{Router, extract::Path, extract::State, routing::any};
 use clap::Parser;
 use tokio::{net::TcpListener, sync::Semaphore, time::sleep};
 
@@ -28,9 +28,9 @@ async fn main() {
     let pool = Arc::new(Semaphore::new(args.pool));
 
     let app = Router::new()
-        .route("/ok", get(|| async { "ok" }))
-        .route("/delay/{ms}", get(delay))
-        .route("/pool/{ms}", get(pooled))
+        .route("/ok", any(|| async { "ok" }))
+        .route("/delay/{ms}", any(delay))
+        .route("/pool/{ms}", any(pooled))
         .with_state(pool);
 
     let listener = TcpListener::bind(("127.0.0.1", args.port)).await.unwrap();

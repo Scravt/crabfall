@@ -1,0 +1,288 @@
+//! `lt run`: ejecuta un escenario y guarda los resultados en `.loadtest/runs/<id>/`.
+
+use std::{
+    io::{BufRead, IsTerminal, Write},
+    path::Path,
+    sync::{Arc, atomic::Ordering::Relaxed},
+    time::{Duration, Instant},
+};
+
+use lt_core::{
+    engine::{self, Progress, plan::Plan},
+    metrics::RunResult,
+    project::{Project, describe},
+    scenario::LoadPlan,
+    timer, validate,
+};
+use serde_json::{Value, json};
+
+use crate::{JSON_FORMAT, display, exit};
+
+pub fn cmd_run(arg: &str, env_name: Option<&str>, as_json: bool) -> u8 {
+    let Some(project) = std::env::current_dir()
+        .ok()
+        .and_then(|cwd| Project::discover(&cwd))
+    else {
+        eprintln!("✗ no encontré .loadtest/ en este directorio ni en los superiores");
+        return exit::INVALID;
+    };
+    let config = match project.load_config() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("✗ {e}");
+            return exit::INVALID;
+        }
+    };
+    let (env_name, env) = match config.environment(env_name) {
+        Ok(e) => e,
+        Err(e) => {
+            eprintln!("✗ {e}");
+            return exit::INVALID;
+        }
+    };
+
+    let path = Project::scenario_path(Some(&project), arg);
+    let text = match std::fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("✗ no se pudo leer {}: {e}", display(&path));
+            return exit::INVALID;
+        }
+    };
+    let scenario = match validate::parse_scenario(&text) {
+        Ok(s) => s,
+        Err(report) => {
+            eprintln!("✗ {} no es válido (corré `lt validate`):", display(&path));
+            for issue in report.errors.iter().chain(&report.todos) {
+                eprintln!("  {}", describe(issue));
+            }
+            return exit::INVALID;
+        }
+    };
+    let plan = match Plan::build(&scenario, env) {
+        Ok(p) => Arc::new(p),
+        Err(errors) => {
+            eprintln!("✗ no se puede ejecutar {} en `{env_name}`:", scenario.name);
+            for e in errors {
+                eprintln!("  {e}");
+            }
+            return exit::REFUSED;
+        }
+    };
+
+    let LoadPlan::ConstantRate {
+        rate,
+        duration,
+        max_vus,
+        graceful_stop,
+    } = plan.load;
+    let hosts: Vec<&str> = plan.hosts.iter().map(String::as_str).collect();
+    eprintln!("{} → {env_name} ({})", plan.scenario, hosts.join(", "));
+    eprintln!(
+        "  constant_rate {rate} durante {}, max_vus {max_vus} · hasta {:.1} req/s",
+        lt_core::units::HumanDuration(duration),
+        plan.max_request_rate
+    );
+
+    if !plan.loopback_only() && !confirm_target(&plan) {
+        return exit::REFUSED;
+    }
+
+    timer::high_resolution();
+    let started_at = jiff::Zoned::now();
+    let progress = Arc::new(Progress::default());
+    let runtime = tokio::runtime::Runtime::new().expect("runtime de tokio");
+    let result = runtime.block_on(async {
+        let ticker = std::io::stderr()
+            .is_terminal()
+            .then(|| tokio::spawn(show_progress(progress.clone(), duration + graceful_stop)));
+        let result = engine::run(plan.clone(), progress).await;
+        if let Some(t) = ticker {
+            t.abort();
+            eprintln!();
+        }
+        result
+    });
+
+    let run_id = started_at.strftime("%Y%m%d-%H%M%S").to_string();
+    let doc = results_document(&run_id, &started_at, &path, &env_name, &plan, &result);
+    let saved = save(&project, &run_id, &doc);
+
+    if as_json {
+        println!("{}", serde_json::to_string_pretty(&doc).unwrap());
+    } else {
+        print_summary(&result);
+    }
+    match saved {
+        Ok(file) => {
+            eprintln!("resultados: {}", display(&file));
+            exit::OK
+        }
+        Err(e) => {
+            eprintln!("✗ no se pudieron guardar los resultados: {e}");
+            exit::RUNTIME
+        }
+    }
+}
+
+/// Guarda interina hasta la rebanada 3 (ADR-004): si el destino no es loopback,
+/// una persona tiene que tipear el host en una terminal interactiva.
+fn confirm_target(plan: &Plan) -> bool {
+    let target = plan
+        .hosts
+        .iter()
+        .find(|h| !engine::plan::is_loopback(h))
+        .expect("hay al menos un host que no es loopback");
+    if !(std::io::stdin().is_terminal() && std::io::stderr().is_terminal()) {
+        eprintln!(
+            "✗ el destino `{target}` no es loopback y no hay una terminal interactiva.\n  \
+             La carga contra hosts remotos la confirma una persona (ADR-004)."
+        );
+        return false;
+    }
+    eprint!("Escribí el host destino para confirmar: ");
+    std::io::stderr().flush().ok();
+    let mut typed = String::new();
+    std::io::stdin().lock().read_line(&mut typed).ok();
+    if typed.trim().eq_ignore_ascii_case(target) {
+        true
+    } else {
+        eprintln!("✗ no coincide con `{target}`: no se ejecuta nada.");
+        false
+    }
+}
+
+async fn show_progress(p: Arc<Progress>, total: Duration) {
+    let start = Instant::now();
+    loop {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        eprint!(
+            "\r  {:>4}s / {}s  iteraciones {}  descartadas {}  requests {}  fallas {}   ",
+            start.elapsed().as_secs(),
+            total.as_secs(),
+            p.started.load(Relaxed),
+            p.dropped.load(Relaxed),
+            p.requests.load(Relaxed),
+            p.failed.load(Relaxed),
+        );
+    }
+}
+
+fn results_document(
+    run_id: &str,
+    started_at: &jiff::Zoned,
+    path: &Path,
+    env_name: &str,
+    plan: &Plan,
+    result: &RunResult,
+) -> Value {
+    let LoadPlan::ConstantRate {
+        rate,
+        duration,
+        max_vus,
+        graceful_stop,
+    } = plan.load;
+    let mut doc = json!({
+        "format": JSON_FORMAT,
+        "run_id": run_id,
+        "scenario": plan.scenario,
+        "scenario_file": display(path),
+        "environment": env_name,
+        "started_at": started_at.timestamp().to_string(),
+        "load": {
+            "executor": "constant_rate",
+            "rate": rate.to_string(),
+            "duration": lt_core::units::HumanDuration(duration).to_string(),
+            "max_vus": max_vus,
+            "graceful_stop": lt_core::units::HumanDuration(graceful_stop).to_string(),
+            "max_request_rate": plan.max_request_rate,
+        },
+    });
+    let Value::Object(result) = serde_json::to_value(result).unwrap() else {
+        unreachable!()
+    };
+    doc.as_object_mut().unwrap().extend(result);
+    doc
+}
+
+fn save(project: &Project, run_id: &str, doc: &Value) -> std::io::Result<std::path::PathBuf> {
+    let gitignore = project.dir.join(".gitignore");
+    if !gitignore.exists() {
+        std::fs::write(&gitignore, "runs/\napprovals/\n")?;
+    }
+    let dir = project.runs_dir().join(run_id);
+    std::fs::create_dir_all(&dir)?;
+    let file = dir.join("results.json");
+    std::fs::write(&file, serde_json::to_string_pretty(doc).unwrap())?;
+    Ok(file)
+}
+
+fn print_summary(r: &RunResult) {
+    let t = &r.totals;
+    println!();
+    println!(
+        "iteraciones  planificadas {}  iniciadas {}  descartadas {}  interrumpidas {}  ({}/s)",
+        t.planned, t.started, t.dropped, t.interrupted, t.iteration_rate
+    );
+    println!(
+        "requests     {}  fallidos {}  no-2xx {}  ({}/s)  duración {}s",
+        t.requests, t.failed, t.non_2xx, t.request_rate, r.duration_s
+    );
+    println!();
+
+    let width = r
+        .steps
+        .iter()
+        .map(|s| s.name.len())
+        .max()
+        .unwrap_or(4)
+        .max(4);
+    println!(
+        "{:<width$} {:>7} {:>7} {:>7} {:>8} {:>8} {:>8} {:>8} {:>8} {:>8}",
+        "paso", "req", "fallas", "no-2xx", "p50", "p90", "p95", "p99", "p99.9", "max"
+    );
+    for s in &r.steps {
+        print!(
+            "{:<width$} {:>7} {:>7} {:>7}",
+            s.name, s.requests, s.failed, s.non_2xx
+        );
+        match &s.latency_ms {
+            Some(l) => println!(
+                " {:>8.2} {:>8.2} {:>8.2} {:>8.2} {:>8.2} {:>8.2}",
+                l.p50, l.p90, l.p95, l.p99, l.p999, l.max
+            ),
+            None => println!(" {:>8}", "-"),
+        }
+    }
+    println!(
+        "{:>width$}  latencia en ms, desde el instante planificado",
+        ""
+    );
+
+    for s in &r.steps {
+        let only_200 = s.status_codes.len() == 1 && s.status_codes.contains_key("200");
+        if !only_200 && !s.status_codes.is_empty() {
+            let codes: Vec<_> = s
+                .status_codes
+                .iter()
+                .map(|(c, n)| format!("{c}×{n}"))
+                .collect();
+            println!("códigos  {}: {}", s.name, codes.join("  "));
+        }
+        if !s.failures.is_empty() {
+            let kinds: Vec<_> = s
+                .failures
+                .iter()
+                .map(|(k, n)| format!("{}×{n}", serde_json::to_value(k).unwrap().as_str().unwrap()))
+                .collect();
+            println!("fallas   {}: {}", s.name, kinds.join("  "));
+            for e in &s.error_samples {
+                println!("         {e}");
+            }
+        }
+    }
+    for w in &r.warnings {
+        println!("AVISO: {w}");
+    }
+    println!();
+}

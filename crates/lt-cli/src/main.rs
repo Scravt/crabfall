@@ -1,3 +1,5 @@
+mod run;
+
 use std::{path::Path, process::ExitCode};
 
 use clap::{Parser, Subcommand};
@@ -11,6 +13,10 @@ use serde_json::json;
 mod exit {
     pub const OK: u8 = 0;
     pub const INVALID: u8 = 2;
+    /// No permitido: host fuera de allowed_hosts, límites superados o sin confirmación.
+    pub const REFUSED: u8 = 3;
+    /// La corrida terminó pero no se pudieron guardar los resultados.
+    pub const RUNTIME: u8 = 4;
 }
 
 /// Versión de la salida `--json`.
@@ -37,12 +43,28 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Ejecuta un escenario contra un entorno y guarda los resultados.
+    Run {
+        /// Nombre (busca en .loadtest/scenarios/) o ruta al archivo.
+        scenario: String,
+        /// Entorno de .loadtest/config.yaml (por defecto, default_environment).
+        #[arg(long)]
+        env: Option<String>,
+        /// Imprime los resultados completos en JSON.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let code = match cli.command {
         Command::Validate { scenario, json } => cmd_validate(&scenario, json),
+        Command::Run {
+            scenario,
+            env,
+            json,
+        } => run::cmd_run(&scenario, env.as_deref(), json),
     };
     ExitCode::from(code)
 }
