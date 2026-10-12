@@ -89,7 +89,7 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente.
 - Listo: `shop-api` hace login real en `setup`, encadena `token` y `order_id`, y verifica con checks y thresholds.
 
 **5. Diagnóstico**
-- [ ] Series por segundo (latencia, RPS, errores) y desglose de timings
+- [x] Series por segundo (iniciadas, descartadas, requests, errores, p50/p95/p99), globales y por paso, en `results.json`
 - [ ] Primeras reglas: punto de quiebre, errores por umbral, resultado inválido (generador saturado)
 - [ ] `lt findings [--json]` con evidencia y `source` del paso
 - [ ] Skill: sección de diagnóstico con hallazgos

@@ -558,3 +558,30 @@ async fn constant_vus_loops_and_respects_max_rps() {
         r.warnings
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn records_a_per_second_series() {
+    let base = server().await;
+    let flows =
+        "  main:\n    steps:\n      - name: slow\n        request: { method: GET, url: /slow }\n";
+    let r = run(
+        flows,
+        "  rate: 100/s\n  duration: 2s\n  max_vus: 100\n",
+        &base,
+    )
+    .await;
+
+    let s = &r.series;
+    assert_eq!(s.points.iter().map(|p| p.started).sum::<u64>(), 200);
+    assert_eq!(s.points.iter().map(|p| p.requests).sum::<u64>(), 200);
+    assert!(
+        s.points[0].started >= 95 && s.points[1].started >= 95,
+        "{:?}",
+        s.points
+    );
+    // Las respuestas de /slow terminan 300 ms después: la última ventana es la 2.
+    assert_eq!(s.points.len(), 3);
+    let slow = &s.steps[0];
+    assert_eq!(slow.name, "slow");
+    assert!(slow.points[1].p50.unwrap() >= 300.0);
+}
