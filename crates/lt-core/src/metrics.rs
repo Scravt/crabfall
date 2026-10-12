@@ -1,9 +1,12 @@
 //! Agregación de métricas por paso, checks, thresholds y resultados de una corrida.
 
-use std::{collections::BTreeMap, time::Duration};
+use std::{
+    collections::BTreeMap,
+    time::{Duration, Instant},
+};
 
 use hdrhistogram::Histogram;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     engine::{
@@ -129,20 +132,96 @@ impl StepStats {
     }
 }
 
+/// Una ventana de 1 s de la corrida.
+struct Window {
+    started: u64,
+    dropped: u64,
+    requests: u64,
+    errors: u64,
+    latency: Option<Histogram<u64>>,
+    steps: Vec<WindowStep>,
+}
+
+#[derive(Default)]
+struct WindowStep {
+    requests: u64,
+    errors: u64,
+    latency: Option<Histogram<u64>>,
+}
+
+impl Window {
+    fn new(steps: usize) -> Self {
+        Self {
+            started: 0,
+            dropped: 0,
+            requests: 0,
+            errors: 0,
+            latency: None,
+            steps: (0..steps).map(|_| WindowStep::default()).collect(),
+        }
+    }
+}
+
+/// Histograma de ventana: 2 cifras significativas alcanzan y ocupan mucho menos.
+fn window_record(h: &mut Option<Histogram<u64>>, d: Duration) {
+    let h = h.get_or_insert_with(|| Histogram::new_with_bounds(1, 3_600_000_000, 2).unwrap());
+    record(h, d);
+}
+
 /// Acumula muestras durante la corrida.
 pub struct Collector {
     steps: Vec<StepStats>,
+    start: Instant,
+    windows: Vec<Window>,
 }
 
 impl Collector {
-    pub fn new(plan: &Plan) -> Self {
+    /// `start` es el inicio de la carga: la ventana 0 empieza ahí.
+    pub fn new(plan: &Plan, start: Instant) -> Self {
         Self {
             steps: plan.steps().map(StepStats::new).collect(),
+            start,
+            windows: Vec::new(),
         }
     }
 
+    fn window(&mut self, at: Instant) -> &mut Window {
+        let i = at.saturating_duration_since(self.start).as_secs() as usize;
+        let steps = self.steps.len();
+        if self.windows.len() <= i {
+            self.windows.resize_with(i + 1, || Window::new(steps));
+        }
+        &mut self.windows[i]
+    }
+
+    pub fn record_started(&mut self, at: Instant) {
+        self.window(at).started += 1;
+    }
+
+    pub fn record_dropped(&mut self, at: Instant) {
+        self.window(at).dropped += 1;
+    }
+
     /// `latency` se mide desde el instante planificado (primer paso) o desde el fin del paso anterior.
-    pub fn record(&mut self, step: usize, latency: Duration, outcome: Outcome) {
+    /// `at` es cuándo terminó el request.
+    pub fn record(&mut self, step: usize, at: Instant, latency: Duration, outcome: Outcome) {
+        let is_error = match &outcome {
+            Outcome::Response { status, .. } => *status >= 400,
+            Outcome::Failure { .. } => true,
+        };
+        let has_latency = matches!(outcome, Outcome::Response { .. });
+        let w = self.window(at);
+        w.requests += 1;
+        w.steps[step].requests += 1;
+        if is_error {
+            w.errors += 1;
+            w.steps[step].errors += 1;
+        }
+        if has_latency {
+            window_record(&mut w.latency, latency);
+            window_record(&mut w.steps[step].latency, latency);
+        }
+
         let s = &mut self.steps[step];
         s.requests += 1;
         match outcome {
@@ -168,10 +247,70 @@ impl Collector {
     }
 
     /// La respuesta ya se registró con `record`; esto suma la falla del `extract`.
-    pub fn record_extract_failure(&mut self, step: usize, message: String) {
+    pub fn record_extract_failure(&mut self, step: usize, at: Instant, message: String) {
+        let w = self.window(at);
+        w.errors += 1;
+        w.steps[step].errors += 1;
         let s = &mut self.steps[step];
         *s.failures.entry(FailureKind::Extract).or_default() += 1;
         s.sample(message);
+    }
+
+    /// Serie por segundo, global y por paso.
+    pub fn series(&self, plan: &Plan) -> Series {
+        let quantiles = |h: &Option<Histogram<u64>>| match h {
+            Some(h) if !h.is_empty() => {
+                let ms = |q: f64| Some(round(h.value_at_quantile(q) as f64 / 1000.0));
+                (ms(0.5), ms(0.95), ms(0.99))
+            }
+            _ => (None, None, None),
+        };
+        let points = self
+            .windows
+            .iter()
+            .enumerate()
+            .map(|(t, w)| {
+                let (p50, p95, p99) = quantiles(&w.latency);
+                Point {
+                    t: t as u32,
+                    started: w.started,
+                    dropped: w.dropped,
+                    requests: w.requests,
+                    errors: w.errors,
+                    p50,
+                    p95,
+                    p99,
+                }
+            })
+            .collect();
+        let steps = plan
+            .steps()
+            .map(|p| StepSeries {
+                name: p.name.clone(),
+                points: self
+                    .windows
+                    .iter()
+                    .enumerate()
+                    .map(|(t, w)| {
+                        let s = &w.steps[p.id];
+                        let (p50, p95, p99) = quantiles(&s.latency);
+                        StepPoint {
+                            t: t as u32,
+                            requests: s.requests,
+                            errors: s.errors,
+                            p50,
+                            p95,
+                            p99,
+                        }
+                    })
+                    .collect(),
+            })
+            .collect();
+        Series {
+            window_s: 1,
+            points,
+            steps,
+        }
     }
 
     /// Un resultado por check del paso: `None` si pasó, o por qué falló.
@@ -371,6 +510,8 @@ pub struct RunResult {
     pub scheduler_lag_ms: Option<Percentiles>,
     pub steps: Vec<StepResult>,
     pub warnings: Vec<String>,
+    /// Serie por segundo: la materia prima del diagnóstico.
+    pub series: Series,
 }
 
 /// Un paso de `setup`. No entra en las métricas de carga.
@@ -397,8 +538,49 @@ impl RunResult {
             totals: Totals::default(),
             thresholds: vec![],
             scheduler_lag_ms: None,
-            steps: Collector::new(plan).finish(plan),
+            steps: Collector::new(plan, Instant::now()).finish(plan),
             warnings: vec![],
+            series: Series::default(),
         }
     }
+}
+
+/// Serie por segundo. `t` es el segundo desde el inicio de la carga.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Series {
+    pub window_s: u32,
+    pub points: Vec<Point>,
+    pub steps: Vec<StepSeries>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Point {
+    pub t: u32,
+    /// Iteraciones iniciadas en la ventana.
+    pub started: u64,
+    /// Iteraciones descartadas por falta de VUs.
+    pub dropped: u64,
+    /// Requests terminados en la ventana.
+    pub requests: u64,
+    /// Sin respuesta, con status >= 400 o con `extract` fallido.
+    pub errors: u64,
+    pub p50: Option<f64>,
+    pub p95: Option<f64>,
+    pub p99: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StepSeries {
+    pub name: String,
+    pub points: Vec<StepPoint>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StepPoint {
+    pub t: u32,
+    pub requests: u64,
+    pub errors: u64,
+    pub p50: Option<f64>,
+    pub p95: Option<f64>,
+    pub p99: Option<f64>,
 }

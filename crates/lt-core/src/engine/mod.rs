@@ -37,8 +37,19 @@ pub struct Progress {
     pub failed: AtomicU64,
 }
 
+/// Lo que el motor le cuenta al colector, con su instante.
+enum Event {
+    Sample(Sample),
+    /// Arrancó una iteración (planificada para este instante en el modelo abierto).
+    Started(Instant),
+    /// Se descartó una iteración planificada para este instante.
+    Dropped(Instant),
+}
+
 struct Sample {
     step: usize,
+    /// Cuándo terminó el request.
+    done: Instant,
     latency: Duration,
     outcome: Outcome,
     /// La respuesta llegó, pero un `extract` falló.
@@ -157,7 +168,7 @@ struct Shared {
     plan: Arc<Plan>,
     client: Arc<Client>,
     setup: Arc<HashMap<String, Value>>,
-    tx: mpsc::UnboundedSender<Sample>,
+    tx: mpsc::UnboundedSender<Event>,
     progress: Arc<Progress>,
 }
 
@@ -196,15 +207,22 @@ pub async fn run(plan: Arc<Plan>, progress: Arc<Progress>) -> RunResult {
         return RunResult::aborted(&plan, setup, reason);
     }
 
-    let (tx, mut rx) = mpsc::unbounded_channel::<Sample>();
+    let start = Instant::now() + Duration::from_millis(50);
+    let (tx, mut rx) = mpsc::unbounded_channel::<Event>();
     let collector_plan = plan.clone();
     let collector = tokio::spawn(async move {
-        let mut c = Collector::new(&collector_plan);
-        while let Some(s) = rx.recv().await {
-            c.record(s.step, s.latency, s.outcome);
-            c.record_checks(s.step, &s.checks);
-            if let Some(e) = s.extract_error {
-                c.record_extract_failure(s.step, e);
+        let mut c = Collector::new(&collector_plan, start);
+        while let Some(event) = rx.recv().await {
+            match event {
+                Event::Started(at) => c.record_started(at),
+                Event::Dropped(at) => c.record_dropped(at),
+                Event::Sample(s) => {
+                    c.record(s.step, s.done, s.latency, s.outcome);
+                    c.record_checks(s.step, &s.checks);
+                    if let Some(e) = s.extract_error {
+                        c.record_extract_failure(s.step, s.done, e);
+                    }
+                }
             }
         }
         c
@@ -217,7 +235,6 @@ pub async fn run(plan: Arc<Plan>, progress: Arc<Progress>) -> RunResult {
         tx,
         progress: progress.clone(),
     };
-    let start = Instant::now() + Duration::from_millis(50);
     let dispatch = match &plan.load {
         LoadPlan::Open { .. } => open_model(shared, start).await,
         LoadPlan::Closed { vus, duration, .. } => {
@@ -228,6 +245,7 @@ pub async fn run(plan: Arc<Plan>, progress: Arc<Progress>) -> RunResult {
     let elapsed = start.elapsed().as_secs_f64();
     let collector = collector.await.expect("el colector no falla");
     let thresholds = collector.thresholds(&plan, elapsed);
+    let series = collector.series(&plan);
     let steps = collector.finish(&plan);
 
     let started = progress.started.load(Relaxed);
@@ -265,6 +283,7 @@ pub async fn run(plan: Arc<Plan>, progress: Arc<Progress>) -> RunResult {
         scheduler_lag_ms: scheduler_lag,
         steps,
         warnings,
+        series,
     }
 }
 
@@ -290,9 +309,11 @@ async fn open_model(shared: Shared, start: Instant) -> Dispatch {
         let flow = picker.next();
         let Ok(permit) = vus.clone().try_acquire_owned() else {
             shared.progress.dropped.fetch_add(1, Relaxed);
+            let _ = shared.tx.send(Event::Dropped(intended));
             continue;
         };
         shared.progress.started.fetch_add(1, Relaxed);
+        let _ = shared.tx.send(Event::Started(intended));
         let shared = shared.clone();
         tasks.spawn(async move {
             shared.iteration(flow, intended).await;
@@ -349,6 +370,7 @@ async fn closed_model(shared: Shared, start: Instant, vus: u32, duration: Durati
                 }
                 let flow = picker.lock().unwrap().next();
                 shared.progress.started.fetch_add(1, Relaxed);
+                let _ = shared.tx.send(Event::Started(Instant::now()));
                 shared.iteration(flow, Instant::now()).await;
             }
         });
@@ -420,7 +442,7 @@ async fn iteration(
     flow: usize,
     client: &Client,
     setup: &HashMap<String, Value>,
-    tx: &mpsc::UnboundedSender<Sample>,
+    tx: &mpsc::UnboundedSender<Event>,
     progress: &Progress,
     intended: Instant,
 ) {
@@ -444,13 +466,14 @@ async fn iteration(
         if broken {
             progress.failed.fetch_add(1, Relaxed);
         }
-        let _ = tx.send(Sample {
+        let _ = tx.send(Event::Sample(Sample {
             step: step.id,
+            done,
             latency: done.saturating_duration_since(from),
             outcome,
             extract_error: run.extract_error,
             checks: run.checks,
-        });
+        }));
         if broken {
             return;
         }
