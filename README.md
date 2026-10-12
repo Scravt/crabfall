@@ -3,7 +3,7 @@
 Herramienta de pruebas de carga en Rust, pensada para usarse junto a Claude Code:
 Claude diseña el escenario y analiza los resultados; una persona aprueba y ejecuta la carga.
 
-Estado: **rebanada 2** (Claude diseña). Ver el [roadmap](docs/roadmap.md).
+Estado: **rebanada 3** (aprobación firmada). Ver el [roadmap](docs/roadmap.md).
 
 ## Uso
 
@@ -42,10 +42,12 @@ load:
 
 ```bash
 lt validate smoke              # --json para agentes
+lt check smoke                 # cada flow una vez, solo contra loopback
+lt approve smoke --env local   # resumen de riesgo; pide tipear el host
 lt run smoke --env local       # resultados en .loadtest/runs/<id>/results.json
 ```
 
-Si el destino no es `localhost` o una IP de loopback, `lt run` pide tipear el host en una terminal interactiva.
+`lt run` solo ejecuta escenarios aprobados. La aprobación firma el escenario junto con el entorno resuelto: cualquier cambio en el tráfico la invalida y `lt run` muestra qué cambió. Se aprueba en una terminal interactiva; la clave de firma vive en el keyring del sistema ([ADR-004](docs/adr/ADR-004-aprobacion.md)).
 
 ## Con Claude Code
 
@@ -53,11 +55,11 @@ Si el destino no es `localhost` o una IP de loopback, `lt run` pide tipear el ho
 lt claude install              # en el repo a probar: skill, hook y permisos en .claude/
 ```
 
-Después, en una sesión de Claude Code: *"armame una prueba de carga del flujo de compra"*. Claude lee el código, escribe el escenario, lo verifica con `lt validate` y `lt check` (solo contra loopback) y te pasa el comando `lt run` para que lo ejecutes vos. No puede ejecutar `lt run` por su cuenta (ADR-001, ADR-004).
+Después, en una sesión de Claude Code: *"armame una prueba de carga del flujo de compra"*. Claude lee el código, escribe el escenario, lo verifica con `lt validate` y `lt check` (solo contra loopback) y te pasa los comandos `lt approve` y `lt run` para que los ejecutes vos. No puede aprobar ni ejecutar por su cuenta (ADR-001, ADR-004).
 
-Otros comandos: `lt check <escenario>` (smoke check: cada flow una vez, solo loopback) y `lt schema` (JSON Schema del escenario).
+`lt schema` imprime el JSON Schema del escenario.
 
-Códigos de salida: `0` ok · `1` `check` con pasos fallidos · `2` escenario o configuración inválidos · `3` ejecución rechazada · `4` no se pudieron guardar los resultados.
+Códigos de salida: `0` ok · `1` `check` con pasos fallidos · `2` escenario o configuración inválidos · `3` rechazado (sin aprobación válida, host no permitido, límites, sin terminal) · `4` error al guardar o al acceder al keyring.
 
 Formato completo del escenario: [ADR-002](docs/adr/ADR-002-formato-escenario.md).
 

@@ -69,6 +69,16 @@ Tests automáticos que tienen que fallar (no habilitar `run`):
 - ejecutar `approve` con stdin redirigido (`echo host | lt approve ...`);
 - `check` contra un host que no es loopback, o con una redirección hacia afuera.
 
+## Implementación (12 oct 2026)
+
+- **Qué se firma:** el plan canónico (`Plan::canonical`): URLs ya resueltas contra `base_url`, método, headers (incluido el `user-agent` con la versión de `lt`), body, timeout y tags de cada paso; pesos de los flows; carga resuelta con sus valores por defecto; y del entorno, `base_url`, `allowed_hosts`, `vars` y `limits`. No entran `description`, `meta` ni `source`. Actualizar `lt` invalida las aprobaciones, porque cambia el `user-agent`: es correcto, el tráfico cambió.
+- **Firma:** HMAC-SHA256 sobre `lt-approval/<formato>`, escenario, entorno, hash SHA-256 del plan canónico, fecha y persona. La clave (32 bytes aleatorios) vive en el keyring del sistema como `lt-loadtest` / `approval-key`.
+- **Archivo:** `.loadtest/approvals/<escenario>.<entorno>.json` guarda además el plan aprobado. Con eso `approve` muestra el diff contra la aprobación anterior y `run` explica qué cambió cuando rechaza.
+- **`lt approve`** exige terminal interactiva aunque el destino sea loopback, y pide tipear el primer host que no sea loopback (o el único, si todos lo son).
+- **`lt run`** no exige terminal: verifica la firma. Así, más adelante, una aprobación hecha por una persona puede ejecutarse desde un script.
+- **Sin vencimiento:** una aprobación vale hasta que algo cambie. Si hace falta, se agrega un vencimiento o un máximo de ejecuciones.
+- **Tests:** `crates/lt-core/tests/approval.rs` (edición del escenario y del entorno, archivo editado, copiado de otro escenario o entorno, otra clave) y `crates/lt-cli/tests/guard.rs` (stdin redirigido, sin aprobación, archivo dañado). `--var` todavía no existe; su test queda pendiente.
+
 ## Consecuencias
 
 - Toda ejecución de carga pasa por una acción humana visible, con el destino tipeado.

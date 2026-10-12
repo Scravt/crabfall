@@ -48,6 +48,20 @@ impl Project {
     pub fn runs_dir(&self) -> PathBuf {
         self.dir.join("runs")
     }
+
+    /// Aprobaciones firmadas. Son locales de cada equipo: no se versionan.
+    pub fn approvals_dir(&self) -> PathBuf {
+        self.dir.join("approvals")
+    }
+
+    /// Crea `.loadtest/.gitignore` (runs y approvals) si no existe.
+    pub fn ensure_gitignore(&self) -> std::io::Result<()> {
+        let path = self.dir.join(".gitignore");
+        if path.exists() {
+            return Ok(());
+        }
+        std::fs::write(path, "runs/\napprovals/\n")
+    }
 }
 
 /// `ruta (línea L, columna C): mensaje`, para mostrar en terminal.

@@ -1,3 +1,4 @@
+mod approve;
 mod check;
 mod claude;
 mod hook;
@@ -19,9 +20,9 @@ mod exit {
     /// Corrió, pero falló: en `check`, algún paso sin respuesta 2xx.
     pub const FAILED: u8 = 1;
     pub const INVALID: u8 = 2;
-    /// No permitido: host fuera de allowed_hosts, límites superados o sin confirmación.
+    /// No permitido: host fuera de allowed_hosts, límites superados, sin aprobación válida o sin terminal.
     pub const REFUSED: u8 = 3;
-    /// La corrida terminó pero no se pudieron guardar los resultados.
+    /// Error al guardar resultados o aprobaciones, o al acceder al keyring.
     pub const RUNTIME: u8 = 4;
 }
 
@@ -73,6 +74,14 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Aprueba un escenario para un entorno. Lo ejecuta una persona, en una terminal.
+    Approve {
+        /// Nombre (busca en .loadtest/scenarios/) o ruta al archivo.
+        scenario: String,
+        /// Entorno de .loadtest/config.yaml (por defecto, default_environment).
+        #[arg(long)]
+        env: Option<String>,
+    },
     /// Ejecuta un escenario contra un entorno y guarda los resultados.
     Run {
         /// Nombre (busca en .loadtest/scenarios/) o ruta al archivo.
@@ -96,6 +105,7 @@ fn main() -> ExitCode {
         Command::Hook {
             event: HookEvent::PreToolUse,
         } => hook::cmd_pre_tool_use(),
+        Command::Approve { scenario, env } => approve::cmd_approve(&scenario, env.as_deref()),
         Command::Schema => {
             let schema = lt_core::scenario::json_schema();
             println!("{}", serde_json::to_string_pretty(&schema).unwrap());
