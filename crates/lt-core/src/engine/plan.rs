@@ -8,13 +8,14 @@ use hyper::{
     HeaderMap, Method, Request,
     header::{CONTENT_TYPE, HOST, HeaderName, HeaderValue, USER_AGENT},
 };
-use serde_json::Value;
+use serde_json::{Value, json};
 use url::Url;
 
 use super::http::{Body, Origin};
 use crate::{
     config::Environment,
     scenario::{LoadPlan, Scenario, Source},
+    units::HumanDuration,
 };
 
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -117,6 +118,80 @@ impl Plan {
         } else {
             Err(errors)
         }
+    }
+
+    /// Representación canónica de todo lo que define el tráfico: es lo que firma una
+    /// aprobación (ADR-004 §1). Incluye el entorno resuelto; excluye `description`,
+    /// `meta` y `source`, que no cambian el tráfico. El orden de las claves es fijo.
+    pub fn canonical(&self, env: &Environment) -> Value {
+        let LoadPlan::ConstantRate {
+            rate,
+            duration,
+            max_vus,
+            graceful_stop,
+        } = self.load;
+        let d = |d: Duration| HumanDuration(d).to_string();
+        let mut allowed: Vec<String> = env
+            .allowed_hosts
+            .iter()
+            .map(|h| h.to_ascii_lowercase())
+            .collect();
+        allowed.sort();
+        allowed.dedup();
+        let flows: Vec<Value> = self
+            .flows
+            .iter()
+            .map(|f| {
+                let steps: Vec<Value> = f
+                    .steps
+                    .iter()
+                    .map(|s| {
+                        let mut headers: Vec<(String, String)> = s
+                            .headers
+                            .iter()
+                            .map(|(k, v)| {
+                                (
+                                    k.to_string(),
+                                    String::from_utf8_lossy(v.as_bytes()).into_owned(),
+                                )
+                            })
+                            .collect();
+                        headers.sort();
+                        json!({
+                            "name": s.name,
+                            "method": s.method.as_str(),
+                            "url": s.url(),
+                            "headers": headers,
+                            "body": String::from_utf8_lossy(&s.body),
+                            "timeout": d(s.timeout),
+                            "tags": s.tags,
+                        })
+                    })
+                    .collect();
+                json!({ "name": f.name, "weight": f.weight, "steps": steps })
+            })
+            .collect();
+        json!({
+            "scenario": self.scenario,
+            "environment": {
+                "base_url": env.base_url,
+                "allowed_hosts": allowed,
+                "vars": env.vars.iter().map(|(k, v)| json!([k, v])).collect::<Vec<_>>(),
+                "limits": {
+                    "max_rps": env.limits.max_rps,
+                    "max_vus": env.limits.max_vus,
+                    "max_duration": env.limits.max_duration.map(|m| m.to_string()),
+                },
+            },
+            "load": {
+                "executor": "constant_rate",
+                "rate": rate.to_string(),
+                "duration": d(duration),
+                "max_vus": max_vus,
+                "graceful_stop": d(graceful_stop),
+            },
+            "flows": flows,
+        })
     }
 
     pub fn steps(&self) -> impl Iterator<Item = &StepPlan> {
