@@ -64,7 +64,7 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente.
 - [x] Modelo mínimo: flows con peso, pasos sin `extract`, executor `constant_rate`, bodies `json`/`body`, HTTPS
 - [x] `lt validate [--json]` con ruta exacta del error y `todo` pendientes
 - [x] `lt run` → resumen en terminal y `results.json` con p50/p90/p95/p99 por paso
-- [x] Guarda interina hasta la rebanada 3: un destino que no es loopback exige terminal y tipear el host
+- [x] Guarda interina (reemplazada en la rebanada 3 por la aprobación firmada)
 - Listo: probado contra `shop-api` (API local de ejemplo, repo aparte). **Pendiente:** una API real del trabajo y TLS contra un servidor real.
 
 **2. Claude diseña**
@@ -74,10 +74,11 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente.
 - Listo cuando: Claude arma desde el código un escenario que pasa `validate` y `check` sin que yo toque el YAML. Probado con `shop-api` (escenario `buscar-y-comprar`) siguiendo el skill en esta sesión. **Pendiente:** repetirlo en una sesión nueva de Claude Code, que carga el skill sola.
 
 **3. Aprobación**
-- [ ] `lt approve` y la verificación en `lt run`, con firma, keyring y TTY (ADR-004)
+- [x] `lt approve` y la verificación en `lt run`, con firma, keyring y TTY (ADR-004)
 - [x] `limits` y `allowed_hosts` en `config.yaml` (hecho en la rebanada 1)
 - [x] Hook `PreToolUse` (`lt hook pre-tool-use`), adelantado a la rebanada 2
-- [ ] Tests de la guarda (lista en ADR-004)
+- [x] Tests de la guarda (lista en ADR-004; falta `--var`, que todavía no existe)
+- Listo cuando: apruebo un escenario de `shop-api` en mi terminal, lo ejecuto, y cualquier edición posterior hace que `lt run` lo rechace mostrando el diff. **Pendiente de probar a mano:** la parte interactiva no se puede probar desde la shell de Claude, que no tiene terminal.
 
 **4. Escenario completo**
 - [ ] `setup`, `extract`, `defaults`, varios flows con `weight`
@@ -118,3 +119,5 @@ Más reglas de diagnóstico, reporte HTML, comparación contra una corrida base,
 | 12 oct 2026 | Scheduler de modelo abierto: latencia desde el instante planificado, iteraciones descartadas cuando no hay VU | ADR-003 |
 | 12 oct 2026 | En Windows se sube la resolución del timer a 1 ms | ADR-003 |
 | 12 oct 2026 | YAML con `serde-saphyr` + `serde_path_to_error` (D5) | ADR-002 §10 |
+| 12 oct 2026 | La aprobación firma el plan canónico resuelto; `approve` exige terminal siempre; `run` solo verifica la firma; sin vencimiento | ADR-004 |
+| 12 oct 2026 | Cada trabajo en su rama, merge `--no-ff` a `dev`; `main` queda intacto hasta decidirlo | — |

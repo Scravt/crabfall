@@ -5,7 +5,7 @@ description: Diseña y verifica pruebas de carga con lt (escenarios YAML en .loa
 
 # Pruebas de carga con lt
 
-Vos diseñás, verificás y analizás. **La persona aprueba y ejecuta la carga.** Nunca corras `lt run` ni `lt approve` (un hook los bloquea): cuando el escenario esté listo, pedile que los corra ella.
+Vos diseñás, verificás y analizás. **La persona aprueba y ejecuta la carga.** Nunca corras `lt approve` ni `lt run` (un hook los bloquea, y `lt run` rechaza todo escenario sin una aprobación firmada): cuando el escenario esté listo, pedile que los corra ella.
 
 Podés usar libremente: `lt validate`, `lt check` (solo contra loopback), `lt schema`.
 
@@ -62,7 +62,12 @@ Podés usar libremente: `lt validate`, `lt check` (solo contra loopback), `lt sc
    - **Todavía no soportado:** `setup`, `extract` (encadenar login → token), variables `{{...}}`, checks, thresholds y otros executors. Si el flujo los necesita, usá valores fijos (un token de desarrollo, un ID existente) y avisale a la persona.
 4. **Validá:** `lt validate <nombre> --json`. Corregí hasta que `valid` sea `true`. Cada error trae `path`, `line` y `message`.
 5. **Verificá:** `lt check <nombre> --json` corre cada flow una vez, en serie. Solo funciona si el entorno apunta a la máquina local; si no, saltealo y decilo. Revisá `status` y `body` de cada paso: un 404 suele ser un ID inexistente, un 401 la auth y un 400 el body.
-6. **Entregá** un resumen corto (flows y pesos, tasa, duración, requests/s máximos, pasos que escriben) y el comando exacto para la persona: `lt run <nombre> --env <entorno>`.
+6. **Entregá** un resumen corto (flows y pesos, tasa, duración, requests/s máximos, pasos que escriben) y los comandos exactos para la persona:
+   ```
+   lt approve <nombre> --env <entorno>   # muestra el resumen de riesgo y pide tipear el host
+   lt run <nombre> --env <entorno>
+   ```
+   Cualquier cambio posterior al escenario o al entorno invalida la aprobación: si corregís algo, avisá que hay que aprobar de nuevo.
 
 ## Analizar resultados
 
@@ -78,4 +83,4 @@ Los resultados están en `.loadtest/runs/<id>/results.json`; el id más alto es 
 
 - `lt schema`: JSON Schema completo del escenario, con descripción de cada campo.
 - Unidades: duraciones `500ms`, `30s`, `2m`, `1h`; tasas `50/s`, `3000/m`.
-- Códigos de salida: `0` ok · `1` `check` con pasos fallidos · `2` escenario o configuración inválidos · `3` rechazado (host no permitido, límites, no es loopback).
+- Códigos de salida: `0` ok · `1` `check` con pasos fallidos · `2` escenario o configuración inválidos · `3` rechazado (host no permitido, límites, no es loopback, sin aprobación válida).
