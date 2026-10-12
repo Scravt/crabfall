@@ -4,6 +4,7 @@ pub mod http;
 pub mod plan;
 
 use std::{
+    collections::HashMap,
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering::Relaxed},
@@ -21,8 +22,9 @@ use crate::{
     metrics::{Collector, Outcome, Percentiles, RunResult, Totals, histogram, record},
     scenario::LoadPlan,
 };
-use http::{Client, FailureKind};
-use plan::Plan;
+use http::{Body, Client, Failure, FailureKind, Response};
+use hyper::Request;
+use plan::{Plan, StepPlan, Vars};
 
 /// Contadores en vivo, para mostrar progreso.
 #[derive(Default)]
@@ -140,24 +142,22 @@ async fn iteration(
     intended: Instant,
 ) {
     let mut from = intended;
+    let locals = HashMap::new();
     for step in &plan.flows[flow].steps {
-        let result = timeout(step.timeout, client.send(&step.origin, || step.request())).await;
+        let request = step.request(&Vars {
+            plan,
+            locals: &locals,
+        });
+        let result = send_step(client, step, request).await;
         let done = Instant::now();
         let outcome = match result {
-            Ok(Ok(r)) => Outcome::Response {
+            Ok(r) => Outcome::Response {
                 status: r.status,
                 timings: r.timings,
             },
-            Ok(Err(f)) => Outcome::Failure {
+            Err(f) => Outcome::Failure {
                 kind: f.kind,
                 message: f.message,
-            },
-            Err(_) => Outcome::Failure {
-                kind: FailureKind::Timeout,
-                message: format!(
-                    "sin respuesta en {}",
-                    crate::units::HumanDuration(step.timeout)
-                ),
             },
         };
         let failed = matches!(outcome, Outcome::Failure { .. });
@@ -246,5 +246,30 @@ mod tests {
         let picks: Vec<_> = (0..10).map(|_| p.next()).collect();
         assert_eq!(picks.iter().filter(|&&f| f == 0).count(), 7);
         assert_ne!(picks[..3], [1, 1, 1]);
+    }
+}
+
+/// Envía el request ya armado de un paso, con su timeout. Si armarlo falló, devuelve
+/// una falla de tipo `template`.
+pub async fn send_step(
+    client: &Client,
+    step: &StepPlan,
+    request: Result<Request<Body>, String>,
+) -> Result<Response, Failure> {
+    let request = request.map_err(|e| Failure::new(FailureKind::Template, e))?;
+    match timeout(
+        step.timeout,
+        client.send(&step.origin, || http::duplicate(&request)),
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(_) => Err(Failure::new(
+            FailureKind::Timeout,
+            format!(
+                "sin respuesta en {}",
+                crate::units::HumanDuration(step.timeout)
+            ),
+        )),
     }
 }

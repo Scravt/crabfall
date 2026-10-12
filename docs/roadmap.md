@@ -82,7 +82,7 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente.
 
 **4. Escenario completo**
 - [ ] `setup`, `extract`, `defaults`, varios flows con `weight`
-- [ ] Interpolación con preservación de tipo y placeholders dinámicos
+- [x] Interpolación con preservación de tipo y placeholders dinámicos, `{{env.X}}` para `secrets`, `--var`, `defaults`
 - [ ] Executors `constant_vus` y `ramping_rate`; checks y thresholds
 - [ ] Códigos de salida: pasa, thresholds fallidos, error de configuración
 

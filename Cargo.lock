@@ -1280,6 +1280,7 @@ version = "0.0.1"
 dependencies = [
  "axum",
  "bytes",
+ "fastrand",
  "getrandom 0.4.3",
  "hdrhistogram",
  "hmac",
@@ -1288,6 +1289,7 @@ dependencies = [
  "hyper-util",
  "indexmap",
  "keyring",
+ "percent-encoding",
  "rustls",
  "rustls-native-certs",
  "schemars",

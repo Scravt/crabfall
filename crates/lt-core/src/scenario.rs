@@ -29,10 +29,26 @@ pub struct Scenario {
     /// Datos libres que no afectan el tráfico, por ejemplo `created_by: agent`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub meta: Option<Value>,
+    /// Variables del escenario, usables como `{{nombre}}`. Las del entorno, `--var` y `extract` las pisan (en ese orden).
+    #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
+    pub vars: IndexMap<String, Value>,
+    /// Headers y timeout que heredan todos los pasos de `flows` (no los de `setup`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub defaults: Option<Defaults>,
     /// Flujos de usuario. Cada iteración elige uno según su `weight` y ejecuta sus pasos en orden.
     pub flows: IndexMap<String, Flow>,
     /// Perfil de carga. La tasa se mide en iteraciones por segundo, no en requests.
     pub load: Load,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Defaults {
+    /// Un header definido en el paso pisa al de `defaults`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub headers: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout: Option<HumanDuration>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
@@ -71,7 +87,7 @@ pub struct Step {
 pub struct RequestSpec {
     /// GET, POST, PUT, PATCH, DELETE, HEAD u OPTIONS.
     pub method: String,
-    /// Relativa a la `base_url` del entorno (empieza con `/`) o absoluta (`https://...`). El host tiene que estar en `allowed_hosts`.
+    /// Relativa a la `base_url` del entorno (empieza con `/`) o absoluta (`https://...`). El host tiene que estar en `allowed_hosts`. Admite `{{variables}}` en el path y la query, nunca en el host.
     pub url: String,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub headers: BTreeMap<String, String>,

@@ -57,6 +57,8 @@ pub enum FailureKind {
     Timeout,
     Reset,
     Protocol,
+    /// No se pudo armar el request (una plantilla sin valor, un header inválido).
+    Template,
 }
 
 #[derive(Debug)]
@@ -66,7 +68,7 @@ pub struct Failure {
 }
 
 impl Failure {
-    fn new(kind: FailureKind, e: impl std::fmt::Display) -> Self {
+    pub fn new(kind: FailureKind, e: impl std::fmt::Display) -> Self {
         Self {
             kind,
             message: e.to_string(),
@@ -281,4 +283,16 @@ fn classify_hyper(e: &hyper::Error) -> Failure {
         FailureKind::Protocol
     };
     Failure::new(kind, e)
+}
+
+/// Copia de un request ya armado, para reintentarlo o reutilizarlo.
+pub fn duplicate(request: &Request<Body>) -> Request<Body> {
+    let mut copy = Request::builder()
+        .method(request.method().clone())
+        .uri(request.uri().clone())
+        .version(request.version())
+        .body(request.body().clone())
+        .expect("copia de un request válido");
+    *copy.headers_mut() = request.headers().clone();
+    copy
 }

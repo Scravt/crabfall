@@ -16,14 +16,14 @@ use crate::{
     prepare::{Prepared, prepare},
 };
 
-pub fn cmd_approve(arg: &str, env_name: Option<&str>) -> u8 {
+pub fn cmd_approve(target: &crate::Target) -> u8 {
     let Prepared {
         project,
         env_name,
         env,
         plan,
         ..
-    } = match prepare(arg, env_name) {
+    } = match prepare(&target.scenario, target.env.as_deref(), &target.vars) {
         Ok(p) => p,
         Err(code) => return code,
     };
@@ -196,7 +196,7 @@ fn print_summary(plan: &Plan, env: &Environment, env_name: &str, change: &Change
             s.tags.iter().any(|t| t == "write")
                 || !matches!(s.method.as_str(), "GET" | "HEAD" | "OPTIONS")
         })
-        .map(|s| format!("{} ({} {})", s.name, s.method, s.target))
+        .map(|s| format!("{} ({} {})", s.name, s.method, s.url()))
         .collect();
     if writes.is_empty() {
         eprintln!("Escribe     no");

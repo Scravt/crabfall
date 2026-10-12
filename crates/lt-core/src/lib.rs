@@ -7,6 +7,7 @@ pub mod engine;
 pub mod metrics;
 pub mod project;
 pub mod scenario;
+pub mod template;
 pub mod timer;
 pub mod units;
 pub mod validate;

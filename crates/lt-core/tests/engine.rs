@@ -2,13 +2,32 @@
 
 use std::{sync::Arc, time::Duration};
 
-use axum::{Router, routing::get};
+use axum::{
+    Json, Router,
+    routing::{any, get},
+};
 use lt_core::{
     config::Environment,
-    engine::{self, Progress, http::FailureKind, plan::Plan},
+    engine::{
+        self, Progress,
+        http::FailureKind,
+        plan::{Inputs, Plan},
+    },
     validate::parse_scenario,
 };
+use serde_json::{Value, json};
 use tokio::net::TcpListener;
+
+/// Devuelve lo que recibió: target, header Authorization y body.
+async fn echo(request: axum::extract::Request) -> Json<Value> {
+    let (parts, body) = request.into_parts();
+    let body = axum::body::to_bytes(body, 1 << 20).await.unwrap();
+    Json(json!({
+        "target": parts.uri.to_string(),
+        "auth": parts.headers.get("authorization").map(|v| v.to_str().unwrap().to_string()),
+        "body": String::from_utf8_lossy(&body),
+    }))
+}
 
 async fn server() -> String {
     let app = Router::new()
@@ -23,7 +42,8 @@ async fn server() -> String {
         .route(
             "/missing",
             get(|| async { (axum::http::StatusCode::NOT_FOUND, "no") }),
-        );
+        )
+        .route("/echo/{*rest}", any(echo));
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
@@ -45,7 +65,12 @@ fn scenario(flows: &str, load: &str) -> lt_core::scenario::Scenario {
 
 async fn run(flows: &str, load: &str, base_url: &str) -> lt_core::metrics::RunResult {
     lt_core::timer::high_resolution();
-    let plan = Plan::build(&scenario(flows, load), &environment(base_url)).unwrap();
+    let plan = Plan::build(
+        &scenario(flows, load),
+        &environment(base_url),
+        &Default::default(),
+    )
+    .unwrap();
     engine::run(Arc::new(plan), Arc::new(Progress::default())).await
 }
 
@@ -135,12 +160,12 @@ fn rejects_hosts_outside_allowlist_and_limits() {
     let mut env = environment("http://127.0.0.1:1");
     env.limits.max_rps = Some(150.0);
 
-    let errors = Plan::build(&s, &env).err().unwrap();
+    let errors = Plan::build(&s, &env, &Default::default()).err().unwrap();
     assert_eq!(errors.len(), 1);
     assert!(errors[0].contains("evil.example.com"), "{errors:?}");
 
     env.allowed_hosts.push("evil.example.com".into());
-    let plan = Plan::build(&s, &env).unwrap();
+    let plan = Plan::build(&s, &env, &Default::default()).unwrap();
     // 100 it/s × 2 pasos = 200 req/s > 150.
     let violations = plan.limit_violations(&env);
     assert!(violations[0].contains("max_rps"), "{violations:?}");
@@ -153,7 +178,7 @@ async fn check_runs_each_flow_once_and_shows_bodies() {
         TWO_FLOWS,
         "  rate: 1000/s\n  duration: 1h\n  max_vus: 1000\n",
     );
-    let plan = Plan::build(&s, &environment(&base)).unwrap();
+    let plan = Plan::build(&s, &environment(&base), &Default::default()).unwrap();
 
     let r = lt_core::check::check(&plan).await.unwrap();
     let names: Vec<_> = r.steps.iter().map(|s| s.name.as_str()).collect();
@@ -169,8 +194,67 @@ async fn check_refuses_hosts_that_are_not_loopback() {
     let s = scenario(flows, "  rate: 1/s\n  duration: 1s\n  max_vus: 1\n");
     let env: Environment =
         serde_saphyr::from_str("base_url: http://192.0.2.1\nallowed_hosts: [192.0.2.1]\n").unwrap();
-    let plan = Plan::build(&s, &env).unwrap();
+    let plan = Plan::build(&s, &env, &Default::default()).unwrap();
 
     let e = lt_core::check::check(&plan).await.unwrap_err();
     assert!(e.contains("loopback"), "{e}");
+}
+
+const ECHO: &str = "  main:
+    steps:
+      - name: echo
+        request:
+          method: POST
+          url: /echo/items/{{id}}
+          query: { by: \"{{who}}\" }
+          json: { id: \"{{id}}\", label: \"n-{{id}}\", n: \"{{$randomInt(3,3)}}\" }
+";
+
+fn echo_scenario(defaults: &str) -> lt_core::scenario::Scenario {
+    let yaml = format!(
+        "version: 1\nname: echo\nvars: {{ id: 7, who: ana }}\n{defaults}flows:\n{ECHO}\
+         load:\n  executor: constant_rate\n  rate: 1/s\n  duration: 1s\n  max_vus: 1\n"
+    );
+    parse_scenario(&yaml).unwrap_or_else(|r| panic!("{r:?}"))
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn interpolates_vars_secrets_and_defaults() {
+    let base = server().await;
+    let s = echo_scenario("defaults: { headers: { Authorization: \"Bearer {{env.TOKEN}}\" } }\n");
+    let inputs = Inputs {
+        vars: [("who".to_string(), json!("bob maría"))].into(),
+        secrets: [("TOKEN".to_string(), Some("t0k".to_string()))].into(),
+    };
+    let plan = Plan::build(&s, &environment(&base), &inputs).unwrap();
+
+    let r = lt_core::check::check(&plan).await.unwrap();
+    let echoed: Value = serde_json::from_str(r.steps[0].body.as_deref().unwrap()).unwrap();
+    // --var pisa a `vars`; los valores se codifican según dónde van.
+    assert_eq!(echoed["target"], "/echo/items/7?by=bob+mar%C3%ADa");
+    assert_eq!(echoed["auth"], "Bearer t0k");
+    // "{{id}}" conserva el tipo número; "n-{{id}}" es un string.
+    let body: Value = serde_json::from_str(echoed["body"].as_str().unwrap()).unwrap();
+    assert_eq!(body, json!({ "id": 7, "label": "n-7", "n": 3 }));
+}
+
+#[test]
+fn reports_undefined_variables_and_secrets() {
+    let s = echo_scenario(
+        "defaults: { headers: { X-A: \"{{nope}}\", X-B: \"{{env.MISSING}}\", X-C: \"{{env.EMPTY}}\" } }\n",
+    );
+    let inputs = Inputs {
+        vars: Default::default(),
+        secrets: [("EMPTY".to_string(), None)].into(),
+    };
+    let errors = Plan::build(&s, &environment("http://127.0.0.1:1"), &inputs)
+        .err()
+        .unwrap()
+        .join("\n");
+    assert!(errors.contains("`{{nope}}` no está definida"), "{errors}");
+    assert!(
+        errors.contains("`{{env.MISSING}}` no está declarado"),
+        "{errors}"
+    );
+    assert!(errors.contains("`EMPTY` no tiene valor"), "{errors}");
 }
