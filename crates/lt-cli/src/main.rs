@@ -1,6 +1,7 @@
 mod approve;
 mod check;
 mod claude;
+mod findings;
 mod hook;
 mod prepare;
 mod run;
@@ -78,6 +79,14 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Hallazgos de una corrida (por defecto, la más reciente).
+    Findings {
+        /// Id de la corrida (carpeta en .loadtest/runs/) o `latest`.
+        run: Option<String>,
+        /// Resumen compacto para agentes: totales, thresholds, hallazgos y pasos, sin series.
+        #[arg(long)]
+        json: bool,
+    },
     /// Imprime el JSON Schema del escenario (para editores y agentes).
     Schema,
     /// Smoke check: corre cada flow una vez, en serie, solo contra loopback. No necesita aprobación.
@@ -117,6 +126,7 @@ fn main() -> ExitCode {
         Command::Hook {
             event: HookEvent::PreToolUse,
         } => hook::cmd_pre_tool_use(),
+        Command::Findings { run, json } => findings::cmd_findings(run.as_deref(), json),
         Command::Schema => {
             let schema = lt_core::scenario::json_schema();
             println!("{}", serde_json::to_string_pretty(&schema).unwrap());
