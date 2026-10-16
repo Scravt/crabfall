@@ -5,6 +5,7 @@
 
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
+    sync::atomic::{AtomicUsize, Ordering::Relaxed},
     time::Duration,
 };
 
@@ -22,9 +23,10 @@ use super::http::{Body, Origin};
 use crate::{
     assertion::Assertion,
     config::Environment,
+    data::Dataset,
     extract::Extractor,
     load::LoadPlan,
-    scenario::{Defaults, Scenario, Source, Step},
+    scenario::{Defaults, Pick, Scenario, Source, Step},
     template::{Scope, Template, ValueTemplate, to_text},
     threshold::{Filter, ThresholdPlan},
     units::HumanDuration,
@@ -46,6 +48,8 @@ pub struct Inputs {
     pub vars: BTreeMap<String, Value>,
     /// Secretos declarados en `config.yaml`, con su valor si lo tienen.
     pub secrets: BTreeMap<String, Option<String>>,
+    /// Datasets de `data`, ya leídos.
+    pub data: BTreeMap<String, Dataset>,
 }
 
 pub struct Plan {
@@ -62,6 +66,8 @@ pub struct Plan {
     pub request_cap: Option<f64>,
     /// Variables globales: escenario < entorno < `--var`.
     pub vars: BTreeMap<String, Value>,
+    /// Datasets de `data`, en el orden del escenario.
+    pub data: Vec<DataPlan>,
     /// Valores de los secretos usados. Nunca se muestran ni se firman.
     pub secrets: HashMap<String, String>,
     /// No firman: no cambian el tráfico.
@@ -72,6 +78,25 @@ pub struct FlowPlan {
     pub name: String,
     pub weight: u32,
     pub steps: Vec<StepPlan>,
+    /// Índices en `Plan::data` de los datasets que usan sus pasos.
+    pub data: Vec<usize>,
+}
+
+/// Un dataset con su contador de filas.
+pub struct DataPlan {
+    pub dataset: Dataset,
+    next: AtomicUsize,
+}
+
+impl DataPlan {
+    /// Fila de la próxima iteración.
+    fn pick(&self) -> usize {
+        let rows = self.dataset.rows.len();
+        match self.dataset.pick {
+            Pick::Sequential => self.next.fetch_add(1, Relaxed) % rows,
+            Pick::Random => fastrand::usize(..rows),
+        }
+    }
 }
 
 pub enum BodyPlan {
@@ -176,6 +201,16 @@ impl StepPlan {
         url
     }
 
+    /// Si alguna plantilla o check usa una columna de `dataset`.
+    fn uses_dataset(&self, dataset: &str) -> bool {
+        let is_column = |var: &str| var.split_once('.').is_some_and(|(d, _)| d == dataset);
+        self.templates().iter().any(|t| t.vars().any(is_column))
+            || self
+                .checks
+                .iter()
+                .any(|c| c.vars().into_iter().any(is_column))
+    }
+
     /// Todas las plantillas del paso.
     fn templates(&self) -> Vec<&Template> {
         let mut all = vec![&self.path];
@@ -221,6 +256,16 @@ impl Plan {
         // `id` indexa las métricas de los flows; `setup` lleva su propia numeración.
         let mut flow_ids = 0;
         let mut setup_ids = 0;
+        let columns: BTreeMap<&str, &[String]> = scenario
+            .data
+            .keys()
+            .filter_map(|n| {
+                inputs
+                    .data
+                    .get(n)
+                    .map(|d| (n.as_str(), d.columns.as_slice()))
+            })
+            .collect();
         // Arma los pasos en orden; cada uno ve las variables globales y las extraídas antes.
         let mut build_steps = |steps: &[Step],
                                flow: &str,
@@ -231,7 +276,7 @@ impl Plan {
             for step in steps {
                 match build_step(*id, flow, step, defaults, &base, &allowed) {
                     Ok(plan) => {
-                        let problems = check_references(&plan, known, &inputs.secrets);
+                        let problems = check_references(&plan, known, &inputs.secrets, &columns);
                         errors.extend(problems.into_iter().map(|p| format!("{}: {p}", step.name)));
                         known.extend(plan.extract.iter().map(|(name, _)| name.clone()));
                         hosts.insert(plan.origin.host.clone());
@@ -252,19 +297,44 @@ impl Plan {
             &mut after_setup,
             &mut setup_ids,
         );
+        // Las columnas de los datasets solo existen en los flows.
+        let mut data = Vec::new();
+        let mut data_errors = Vec::new();
+        for name in scenario.data.keys() {
+            match inputs.data.get(name) {
+                Some(dataset) => {
+                    after_setup.extend(dataset.vars(0).map(|(var, _)| var));
+                    data.push(DataPlan {
+                        dataset: dataset.clone(),
+                        next: AtomicUsize::new(0),
+                    });
+                }
+                None => data_errors.push(format!("data.{name}: el dataset no se cargó")),
+            }
+        }
         let flows: Vec<FlowPlan> = scenario
             .flows
             .iter()
-            .map(|(flow_name, flow)| FlowPlan {
-                name: flow_name.clone(),
-                weight: flow.weight,
-                steps: build_steps(
+            .map(|(flow_name, flow)| {
+                let steps = build_steps(
                     &flow.steps,
                     flow_name,
                     scenario.defaults.as_ref(),
                     &mut after_setup.clone(),
                     &mut flow_ids,
-                ),
+                );
+                let data = data
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, d)| steps.iter().any(|s| s.uses_dataset(&d.dataset.name)))
+                    .map(|(i, _)| i)
+                    .collect();
+                FlowPlan {
+                    name: flow_name.clone(),
+                    weight: flow.weight,
+                    steps,
+                    data,
+                }
             })
             .collect();
 
@@ -282,9 +352,11 @@ impl Plan {
             max_request_rate: scenario.max_request_rate(),
             request_cap: env.limits.max_rps,
             vars,
+            data,
             secrets,
             thresholds: Vec::new(),
         };
+        errors.extend(data_errors);
         let mut plan = plan;
         for (i, t) in scenario.thresholds.iter().enumerate() {
             match ThresholdPlan::parse(t) {
@@ -356,7 +428,7 @@ impl Plan {
             .iter()
             .map(|f| json!({ "name": f.name, "weight": f.weight, "steps": f.steps.iter().map(step).collect::<Vec<_>>() }))
             .collect();
-        json!({
+        let mut canonical = json!({
             "scenario": self.scenario,
             "environment": {
                 "base_url": env.base_url,
@@ -371,7 +443,31 @@ impl Plan {
             "load": self.load.canonical(),
             "setup": setup,
             "flows": flows,
-        })
+        });
+        // Solo si hay datasets, para no invalidar las aprobaciones de antes (ADR-007).
+        // Se firma el contenido del archivo, no solo su nombre.
+        if !self.data.is_empty() {
+            canonical["data"] = self
+                .data
+                .iter()
+                .map(|d| {
+                    let d = &d.dataset;
+                    json!({ "name": d.name, "file": d.file, "pick": d.pick.as_str(), "sha256": d.sha256 })
+                })
+                .collect();
+        }
+        canonical
+    }
+
+    /// Variables de las filas que toma una iteración de `flow`: `dataset.columna` → valor.
+    pub fn row_vars(&self, flow: &FlowPlan) -> HashMap<String, Value> {
+        flow.data
+            .iter()
+            .flat_map(|&i| {
+                let d = &self.data[i];
+                d.dataset.vars(d.pick())
+            })
+            .collect()
     }
 
     /// Cuánta carga puede generar, en requests/s, para resúmenes.
@@ -463,10 +559,13 @@ fn check_references(
     step: &StepPlan,
     known: &BTreeSet<String>,
     secrets: &BTreeMap<String, Option<String>>,
+    columns: &BTreeMap<&str, &[String]>,
 ) -> Vec<String> {
     let mut problems = BTreeSet::new();
     for var in step.checks.iter().flat_map(|c| c.vars()) {
-        if !known.contains(var) {
+        if !known.contains(var) && var.contains('.') {
+            problems.insert(format!("un check usa {}", unknown_column(var, columns)));
+        } else if !known.contains(var) {
             problems.insert(format!(
                 "un check usa `{{{{{var}}}}}`, que no está definida"
             ));
@@ -474,7 +573,9 @@ fn check_references(
     }
     for t in step.templates() {
         for var in t.vars() {
-            if !known.contains(var) {
+            if !known.contains(var) && var.contains('.') {
+                problems.insert(unknown_column(var, columns));
+            } else if !known.contains(var) {
                 problems.insert(format!(
                     "`{{{{{var}}}}}` no está definida: agregala en `vars`, en el entorno o con --var, o extraéla en un paso anterior"
                 ));
@@ -493,6 +594,19 @@ fn check_references(
         }
     }
     problems.into_iter().collect()
+}
+
+/// Por qué `dataset.columna` no se puede usar en este paso.
+fn unknown_column(var: &str, columns: &BTreeMap<&str, &[String]>) -> String {
+    let (dataset, column) = var.split_once('.').unwrap_or((var, ""));
+    match columns.get(dataset) {
+        None => format!("`{{{{{var}}}}}`: no hay un dataset `{dataset}` en `data`"),
+        Some(cols) if !cols.iter().any(|c| c == column) => format!(
+            "`{{{{{var}}}}}`: el dataset `{dataset}` no tiene la columna `{column}` (tiene: {})",
+            cols.join(", ")
+        ),
+        Some(_) => format!("`{{{{{var}}}}}`: los datasets no se pueden usar en `setup`"),
+    }
 }
 
 pub fn is_loopback(host: &str) -> bool {

@@ -237,7 +237,7 @@ fn plan_errors(
         Ok((_, env)) => env,
         Err(e) => return vec![issue(e)],
     };
-    let mut inputs = match prepare::inputs(project, &config, &[]) {
+    let mut inputs = match prepare::inputs(project, &config, scenario, &[]) {
         Ok(i) => i,
         Err(e) => return vec![issue(e)],
     };

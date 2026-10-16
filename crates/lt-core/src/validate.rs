@@ -195,6 +195,23 @@ fn check_rules(s: &Scenario, errors: &mut Vec<Issue>) {
         }
     }
 
+    for (name, spec) in &s.data {
+        let path = format!("data.{name}");
+        if !valid_var_name(name) || name == "env" {
+            errors.push(Issue::at(
+                &path,
+                "el nombre usa letras, números y `_`, no empieza con un número y no puede ser `env`",
+            ));
+        }
+        let file = spec.file.to_ascii_lowercase();
+        if !(file.ends_with(".csv") || file.ends_with(".json")) {
+            errors.push(Issue::at(
+                format!("{path}.file"),
+                "usá un archivo .csv o .json",
+            ));
+        }
+    }
+
     check_load(&s.load, errors);
     for (i, t) in s.thresholds.iter().enumerate() {
         if let Err(e) = ThresholdPlan::parse(t) {
@@ -442,6 +459,20 @@ load:
             .map(|e| e.path)
             .collect();
         assert_eq!(paths, ["load.rate", "load.max_vus", "load.vus"]);
+    }
+
+    #[test]
+    fn checks_dataset_names_and_files() {
+        let yaml = OK.replacen(
+            "flows:",
+            "data:
+  env: { file: a.csv }
+  users: { file: u.txt, pick: random }
+flows:",
+            1,
+        );
+        let paths: Vec<_> = errors(&yaml).into_iter().map(|e| e.path).collect();
+        assert_eq!(paths, ["data.env", "data.users.file"]);
     }
 
     #[test]

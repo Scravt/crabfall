@@ -7,8 +7,10 @@ use std::{
 
 use lt_core::{
     config::{Config, Environment},
+    data::Dataset,
     engine::plan::{Inputs, Plan},
     project::{Project, describe},
+    scenario::Scenario,
     validate,
 };
 use serde_json::Value;
@@ -59,7 +61,7 @@ pub fn prepare(arg: &str, env_name: Option<&str>, vars: &[String]) -> Result<Pre
         }
         exit::INVALID
     })?;
-    let inputs = inputs(&project, &config, vars).map_err(|e| fail(exit::INVALID, e))?;
+    let inputs = inputs(&project, &config, &scenario, vars).map_err(|e| fail(exit::INVALID, e))?;
     let plan = Plan::build(&scenario, &env, &inputs).map_err(|errors| {
         eprintln!("✗ no se puede armar {} en `{env_name}`:", scenario.name);
         for e in errors {
@@ -77,8 +79,14 @@ pub fn prepare(arg: &str, env_name: Option<&str>, vars: &[String]) -> Result<Pre
     })
 }
 
-/// `--var` y los secretos declarados en `config.yaml`, con su valor si lo tienen.
-pub fn inputs(project: &Project, config: &Config, vars: &[String]) -> Result<Inputs, String> {
+/// `--var`, los secretos declarados en `config.yaml` (con su valor si lo tienen) y los
+/// datasets de `data`, leídos desde `.loadtest/`.
+pub fn inputs(
+    project: &Project,
+    config: &Config,
+    scenario: &Scenario,
+    vars: &[String],
+) -> Result<Inputs, String> {
     let mut parsed = BTreeMap::new();
     for var in vars {
         let (name, raw) = var
@@ -104,9 +112,26 @@ pub fn inputs(project: &Project, config: &Config, vars: &[String]) -> Result<Inp
             (name.clone(), value)
         })
         .collect();
+    let mut data = BTreeMap::new();
+    let mut errors = Vec::new();
+    for (name, spec) in &scenario.data {
+        match Dataset::load(&project.dir, name, spec) {
+            Ok(d) => {
+                data.insert(name.clone(), d);
+            }
+            Err(e) => errors.push(e),
+        }
+    }
+    if !errors.is_empty() {
+        return Err(errors.join(
+            "
+  ",
+        ));
+    }
     Ok(Inputs {
         vars: parsed,
         secrets,
+        data,
     })
 }
 

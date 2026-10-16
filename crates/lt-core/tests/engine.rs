@@ -225,6 +225,7 @@ async fn interpolates_vars_secrets_and_defaults() {
     let inputs = Inputs {
         vars: [("who".to_string(), json!("bob maría"))].into(),
         secrets: [("TOKEN".to_string(), Some("t0k".to_string()))].into(),
+        ..Default::default()
     };
     let plan = Plan::build(&s, &environment(&base), &inputs).unwrap();
 
@@ -246,6 +247,7 @@ fn reports_undefined_variables_and_secrets() {
     let inputs = Inputs {
         vars: Default::default(),
         secrets: [("EMPTY".to_string(), None)].into(),
+        ..Default::default()
     };
     let errors = Plan::build(&s, &environment("http://127.0.0.1:1"), &inputs)
         .err()
@@ -584,4 +586,111 @@ async fn records_a_per_second_series() {
     let slow = &s.steps[0];
     assert_eq!(slow.name, "slow");
     assert!(slow.points[1].p50.unwrap() >= 300.0);
+}
+
+const USERS_CSV: &[u8] = b"id,email\n1,ana@x.com\n2,beto@x.com\n";
+
+/// `main` usa el dataset `users`; `other`, no.
+fn data_scenario(setup: &str, extra: &str) -> (lt_core::scenario::Scenario, Inputs) {
+    let yaml = format!(
+        "version: 1\nname: data\ndata:\n  users: {{ file: data/users.csv }}\n{setup}flows:
+  main:
+    steps:
+      - name: user
+        request:
+          method: POST
+          url: /echo/u/{{{{users.id}}}}
+          json: {{ email: \"{{{{users.email}}}}\"{extra} }}
+        checks:
+          - json: $.target
+            equals: /echo/u/{{{{users.id}}}}
+  other:
+    steps:
+      - name: plain
+        request: {{ method: GET, url: /ok }}
+load:\n  executor: constant_rate\n  rate: 40/s\n  duration: 1s\n  max_vus: 10\n"
+    );
+    let s = parse_scenario(&yaml).unwrap_or_else(|r| panic!("{r:?}"));
+    let users = lt_core::data::Dataset::parse("users", &s.data["users"], USERS_CSV).unwrap();
+    let inputs = Inputs {
+        data: [("users".to_string(), users)].into(),
+        ..Default::default()
+    };
+    (s, inputs)
+}
+
+#[test]
+fn datasets_hand_rows_in_order_only_to_flows_that_use_them() {
+    let (s, inputs) = data_scenario("", "");
+    let plan = Plan::build(&s, &environment("http://127.0.0.1:1"), &inputs).unwrap();
+    let ids: Vec<Value> = (0..3)
+        .map(|_| plan.row_vars(&plan.flows[0])["users.id"].clone())
+        .collect();
+    assert_eq!(ids, [json!("1"), json!("2"), json!("1")]);
+    assert_eq!(
+        plan.row_vars(&plan.flows[0])["users.email"],
+        json!("beto@x.com")
+    );
+    assert!(plan.row_vars(&plan.flows[1]).is_empty());
+}
+
+#[test]
+fn approval_signs_the_dataset_contents() {
+    let env = environment("http://127.0.0.1:1");
+    let (s, inputs) = data_scenario("", "");
+    let canonical = Plan::build(&s, &env, &inputs).unwrap().canonical(&env);
+    assert_eq!(canonical["data"][0]["file"], "data/users.csv");
+    assert_eq!(canonical["data"][0]["pick"], "sequential");
+
+    let mut changed = inputs.clone();
+    changed.data.insert(
+        "users".into(),
+        lt_core::data::Dataset::parse("users", &s.data["users"], b"id,email\n1,otro@x.com\n")
+            .unwrap(),
+    );
+    let other = Plan::build(&s, &env, &changed).unwrap().canonical(&env);
+    assert_ne!(canonical, other);
+
+    // Sin `data`, la firma no cambia respecto de las versiones anteriores.
+    let plain = Plan::build(&echo_scenario(""), &env, &Default::default()).unwrap();
+    assert!(plain.canonical(&env).get("data").is_none());
+}
+
+#[test]
+fn datasets_are_not_available_in_setup_and_columns_must_exist() {
+    let setup =
+        "setup:\n  - name: login\n    request: { method: GET, url: \"/login/{{users.id}}\" }\n";
+    let (s, inputs) = data_scenario(setup, ", x: \"{{users.nope}}\"");
+    let errors = Plan::build(&s, &environment("http://127.0.0.1:1"), &inputs)
+        .err()
+        .unwrap()
+        .join("\n");
+    assert!(
+        errors.contains("login: `{{users.id}}`: los datasets no se pueden usar en `setup`"),
+        "{errors}"
+    );
+    assert!(
+        errors.contains(
+            "`{{users.nope}}`: el dataset `users` no tiene la columna `nope` (tiene: id, email)"
+        ),
+        "{errors}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn each_iteration_uses_one_row_in_all_its_steps() {
+    lt_core::timer::high_resolution();
+    let base = server().await;
+    let (s, inputs) = data_scenario("", "");
+    let plan = Plan::build(&s, &environment(&base), &inputs).unwrap();
+
+    let checked = lt_core::check::check(&plan).await.unwrap();
+    assert!(checked.ok, "{checked:?}");
+    let echoed: Value = serde_json::from_str(checked.steps[0].body.as_deref().unwrap()).unwrap();
+    assert_eq!(echoed["target"], "/echo/u/1");
+    assert_eq!(echoed["body"], r#"{"email":"ana@x.com"}"#);
+
+    let r = engine::run(Arc::new(plan), Arc::new(Progress::default())).await;
+    assert!(r.totals.checks_passed > 0);
+    assert_eq!(r.totals.checks_failed, 0);
 }

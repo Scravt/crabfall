@@ -104,9 +104,18 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente.
 - [x] Tests: unitarios, el motor contra un servidor rápido y uno lento, y el binario
 - Listo: en `shop-api`, con `login` usando `scrypt` asincrónico (rama `fix/async-scrypt`), `login-ramp` sostiene los 80 req/s sin descartes ni hallazgos, y `lt compare` contra la corrida anterior da "mejoró": p95 de `login` 7213 → 32 ms en 25 de 29 segundos, el punto de quiebre y `new_connections` resueltos (16 oct 2026).
 
+**7. Datasets**
+- [x] `data:` en la raíz: CSV con encabezado (strings) o JSON (arreglo de objetos, conserva tipos), relativos a `.loadtest/` (ADR-007)
+- [x] `{{dataset.columna}}`: una fila por iteración para todos sus pasos, `pick: sequential` (por defecto) o `random`; solo consumen filas los flows que usan el dataset
+- [x] La aprobación firma el SHA-256 de cada archivo; `approve` y `run` muestran los datasets
+- [x] Errores con la columna o la fila: archivo vacío o ilegible, columna inexistente (con las que hay), uso en `setup`
+- [x] Skill: sección "Datos por iteración"
+- [x] Tests: carga de CSV y JSON, orden de las filas, firma, errores y el motor contra el servidor de eco
+- Listo cuando: en `shop-api`, `login-users` hace login con un usuario distinto por iteración (`data/users.csv`) y pide productos al azar de `data/products.json`, pasa `check`, y una corrida aprobada da 0 checks fallidos. `check` pasa (16 oct 2026). **Pendiente:** la corrida (la aprueba y ejecuta una persona).
+
 ## Backlog (sin orden)
 
-Más reglas de diagnóstico, reporte HTML, corrida base fija para CI (`lt compare --baseline`), servidor MCP, importadores (OpenAPI, curl, Postman), GUI con Tauri, HTTP/2, datasets, setup por VU, think time, GitHub Action, correlación con métricas del servidor (OTLP, Prometheus), WebSockets, gRPC, Kafka.
+Más reglas de diagnóstico, reporte HTML, corrida base fija para CI (`lt compare --baseline`), servidor MCP, importadores (OpenAPI, curl, Postman), GUI con Tauri, HTTP/2, `pick: unique` para datasets, setup por VU, think time, GitHub Action, correlación con métricas del servidor (OTLP, Prometheus), WebSockets, gRPC, Kafka.
 
 ## Decisiones abiertas
 
@@ -137,3 +146,4 @@ Más reglas de diagnóstico, reporte HTML, corrida base fija para CI (`lt compar
 | 12 oct 2026 | Diagnóstico en dos capas: reglas deterministas con evidencia en el motor, hipótesis sobre el código en Claude | ADR-005 |
 | 15 oct 2026 | `new_connections` descuenta una conexión por VU (el pool crece hasta la concurrencia) | ADR-005 |
 | 15 oct 2026 | `lt compare`: veredicto por paso con magnitud + test de signos sobre segundos emparejados; regresiones salen con código 1 | ADR-006 |
+| 16 oct 2026 | Datasets: `{{dataset.columna}}`, una fila por iteración, CSV como strings y JSON con tipos; se firma el SHA-256 de cada archivo | ADR-007 |
