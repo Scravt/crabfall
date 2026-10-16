@@ -44,6 +44,9 @@ pub fn cmd_run(target: &crate::Target, as_json: bool) -> u8 {
     let hosts: Vec<&str> = plan.hosts.iter().map(String::as_str).collect();
     eprintln!("{} → {env_name} ({})", plan.scenario, hosts.join(", "));
     eprintln!("  {} · {}", plan.load.describe(), plan.rate_summary());
+    for d in &plan.data {
+        eprintln!("  datos: {}", d.dataset.describe());
+    }
     let (duration, graceful_stop) = (plan.load.duration(), plan.load.graceful_stop());
 
     let Ok(approval) = crate::approve::verify_for_run(&project, &plan, &env, &env_name) else {

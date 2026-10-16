@@ -81,3 +81,4 @@ Para probar contra una API más realista: [shop-api](../shop-api) (repo aparte),
 - [ADR-004 — Aprobación y modelo de amenaza](docs/adr/ADR-004-aprobacion.md)
 - [ADR-005 — Diagnóstico](docs/adr/ADR-005-diagnostico.md)
 - [ADR-006 — Comparar corridas](docs/adr/ADR-006-comparacion.md)
+- [ADR-007 — Datasets](docs/adr/ADR-007-datasets.md)

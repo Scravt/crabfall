@@ -279,7 +279,7 @@ load:
 
 | Bloque | Campos | Notas |
 | --- | --- | --- |
-| raíz | `version`, `name`, `description`, `meta`, `vars`, `setup`, `defaults`, `flows`, `load`, `thresholds` | Obligatorios: `version`, `name`, `flows`, `load` |
+| raíz | `version`, `name`, `description`, `meta`, `vars`, `data`, `setup`, `defaults`, `flows`, `load`, `thresholds` | Obligatorios: `version`, `name`, `flows`, `load` |
 | flow | `weight`, `steps` | `weight` opcional, por defecto `1` |
 | defaults | `headers`, `timeout` | Solo para pasos de `flows`, no de `setup` |
 | paso | `name`, `request`, `checks`, `extract`, `tags`, `source` | `name` único en todo el escenario |
@@ -303,5 +303,5 @@ Cualquier escenario se puede verificar con `lt check <escenario>`. Corre el `set
 ## Puntos abiertos
 
 - **Setup por VU** (cada usuario virtual con su propio login): se deja para más adelante, salvo que un caso real lo necesite antes.
-- **Datasets** (CSV/JSON): el formato reserva el campo `data` en la raíz.
+- **Datasets** (CSV/JSON): resuelto en ADR-007, con el campo `data` en la raíz.
 - **Think time** entre pasos: queda en el backlog; reservar `think` en el paso.

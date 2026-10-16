@@ -182,6 +182,10 @@ fn print_summary(plan: &Plan, env: &Environment, env_name: &str, change: &Change
         HumanDuration(duration),
         HumanDuration(graceful_stop)
     );
+    for (i, d) in plan.data.iter().enumerate() {
+        let label = if i == 0 { "Datos" } else { "" };
+        eprintln!("{label:<11} {}", d.dataset.describe());
+    }
 
     let writes: Vec<String> = plan
         .all_steps()

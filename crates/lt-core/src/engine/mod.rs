@@ -450,7 +450,7 @@ async fn iteration(
     intended: Instant,
 ) {
     let mut from = intended;
-    let mut locals = HashMap::new();
+    let mut locals = plan.row_vars(&plan.flows[flow]);
     for step in &plan.flows[flow].steps {
         let run = run_step(client, plan, step, setup, &locals).await;
         let done = Instant::now();

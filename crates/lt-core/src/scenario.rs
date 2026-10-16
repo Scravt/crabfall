@@ -35,6 +35,9 @@ pub struct Scenario {
     /// Variables del escenario, usables como `{{nombre}}`. Las del entorno, `--var` y `extract` las pisan (en ese orden).
     #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
     pub vars: IndexMap<String, Value>,
+    /// Datasets: archivos CSV o JSON, relativos a `.loadtest/`. Cada iteración toma una fila de cada dataset que usa su flow, y los pasos la ven como `{{nombre.columna}}`. No se pueden usar en `setup`.
+    #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
+    pub data: IndexMap<String, DataSpec>,
     /// Headers y timeout que heredan todos los pasos de `flows` (no los de `setup`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub defaults: Option<Defaults>,
@@ -74,6 +77,34 @@ pub struct Flow {
 
 fn default_weight() -> u32 {
     1
+}
+
+/// Un dataset, por ejemplo `{ file: data/users.csv }`.
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DataSpec {
+    /// Archivo relativo a `.loadtest/`. `.csv` con encabezado (todas las celdas son strings) o `.json` con un arreglo de objetos (conserva los tipos). Los nombres de columna usan letras, números y `_`.
+    pub file: String,
+    /// `sequential` (por defecto): las filas en orden, y al terminar vuelve a empezar. `random`: una fila al azar en cada iteración.
+    #[serde(default)]
+    pub pick: Pick,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Pick {
+    #[default]
+    Sequential,
+    Random,
+}
+
+impl Pick {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Sequential => "sequential",
+            Self::Random => "random",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]

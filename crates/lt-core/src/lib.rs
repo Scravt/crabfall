@@ -5,6 +5,7 @@ pub mod assertion;
 pub mod check;
 pub mod compare;
 pub mod config;
+pub mod data;
 pub mod diagnose;
 pub mod engine;
 pub mod extract;

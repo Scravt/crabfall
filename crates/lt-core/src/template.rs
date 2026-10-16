@@ -2,6 +2,7 @@
 //!
 //! - `{{nombre}}`: variable (de `vars`, del entorno, de `--var` o de un `extract`).
 //! - `{{env.NOMBRE}}`: secreto declarado en `secrets` de `config.yaml`.
+//! - `{{dataset.columna}}`: columna de la fila que tomó la iteración (ADR-007).
 //! - `{{$uuid}}`, `{{$timestamp}}`, `{{$randomInt(min,max)}}`: un valor nuevo por uso.
 //!
 //! Si un valor JSON es *exactamente* `"{{x}}"`, conserva el tipo de `x`.
@@ -150,11 +151,15 @@ fn parse_expr(e: &str) -> Result<Part, String> {
             "placeholder desconocido `{{{{{e}}}}}` (soportados: $uuid, $timestamp, $randomInt(min,max))"
         ));
     }
-    if valid_name(e) {
+    // `dataset.columna` es una columna de la fila de la iteración (ADR-007).
+    let is_column = e
+        .split_once('.')
+        .is_some_and(|(d, c)| valid_name(d) && valid_name(c));
+    if valid_name(e) || is_column {
         Ok(Part::Var(e.to_string()))
     } else {
         Err(format!(
-            "`{{{{{e}}}}}` no es un nombre de variable válido (letras, números y `_`)"
+            "`{{{{{e}}}}}` no es un nombre de variable válido (letras, números y `_`, o `dataset.columna`)"
         ))
     }
 }
@@ -355,6 +360,14 @@ mod tests {
         assert!(Template::parse("{{$randomInt(9,1)}}").is_err());
         assert!(Template::parse("{{mi-var}}").is_err());
         assert!(Template::parse("{{env.}}").is_err());
+        assert!(Template::parse("{{a.b.c}}").is_err());
+        assert_eq!(
+            Template::parse("{{users.email}}")
+                .unwrap()
+                .vars()
+                .collect::<Vec<_>>(),
+            ["users.email"]
+        );
     }
 
     #[test]

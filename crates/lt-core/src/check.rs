@@ -110,7 +110,7 @@ pub async fn check(plan: &Plan) -> Result<CheckResult, String> {
     }
 
     for flow in &plan.flows {
-        let mut locals = HashMap::new();
+        let mut locals = plan.row_vars(flow);
         let mut flow_failed = setup_failed;
         for step in &flow.steps {
             if flow_failed || steps.len() >= MAX_REQUESTS {
