@@ -94,7 +94,7 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente.
 - [x] `lt findings [--json]` con evidencia y `source` del paso; hallazgos al final de `lt run`
 - [x] Skill: del hallazgo al código, separando lo medido de las hipótesis
 - [x] Validar cada regla con una patología (servidores de prueba en `tests/diagnose.rs`)
-- Listo cuando: en `shop-api`, `stress-ramp` da un `breaking_point` y Claude llega al código responsable. **Pendiente** (la corrida la aprueba y ejecuta una persona).
+- Listo: en `shop-api`, `login-ramp` da un `breaking_point` en ~36 req/s y Claude llega a `scryptSync` en `src/auth.ts` (15 oct 2026). `stress-ramp` no satura `shop-api` y no da hallazgos, como corresponde. La corrida destapó un falso positivo de `new_connections`, ya corregido (ADR-005).
 
 ## Backlog (sin orden)
 
@@ -127,3 +127,4 @@ Más reglas de diagnóstico, reporte HTML, comparación contra una corrida base,
 | 12 oct 2026 | Checks y thresholds no se firman (no cambian el tráfico); `setup`, `extract` y variables sí | ADR-004 |
 | 12 oct 2026 | `ramping_rate` con calendario exacto; `constant_vus` con pacer si hay `max_rps` | ADR-003 |
 | 12 oct 2026 | Diagnóstico en dos capas: reglas deterministas con evidencia en el motor, hipótesis sobre el código en Claude | ADR-005 |
+| 15 oct 2026 | `new_connections` descuenta una conexión por VU (el pool crece hasta la concurrencia) | ADR-005 |
