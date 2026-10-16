@@ -3,7 +3,7 @@
 Herramienta de pruebas de carga en Rust, pensada para usarse junto a Claude Code:
 Claude diseña el escenario y analiza los resultados; una persona aprueba y ejecuta la carga.
 
-Estado: **rebanada 5** (diagnóstico: hallazgos deterministas con evidencia). Ver el [roadmap](docs/roadmap.md).
+Estado: **rebanada 7** (datasets). Ya funcionan: diseño con Claude, aprobación firmada, escenarios con `setup`, `extract`, checks y thresholds, tres executors, diagnóstico, comparación de corridas y datasets. Ver el [roadmap](docs/roadmap.md).
 
 ## Uso
 
@@ -49,6 +49,23 @@ lt run smoke --env local       # resultados en .loadtest/runs/<id>/results.json
 
 `lt run` solo ejecuta escenarios aprobados. La aprobación firma el escenario junto con el entorno resuelto: cualquier cambio en el tráfico la invalida y `lt run` muestra qué cambió. Se aprueba en una terminal interactiva; la clave de firma vive en el keyring del sistema ([ADR-004](docs/adr/ADR-004-aprobacion.md)).
 
+Para que cada iteración use datos distintos (usuarios, IDs), declarás archivos CSV o JSON en `data:` y los usás como `{{dataset.columna}}`:
+
+```yaml
+data:
+  users: { file: data/users.csv }    # .loadtest/data/users.csv, con encabezado user,password
+flows:
+  main:
+    steps:
+      - name: login
+        request:
+          method: POST
+          url: /auth/login
+          json: { user: "{{users.user}}", password: "{{users.password}}" }
+```
+
+Cada iteración toma una fila, en orden o al azar (`pick: random`). Editar el archivo invalida la aprobación ([ADR-007](docs/adr/ADR-007-datasets.md)).
+
 ## Con Claude Code
 
 ```bash
@@ -59,7 +76,7 @@ Después, en una sesión de Claude Code: *"armame una prueba de carga del flujo 
 
 `lt findings [--json]` muestra los hallazgos de la última corrida (o de una por id). `lt compare [base] [nueva] [--json]` compara dos corridas (por defecto, la última con la anterior del mismo escenario): qué mejoró, qué empeoró y si el cambio es consistente o puede ser ruido ([ADR-006](docs/adr/ADR-006-comparacion.md)). `lt schema` imprime el JSON Schema del escenario.
 
-Códigos de salida: `0` ok · `1` `check` con pasos fallidos, thresholds no cumplidos o `compare` con regresiones · `2` escenario o configuración inválidos · `3` rechazado (sin aprobación válida, host no permitido, límites, sin terminal) · `4` error al guardar o al acceder al keyring.
+Códigos de salida: `0` ok · `1` `check` con pasos fallidos, thresholds no cumplidos, `setup` fallido o `compare` con regresiones · `2` escenario o configuración inválidos · `3` rechazado (sin aprobación válida, host no permitido, límites, sin terminal) · `4` error al guardar o al acceder al keyring.
 
 Formato completo del escenario: [ADR-002](docs/adr/ADR-002-formato-escenario.md).
 

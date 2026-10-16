@@ -51,7 +51,7 @@ En el repo del usuario:
 
 ## Rebanadas
 
-Cada rebanada funciona de punta a punta antes de pasar a la siguiente.
+Cada rebanada funciona de punta a punta antes de pasar a la siguiente. Al cerrarla se actualiza el README (estado, comandos y lo nuevo que cambia el uso); `crates/lt-cli/tests/readme.rs` falla si falta un comando o un ADR.
 
 **0. Fundaciones**
 - [x] Cargo workspace con `lt-core`, `lt-cli` y `lab-server`
