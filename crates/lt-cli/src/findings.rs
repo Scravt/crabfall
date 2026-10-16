@@ -1,11 +1,9 @@
 //! `lt findings`: hallazgos de una corrida y resumen compacto para agentes.
 
-use std::path::PathBuf;
-
 use lt_core::project::Project;
 use serde_json::{Value, json};
 
-use crate::{JSON_FORMAT, display, exit};
+use crate::{JSON_FORMAT, display, exit, runs};
 
 pub fn cmd_findings(run: Option<&str>, as_json: bool) -> u8 {
     let Some(project) = std::env::current_dir()
@@ -15,20 +13,17 @@ pub fn cmd_findings(run: Option<&str>, as_json: bool) -> u8 {
         eprintln!("✗ no encontré .loadtest/ en este directorio ni en los superiores");
         return exit::INVALID;
     };
-    let file = match run_file(&project, run) {
+    let file = match runs::file(&project, run) {
         Ok(f) => f,
         Err(e) => {
             eprintln!("✗ {e}");
             return exit::INVALID;
         }
     };
-    let doc: Value = match std::fs::read_to_string(&file)
-        .map_err(|e| e.to_string())
-        .and_then(|t| serde_json::from_str(&t).map_err(|e| e.to_string()))
-    {
+    let doc = match runs::read(&file) {
         Ok(d) => d,
         Err(e) => {
-            eprintln!("✗ no se pudo leer {}: {e}", display(&file));
+            eprintln!("✗ {e}");
             return exit::INVALID;
         }
     };
@@ -48,27 +43,6 @@ pub fn cmd_findings(run: Option<&str>, as_json: bool) -> u8 {
         print_findings(&doc["findings"]);
     }
     exit::OK
-}
-
-/// `.loadtest/runs/<id>/results.json`; sin id, la corrida más reciente.
-fn run_file(project: &Project, run: Option<&str>) -> Result<PathBuf, String> {
-    let runs = project.runs_dir();
-    let id = match run {
-        Some(id) if id != "latest" => id.to_string(),
-        _ => std::fs::read_dir(&runs)
-            .map_err(|_| "todavía no hay corridas en .loadtest/runs/".to_string())?
-            .filter_map(|e| e.ok())
-            .filter(|e| e.path().join("results.json").is_file())
-            .map(|e| e.file_name().to_string_lossy().into_owned())
-            .max()
-            .ok_or("todavía no hay corridas en .loadtest/runs/")?,
-    };
-    let file = runs.join(&id).join("results.json");
-    if file.is_file() {
-        Ok(file)
-    } else {
-        Err(format!("no existe la corrida `{id}`"))
-    }
 }
 
 /// Lo que un agente necesita para analizar: sin series ni muestras crudas.

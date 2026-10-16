@@ -3,6 +3,7 @@
 pub mod approval;
 pub mod assertion;
 pub mod check;
+pub mod compare;
 pub mod config;
 pub mod diagnose;
 pub mod engine;

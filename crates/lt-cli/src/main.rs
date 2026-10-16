@@ -1,10 +1,12 @@
 mod approve;
 mod check;
 mod claude;
+mod compare;
 mod findings;
 mod hook;
 mod prepare;
 mod run;
+mod runs;
 
 use std::{path::Path, process::ExitCode};
 
@@ -87,6 +89,19 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Compara dos corridas: qué mejoró, qué empeoró y si es real o ruido.
+    ///
+    /// Sin argumentos, la más reciente contra la anterior del mismo escenario y entorno.
+    /// Sale con 1 si hay regresiones.
+    Compare {
+        /// Corrida base (carpeta en .loadtest/runs/). Por defecto, la anterior a la nueva.
+        base: Option<String>,
+        /// Corrida nueva. Por defecto, `latest`.
+        new: Option<String>,
+        /// Salida JSON para agentes.
+        #[arg(long)]
+        json: bool,
+    },
     /// Imprime el JSON Schema del escenario (para editores y agentes).
     Schema,
     /// Smoke check: corre cada flow una vez, en serie, solo contra loopback. No necesita aprobación.
@@ -127,6 +142,9 @@ fn main() -> ExitCode {
             event: HookEvent::PreToolUse,
         } => hook::cmd_pre_tool_use(),
         Command::Findings { run, json } => findings::cmd_findings(run.as_deref(), json),
+        Command::Compare { base, new, json } => {
+            compare::cmd_compare(base.as_deref(), new.as_deref(), json)
+        }
         Command::Schema => {
             let schema = lt_core::scenario::json_schema();
             println!("{}", serde_json::to_string_pretty(&schema).unwrap());
