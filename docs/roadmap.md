@@ -102,7 +102,7 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente.
 - [x] Diferencias de totales, hallazgos (nuevos, resueltos, punto de quiebre que se mueve) y thresholds; sale con `1` si hay regresiones
 - [x] Skill: sección "Comparar corridas"; `lt compare` permitido en `lt claude install`
 - [x] Tests: unitarios, el motor contra un servidor rápido y uno lento, y el binario
-- Listo cuando: en `shop-api`, con `login` usando `scrypt` asincrónico, `lt compare` después de `login-ramp` muestra el quiebre más arriba (o resuelto) y lo marca como mejora consistente. **Pendiente** (la corrida la aprueba y ejecuta una persona).
+- Listo: en `shop-api`, con `login` usando `scrypt` asincrónico (rama `fix/async-scrypt`), `login-ramp` sostiene los 80 req/s sin descartes ni hallazgos, y `lt compare` contra la corrida anterior da "mejoró": p95 de `login` 7213 → 32 ms en 25 de 29 segundos, el punto de quiebre y `new_connections` resueltos (16 oct 2026).
 
 ## Backlog (sin orden)
 
