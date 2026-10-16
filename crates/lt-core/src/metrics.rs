@@ -26,7 +26,7 @@ pub fn record(h: &mut Histogram<u64>, d: Duration) {
     h.saturating_record(d.as_micros().max(1) as u64);
 }
 
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct Percentiles {
     pub count: u64,
     pub mean: f64,
@@ -474,7 +474,8 @@ pub struct StepResult {
     pub dns_ms: Option<Percentiles>,
 }
 
-#[derive(Debug, Default, Serialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Totals {
     /// Iteraciones que el scheduler planificó.
     pub planned: u64,

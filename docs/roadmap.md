@@ -96,9 +96,17 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente.
 - [x] Validar cada regla con una patología (servidores de prueba en `tests/diagnose.rs`)
 - Listo: en `shop-api`, `login-ramp` da un `breaking_point` en ~36 req/s y Claude llega a `scryptSync` en `src/auth.ts` (15 oct 2026). `stress-ramp` no satura `shop-api` y no da hallazgos, como corresponde. La corrida destapó un falso positivo de `new_connections`, ya corregido (ADR-005).
 
+**6. Comparar corridas**
+- [x] `lt compare [base] [nueva] [--json]`: por defecto, la última contra la anterior del mismo escenario y entorno (ADR-006)
+- [x] Veredicto por paso sobre el p95: magnitud (≥ 10% y 2 ms) y test de signos sobre los segundos emparejados, para separar cambio de ruido
+- [x] Diferencias de totales, hallazgos (nuevos, resueltos, punto de quiebre que se mueve) y thresholds; sale con `1` si hay regresiones
+- [x] Skill: sección "Comparar corridas"; `lt compare` permitido en `lt claude install`
+- [x] Tests: unitarios, el motor contra un servidor rápido y uno lento, y el binario
+- Listo cuando: en `shop-api`, con `login` usando `scrypt` asincrónico, `lt compare` después de `login-ramp` muestra el quiebre más arriba (o resuelto) y lo marca como mejora consistente. **Pendiente** (la corrida la aprueba y ejecuta una persona).
+
 ## Backlog (sin orden)
 
-Más reglas de diagnóstico, reporte HTML, comparación contra una corrida base, servidor MCP, importadores (OpenAPI, curl, Postman), GUI con Tauri, HTTP/2, datasets, setup por VU, think time, GitHub Action, correlación con métricas del servidor (OTLP, Prometheus), WebSockets, gRPC, Kafka.
+Más reglas de diagnóstico, reporte HTML, corrida base fija para CI (`lt compare --baseline`), servidor MCP, importadores (OpenAPI, curl, Postman), GUI con Tauri, HTTP/2, datasets, setup por VU, think time, GitHub Action, correlación con métricas del servidor (OTLP, Prometheus), WebSockets, gRPC, Kafka.
 
 ## Decisiones abiertas
 
@@ -128,3 +136,4 @@ Más reglas de diagnóstico, reporte HTML, comparación contra una corrida base,
 | 12 oct 2026 | `ramping_rate` con calendario exacto; `constant_vus` con pacer si hay `max_rps` | ADR-003 |
 | 12 oct 2026 | Diagnóstico en dos capas: reglas deterministas con evidencia en el motor, hipótesis sobre el código en Claude | ADR-005 |
 | 15 oct 2026 | `new_connections` descuenta una conexión por VU (el pool crece hasta la concurrencia) | ADR-005 |
+| 15 oct 2026 | `lt compare`: veredicto por paso con magnitud + test de signos sobre segundos emparejados; regresiones salen con código 1 | ADR-006 |

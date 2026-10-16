@@ -57,9 +57,9 @@ lt claude install              # en el repo a probar: skill, hook y permisos en 
 
 Después, en una sesión de Claude Code: *"armame una prueba de carga del flujo de compra"*. Claude lee el código, escribe el escenario, lo verifica con `lt validate` y `lt check` (solo contra loopback) y te pasa los comandos `lt approve` y `lt run` para que los ejecutes vos. No puede aprobar ni ejecutar por su cuenta (ADR-001, ADR-004).
 
-`lt findings [--json]` muestra los hallazgos de la última corrida (o de una por id); `lt schema` imprime el JSON Schema del escenario.
+`lt findings [--json]` muestra los hallazgos de la última corrida (o de una por id). `lt compare [base] [nueva] [--json]` compara dos corridas (por defecto, la última con la anterior del mismo escenario): qué mejoró, qué empeoró y si el cambio es consistente o puede ser ruido ([ADR-006](docs/adr/ADR-006-comparacion.md)). `lt schema` imprime el JSON Schema del escenario.
 
-Códigos de salida: `0` ok · `1` `check` con pasos fallidos · `2` escenario o configuración inválidos · `3` rechazado (sin aprobación válida, host no permitido, límites, sin terminal) · `4` error al guardar o al acceder al keyring.
+Códigos de salida: `0` ok · `1` `check` con pasos fallidos, thresholds no cumplidos o `compare` con regresiones · `2` escenario o configuración inválidos · `3` rechazado (sin aprobación válida, host no permitido, límites, sin terminal) · `4` error al guardar o al acceder al keyring.
 
 Formato completo del escenario: [ADR-002](docs/adr/ADR-002-formato-escenario.md).
 
@@ -80,3 +80,4 @@ Para probar contra una API más realista: [shop-api](../shop-api) (repo aparte),
 - [ADR-003 — hyper y scheduler](docs/adr/ADR-003-hyper-y-scheduler.md)
 - [ADR-004 — Aprobación y modelo de amenaza](docs/adr/ADR-004-aprobacion.md)
 - [ADR-005 — Diagnóstico](docs/adr/ADR-005-diagnostico.md)
+- [ADR-006 — Comparar corridas](docs/adr/ADR-006-comparacion.md)

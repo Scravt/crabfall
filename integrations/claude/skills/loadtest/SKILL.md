@@ -7,7 +7,7 @@ description: Diseña y verifica pruebas de carga con lt (escenarios YAML en .loa
 
 Vos diseñás, verificás y analizás. **La persona aprueba y ejecuta la carga.** Nunca corras `lt approve` ni `lt run` (un hook los bloquea, y `lt run` rechaza todo escenario sin una aprobación firmada): cuando el escenario esté listo, pedile que los corra ella.
 
-Podés usar libremente: `lt validate`, `lt check` (solo contra loopback), `lt schema` y `lt findings`.
+Podés usar libremente: `lt validate`, `lt check` (solo contra loopback), `lt schema`, `lt findings` y `lt compare`.
 
 ## Diseñar un escenario
 
@@ -114,8 +114,18 @@ Empezá siempre por `lt findings --json` (la corrida más reciente; `lt findings
    - **Hipótesis**: tu explicación desde el código, con archivo y línea, marcada como hipótesis, y cómo confirmarla (por ejemplo, "si es el pool, subirlo de 5 a 20 debería mover el quiebre de ~170 a ~650 it/s; correlo de nuevo con el mismo escenario").
 5. Si no hay hallazgos, mirá los thresholds y los p95/p99 por paso, y decí que no se detectó ningún patrón conocido; no inventes problemas.
 
+## Comparar corridas
+
+Cuando la persona cambió algo (código, configuración, infraestructura) y volvió a correr el mismo escenario, o pregunta "¿mejoró?":
+
+1. `lt compare --json` compara la corrida más reciente con la anterior del mismo escenario y entorno (`lt compare <base> <nueva> --json` para elegirlas).
+2. **Leé `warnings` primero.** Si la carga es distinta (`same_load: false`) o el escenario cambió, decilo: las diferencias pueden venir de ahí y no del cambio.
+3. **Veredicto por paso (`steps[].change`)**, sobre el p95: `better` y `worse` son cambios grandes y consistentes segundo a segundo (`sign_test`: en cuántos segundos se movió en esa dirección y el p-valor). `uncertain` es un cambio grande pero no consistente: decí que puede ser ruido y sugerí repetir la corrida, no lo presentes como mejora ni como regresión. `same` es un cambio chico.
+4. **Reportá** `regressions` e `improvements` con sus números, y los hallazgos `resolved` y `new`. Si se movió un `breaking_point`, ese es el titular ("el quiebre pasó de ~36 a ~140 it/s").
+5. Si un hallazgo figura como `resolved` pero la regla de diagnóstico cambió entre versiones de `lt`, aclaralo: no es mérito del cambio.
+
 ## Referencia
 
 - `lt schema`: JSON Schema completo del escenario, con descripción de cada campo.
 - Unidades: duraciones `500ms`, `30s`, `2m`, `1h`; tasas `50/s`, `3000/m`.
-- Códigos de salida: `0` ok · `1` falló (`check` con pasos fallidos, thresholds no cumplidos o `setup` fallido) · `2` escenario o configuración inválidos · `3` rechazado (host no permitido, límites, no es loopback, sin aprobación válida).
+- Códigos de salida: `0` ok · `1` falló (`check` con pasos fallidos, thresholds no cumplidos, `setup` fallido o `compare` con regresiones) · `2` escenario o configuración inválidos · `3` rechazado (host no permitido, límites, no es loopback, sin aprobación válida).
