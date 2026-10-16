@@ -95,7 +95,7 @@ pub fn diagnose(load: &LoadPlan, r: &RunResult) -> Vec<Finding> {
         if !saturated {
             out.extend(long_tail(step));
         }
-        out.extend(new_connections(step));
+        out.extend(new_connections(step, load.concurrency()));
     }
     out.sort_by_key(|f| f.severity);
     out
@@ -532,10 +532,13 @@ fn long_tail(step: &StepResult) -> Option<Finding> {
     })
 }
 
-fn new_connections(step: &StepResult) -> Option<Finding> {
+/// El pool de conexiones es compartido y crece hasta la concurrencia: abrir una conexión
+/// por VU es normal. Solo cuentan las que exceden ese tope, que se reabrieron.
+fn new_connections(step: &StepResult, vus: u32) -> Option<Finding> {
     let connects = step.connect_ms.map_or(0, |c| c.count);
+    let reopened = connects.saturating_sub(u64::from(vus));
     if step.requests < NEW_CONN_MIN_REQUESTS
-        || (connects as f64) < step.requests as f64 * NEW_CONN_RATIO
+        || (reopened as f64) < step.requests as f64 * NEW_CONN_RATIO
     {
         return None;
     }
@@ -544,7 +547,7 @@ fn new_connections(step: &StepResult) -> Option<Finding> {
         id: "new_connections".into(),
         severity: Severity::Medium,
         title: format!(
-            "`{}` abre conexión nueva en el {:.0}% de las requests: no se reutilizan (keep-alive)",
+            "`{}` abre conexión nueva en el {:.0}% de las requests ({connects} conexiones con {vus} VUs): no se reutilizan (keep-alive)",
             step.name,
             ratio * 100.0
         ),
@@ -554,6 +557,7 @@ fn new_connections(step: &StepResult) -> Option<Finding> {
         evidence: json!({
             "requests": step.requests,
             "new_connections": connects,
+            "vus": vus,
             "connect_ms": step.connect_ms,
             "tls_ms": step.tls_ms,
         }),

@@ -241,3 +241,25 @@ async fn exceeding_capacity_at_constant_rate() {
     let sustained = f.evidence["sustained_iterations_per_s"].as_f64().unwrap();
     assert!((60.0..=140.0).contains(&sustained), "{}", f.title);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn slow_server_with_keep_alive_has_no_new_connections() {
+    // Cada request tarda 300 ms: el pool crece hasta ~30 conexiones y las reutiliza.
+    // Abrir una conexión por VU no es falta de keep-alive (caso `login-ramp` de shop-api).
+    let app = Router::new().route(
+        "/slow",
+        get(|| async {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            "ok"
+        }),
+    );
+    let base = serve(app).await;
+    let r = run(
+        &base,
+        "/slow",
+        "  executor: constant_rate\n  rate: 100/s\n  duration: 2s\n  max_vus: 100\n",
+    )
+    .await;
+
+    assert!(!ids(&r).contains(&"new_connections"), "{:#?}", r.findings);
+}
