@@ -97,6 +97,9 @@ pub struct Tweaks {
     /// Cómo elige filas un dataset: sequential o random. Se puede repetir.
     #[arg(long = "pick", value_name = "DATASET=MODO", value_parser = lt_core::overrides::parse_pair::<lt_core::scenario::Pick>)]
     pick: Vec<(String, lt_core::scenario::Pick)>,
+    /// Criterio de la corrida, como en los resultados: "http.latency.p95<300ms", "http.latency.p99{step=login}<1s", "http.error_rate<1%", "http.rps>=40". Si pasás alguno, reemplazan a los del escenario. No cambian el tráfico: no hace falta volver a aprobar. Se puede repetir.
+    #[arg(long = "threshold", value_name = "MÉTRICA<LÍMITE")]
+    thresholds: Vec<lt_core::scenario::Threshold>,
 }
 
 impl Tweaks {
@@ -113,6 +116,7 @@ impl Tweaks {
             think: self.think,
             data: self.data.clone(),
             pick: self.pick.clone(),
+            thresholds: self.thresholds.clone(),
         }
     }
 }

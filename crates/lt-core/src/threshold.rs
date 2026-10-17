@@ -154,6 +154,79 @@ fn parse_limit(metric: Metric, value: &Value) -> Result<f64, String> {
     }
 }
 
+/// `http.latency.p95<300ms`, `http.latency.p99{step=login}<=1s`, `http.rps>=40`: la forma
+/// de `--threshold` (ADR-008). Valida igual que el bloque `thresholds` del YAML.
+impl std::str::FromStr for Threshold {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let bad = || {
+            format!(
+                "threshold `{s}` inválido: usá métrica[{{step=x}}] seguido de <, <=, > o >= y el límite \
+                 (http.latency.p95<300ms, http.error_rate<1%, http.rps>=40)"
+            )
+        };
+        let at = s.find(['<', '>']).ok_or_else(bad)?;
+        let (lhs, rest) = s.split_at(at);
+        let (symbol, value) = match rest.strip_prefix("<=").or(rest.strip_prefix(">=")) {
+            Some(v) => (&rest[..2], v),
+            None => (&rest[..1], &rest[1..]),
+        };
+        let (metric, step, tag) = match lhs.trim().split_once('{') {
+            None => (lhs.trim(), None, None),
+            Some((metric, filter)) => {
+                let filter = filter.strip_suffix('}').ok_or_else(bad)?;
+                match filter.split_once('=') {
+                    Some(("step", v)) => (metric, Some(v.trim().to_string()), None),
+                    Some(("tag", v)) => (metric, None, Some(v.trim().to_string())),
+                    _ => return Err(bad()),
+                }
+            }
+        };
+        let value = value.trim();
+        if metric.is_empty() || value.is_empty() {
+            return Err(bad());
+        }
+        let value = value
+            .parse::<f64>()
+            .ok()
+            .and_then(serde_json::Number::from_f64)
+            .map_or_else(|| Value::String(value.to_string()), Value::Number);
+        let mut t = Threshold {
+            metric: metric.to_string(),
+            step,
+            tag,
+            ..Default::default()
+        };
+        *match symbol {
+            "<" => &mut t.lt,
+            "<=" => &mut t.lte,
+            ">" => &mut t.gt,
+            _ => &mut t.gte,
+        } = Some(value);
+        ThresholdPlan::parse(&t)?;
+        Ok(t)
+    }
+}
+
+/// Un threshold como valor de `--threshold`, sin espacios: `http.latency.p95{step=a}<300ms`.
+pub fn to_flag(t: &Threshold) -> String {
+    let scope = match (&t.step, &t.tag) {
+        (Some(s), _) => format!("{{step={s}}}"),
+        (_, Some(tag)) => format!("{{tag={tag}}}"),
+        _ => String::new(),
+    };
+    let (symbol, value) = [("<", &t.lt), ("<=", &t.lte), (">", &t.gt), (">=", &t.gte)]
+        .into_iter()
+        .find_map(|(s, v)| v.as_ref().map(|v| (s, v)))
+        .unwrap_or(("", &Value::Null));
+    let value = match value {
+        Value::String(s) => s.clone(),
+        other => other.to_string(),
+    };
+    format!("{}{scope}{symbol}{value}", t.metric)
+}
+
 /// Resultado de evaluar un threshold.
 #[derive(Debug, Clone, Serialize)]
 pub struct ThresholdResult {
@@ -187,6 +260,32 @@ mod tests {
         let t = parse("{ metric: http.error_rate, lte: \"0.5%\" }").unwrap();
         assert_eq!((t.metric, t.limit), (Metric::ErrorRate, 0.5));
         assert_eq!(parse("{ metric: http.rps, gte: 40 }").unwrap().limit, 40.0);
+    }
+
+    #[test]
+    fn parses_the_flag_form() {
+        let t: Threshold = "http.latency.p99{step=login}<=1s".parse().unwrap();
+        assert_eq!(
+            (t.metric.as_str(), t.step.as_deref()),
+            ("http.latency.p99", Some("login"))
+        );
+        assert_eq!(t.lte, Some(Value::String("1s".into())));
+        assert_eq!(to_flag(&t), "http.latency.p99{step=login}<=1s");
+
+        let t: Threshold = "http.rps >= 40".parse().unwrap();
+        assert_eq!(t.gte, Some(serde_json::json!(40.0)));
+        let t: Threshold = "http.error_rate{tag=write}<1%".parse().unwrap();
+        assert_eq!(to_flag(&t), "http.error_rate{tag=write}<1%");
+
+        for bad in [
+            "p95<1s",
+            "http.latency.p95",
+            "http.latency.p95<",
+            "http.rps{x=y}>1",
+            "http.error_rate<1",
+        ] {
+            assert!(bad.parse::<Threshold>().is_err(), "{bad}");
+        }
     }
 
     #[test]

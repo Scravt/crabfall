@@ -119,13 +119,14 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente. Al cerrar
 - [x] Flags de ajuste en `validate`, `check`, `approve` y `run`: `--executor`, `--rate`, `--duration`, `--vus`, `--max-vus`, `--start-rate`, `--stages`, `--graceful-stop`, `--think`, `--data`, `--pick`
 - [x] Los ajustes se vuelven a validar y el error dice qué flag falta o sobra; la aprobación los firma; `approve`, `run` y `results.json` los muestran
 - [x] `Overrides` en `lt-core`, para que la GUI y MCP no dependan de la CLI
+- [x] `--threshold "http.latency.p95<300ms"`: reemplaza a los thresholds del YAML; no cambia la firma (agregado después del cierre, 17 oct 2026)
 - [x] Skill: pausas y ajustes por flag; README con ejemplos
 - [x] Tests: unidades, aplicación de ajustes, firma, el motor con pausas y el binario
 - Listo: en `shop-api`, `login-users --executor constant_vus --vus 5 --duration 20s --think 1s-2s` da 1,8 iteraciones por segundo (36 en 20 s; se esperaban ~1,7), 108 checks pasados y 0 fallidos, y el p50 de `login` en 34 ms, igual que sin pausas: la pausa no entra en la latencia. `results.json` guarda los ajustes en `tweaks` y las pausas en `load.think` (17 oct 2026).
 
 ## Backlog (sin orden)
 
-Más reglas de diagnóstico, reporte HTML, corrida base fija para CI (`lt compare --baseline`), servidor MCP, importadores (OpenAPI, curl, Postman), GUI con Tauri, HTTP/2, `pick: unique` para datasets, setup por VU, thresholds por flag, GitHub Action, correlación con métricas del servidor (OTLP, Prometheus), WebSockets, gRPC, Kafka.
+Más reglas de diagnóstico, reporte HTML, corrida base fija para CI (`lt compare --baseline`), servidor MCP, importadores (OpenAPI, curl, Postman), GUI con Tauri, HTTP/2, `pick: unique` para datasets, setup por VU, GitHub Action, correlación con métricas del servidor (OTLP, Prometheus), WebSockets, gRPC, Kafka.
 
 ## Decisiones abiertas
 

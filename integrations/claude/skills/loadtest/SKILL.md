@@ -104,7 +104,7 @@ Podés usar libremente: `lt validate`, `lt check` (solo contra loopback), `lt sc
    ```
    Cualquier cambio posterior al escenario o al entorno invalida la aprobación: si corregís algo, avisá que hay que aprobar de nuevo.
 
-   **Ajustes por flag.** Para variar una corrida sin tocar el YAML ("lo mismo con el doble de tasa", "probalo con 20 usuarios", "con otros usuarios"), usá flags en lugar de editar el escenario: `--rate`, `--duration`, `--vus`, `--max-vus`, `--start-rate`, `--stages 100/s:1m,0/s:30s`, `--graceful-stop`, `--executor`, `--think 1s-3s`, `--data users=data/otros.csv` y `--pick users=random` (lista en `lt run --help`). Validalos con `lt validate <nombre> <flags> --json`: el error dice qué flag falta o sobra. Los mismos flags van en `lt approve` y en `lt run`, porque la aprobación los firma. Entregá los dos comandos con los flags completos. Si un ajuste se va a usar siempre, va en el YAML.
+   **Ajustes por flag.** Para variar una corrida sin tocar el YAML ("lo mismo con el doble de tasa", "probalo con 20 usuarios", "con otros usuarios"), usá flags en lugar de editar el escenario: `--rate`, `--duration`, `--vus`, `--max-vus`, `--start-rate`, `--stages 100/s:1m,0/s:30s`, `--graceful-stop`, `--executor`, `--think 1s-3s`, `--data users=data/otros.csv`, `--pick users=random` y `--threshold "http.latency.p95<300ms"` (lista en `lt run --help`; `--threshold` reemplaza a los del YAML y no requiere aprobar de nuevo). Validalos con `lt validate <nombre> <flags> --json`: el error dice qué flag falta o sobra. Los mismos flags van en `lt approve` y en `lt run`, porque la aprobación los firma. Entregá los dos comandos con los flags completos. Si un ajuste se va a usar siempre, va en el YAML.
 
 ## Analizar resultados
 

@@ -7,7 +7,8 @@
 use std::str::FromStr;
 
 use crate::{
-    scenario::{Executor, Pick, Scenario, Stage},
+    scenario::{Executor, Pick, Scenario, Stage, Threshold},
+    threshold::to_flag,
     units::{HumanDuration, Rate, Think},
     validate::{Issue, check_scenario, load_fields},
 };
@@ -28,6 +29,8 @@ pub struct Overrides {
     pub data: Vec<(String, String)>,
     /// Otro `pick` para un dataset.
     pub pick: Vec<(String, Pick)>,
+    /// Thresholds que reemplazan a los del escenario. No cambian el tráfico: no afectan la firma.
+    pub thresholds: Vec<Threshold>,
 }
 
 impl Overrides {
@@ -91,6 +94,9 @@ impl Overrides {
                 None => issues.push(no_dataset("--pick", name, &available)),
             }
         }
+        if !self.thresholds.is_empty() {
+            s.thresholds = self.thresholds.clone();
+        }
 
         let given = self.describe();
         issues.extend(check_scenario(s).into_iter().map(|mut issue| {
@@ -132,6 +138,9 @@ impl Overrides {
         }
         for (name, pick) in &self.pick {
             push("pick", Some(format!("{name}={}", pick.as_str())));
+        }
+        for t in &self.thresholds {
+            push("threshold", Some(to_flag(t)));
         }
         out
     }
@@ -281,6 +290,7 @@ load:
             think: Some("1s-3s".parse().unwrap()),
             data: vec![("users".into(), "data/otros.csv".into())],
             pick: vec![("users".into(), Pick::Random)],
+            thresholds: vec!["http.latency.p95<300ms".parse().unwrap()],
             ..Default::default()
         };
         assert!(o.apply(&mut s).is_empty());
@@ -292,6 +302,7 @@ load:
         assert!(s.flows["main"].steps.iter().all(|st| st.think.is_none()));
         assert_eq!(s.data["users"].file, "data/otros.csv");
         assert_eq!(s.data["users"].pick, Pick::Random);
+        assert_eq!(s.thresholds.len(), 1);
         assert_eq!(
             o.describe(),
             [
@@ -299,7 +310,8 @@ load:
                 "--duration 2m",
                 "--think 1s-3s",
                 "--data users=data/otros.csv",
-                "--pick users=random"
+                "--pick users=random",
+                "--threshold http.latency.p95<300ms"
             ]
         );
     }

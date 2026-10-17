@@ -76,9 +76,10 @@ lt run checkout --env local --rate 100/s --duration 2m --think 1s-3s
 lt run checkout --executor constant_vus --vus 20 --duration 5m
 lt run checkout --executor ramping_rate --stages 50/s:1m,200/s:3m,0/s:30s
 lt run login-users --data users=data/otros.csv --pick users=random
+lt run checkout --threshold "http.latency.p95<300ms" --threshold "http.error_rate<1%"
 ```
 
-Lista completa en `lt run --help`. Cambian el tráfico, así que la aprobación los firma: pasá los mismos a `lt approve` y a `lt run` ([ADR-008](docs/adr/ADR-008-think-time-y-ajustes.md)).
+Lista completa en `lt run --help`. Los que cambian el tráfico los firma la aprobación: pasá los mismos a `lt approve` y a `lt run`. `--threshold` reemplaza a los del YAML y no hace falta volver a aprobar ([ADR-008](docs/adr/ADR-008-think-time-y-ajustes.md)).
 
 ## Con Claude Code
 

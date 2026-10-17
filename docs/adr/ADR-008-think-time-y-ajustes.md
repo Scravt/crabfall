@@ -41,6 +41,7 @@ Criterio: entra por flag todo lo que tendría sentido en un panel de personaliza
 | Perfil de carga | `--executor`, `--rate`, `--duration`, `--vus`, `--max-vus`, `--start-rate`, `--stages 100/s:1m,0/s:30s`, `--graceful-stop` |
 | Pausas | `--think 1s-3s` (pisa a todas; `0s` las quita) |
 | Datos | `--data users=data/otros.csv`, `--pick users=random` |
+| Criterios | `--threshold "http.latency.p95<300ms"`, `--threshold "http.latency.p99{step=login}<1s"` (reemplazan a los del YAML; no se firman) |
 
 - **Comandos:** los cuatro que arman el plan aceptan los mismos flags: `validate`, `check`, `approve` y `run`. Una GUI valida con los mismos parámetros con los que después corre.
 - **Cuándo se aplican:** sobre el escenario parseado, **antes** de armar el plan, y después se vuelven a correr las reglas de `validate`. Por eso valen las mismas reglas que en el YAML, y el error dice qué flag lo corrige: `falta stages (usá --stages)`, o `duration no aplica a ramping_rate (sacá --duration)`.
@@ -51,7 +52,6 @@ Criterio: entra por flag todo lo que tendría sentido en un panel de personaliza
 
 ### Fuera por ahora
 
-- **Thresholds por flag:** no cambian el tráfico ni se firman, así que serían fáciles, pero hace falta una sintaxis (`--threshold "p95<300ms"`). Se agregan cuando haya panel.
 - **Elegir flows o cambiar sus pesos** (`--flow buy=50`): cambia *qué* se prueba más que *cómo*. Se evalúa con un caso real.
 
 ## Consecuencias
