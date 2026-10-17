@@ -111,7 +111,7 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente. Al cerrar
 - [x] Errores con la columna o la fila: archivo vacío o ilegible, columna inexistente (con las que hay), uso en `setup`
 - [x] Skill: sección "Datos por iteración"
 - [x] Tests: carga de CSV y JSON, orden de las filas, firma, errores y el motor contra el servidor de eco
-- Listo cuando: en `shop-api`, `login-users` hace login con un usuario distinto por iteración (`data/users.csv`) y pide productos al azar de `data/products.json`, pasa `check`, y una corrida aprobada da 0 checks fallidos. `check` pasa (16 oct 2026). **Pendiente:** la corrida (la aprueba y ejecuta una persona).
+- Listo: en `shop-api`, `login-users` hace login con un usuario distinto por iteración (`data/users.csv`) y pide productos al azar de `data/products.json`. La corrida aprobada (50 iteraciones, 100 requests) da 150 checks pasados y 0 fallidos, incluido `$.id == "{{products.id}}"`, que confirma que la fila llega con su tipo (17 oct 2026).
 
 ## Backlog (sin orden)
 

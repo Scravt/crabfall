@@ -3,7 +3,7 @@
 Herramienta de pruebas de carga en Rust, pensada para usarse junto a Claude Code:
 Claude diseña el escenario y analiza los resultados; una persona aprueba y ejecuta la carga.
 
-Estado: **rebanada 7** (datasets). Ya funcionan: diseño con Claude, aprobación firmada, escenarios con `setup`, `extract`, checks y thresholds, tres executors, diagnóstico, comparación de corridas y datasets. Ver el [roadmap](docs/roadmap.md).
+Estado: **rebanada 7 terminada** (datasets). Ya funcionan: diseño con Claude, aprobación firmada, escenarios con `setup`, `extract`, checks y thresholds, tres executors, diagnóstico, comparación de corridas y datasets. Ver el [roadmap](docs/roadmap.md).
 
 ## Uso
 
