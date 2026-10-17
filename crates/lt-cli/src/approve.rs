@@ -79,7 +79,7 @@ pub fn cmd_approve(target: &crate::Target) -> u8 {
         .or_else(|_| std::env::var("USER"))
         .unwrap_or("desconocido".into());
     let approved_at = jiff::Timestamp::now().to_string();
-    let signed = match approval::approve(
+    let mut signed = match approval::approve(
         &plan,
         &env,
         &env_name,
@@ -93,6 +93,7 @@ pub fn cmd_approve(target: &crate::Target) -> u8 {
             return exit::RUNTIME;
         }
     };
+    signed.flags = tweaks.clone();
     let file = approval::path(&project.approvals_dir(), &plan.scenario, &env_name);
     let saved = project.ensure_gitignore().and_then(|_| {
         std::fs::create_dir_all(project.approvals_dir())?;
@@ -117,12 +118,21 @@ pub fn verify_for_run(
     plan: &Plan,
     env: &Environment,
     env_name: &str,
+    flags: &[String],
 ) -> Result<Approval, ()> {
+    let command = |verb: &str, flags: &[String]| {
+        let mut c = format!("lt {verb} {} --env {env_name}", plan.scenario);
+        for f in flags {
+            c.push(' ');
+            c.push_str(f);
+        }
+        c
+    };
     let fail = |msg: String| {
         eprintln!("✗ {} en `{env_name}`: {msg}", plan.scenario);
         eprintln!(
-            "  Una persona tiene que aprobarlo: lt approve {} --env {env_name}",
-            plan.scenario
+            "  Una persona tiene que aprobarlo: {}",
+            command("approve", flags)
         );
     };
     let current = match load(project, &plan.scenario, env_name) {
@@ -135,7 +145,27 @@ pub fn verify_for_run(
     match approval::verify(current.as_ref(), plan, env, env_name, &OsKeyring) {
         Ok(()) => Ok(current.expect("verificada")),
         Err(Rejection::Changed(diff)) => {
-            fail("cambió desde la última aprobación".into());
+            let approved = &current.as_ref().expect("hay aprobación").flags;
+            if approved != flags {
+                // Lo más común: se aprobó con otros flags. El diff de abajo lo confirma.
+                let shown = |f: &[String]| {
+                    if f.is_empty() {
+                        "sin ajustes".to_string()
+                    } else {
+                        f.join(" ")
+                    }
+                };
+                eprintln!(
+                    "✗ {} en `{env_name}`: se aprobó con otros ajustes",
+                    plan.scenario
+                );
+                eprintln!("  aprobado: {}", shown(approved));
+                eprintln!("  ahora:    {}", shown(flags));
+                eprintln!("  Para correr lo aprobado: {}", command("run", approved));
+                eprintln!("  Para aprobar esto:       {}", command("approve", flags));
+            } else {
+                fail("cambió desde la última aprobación".into());
+            }
             eprintln!("{}", limit_lines(&diff, 40));
             Err(())
         }
