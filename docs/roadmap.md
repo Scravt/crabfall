@@ -130,7 +130,7 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente. Al cerrar
 - [x] Gráficos por segundo con un solo eje, crosshair y tooltip (también con teclado), escala log opcional para la latencia, p95 por paso, modo claro y oscuro, tablas como vista sin gráficos
 - [x] Datos embebidos sin poder cerrar el `<script>`; texto siempre con `textContent`
 - [x] Verificado con Edge headless sobre las corridas reales de `shop-api` (capturas en claro y oscuro, mouse simulado por DevTools)
-- Listo cuando: abro el reporte de una corrida mía y entiendo qué pasó sin mirar la terminal. **Pendiente** de tu revisión.
+- Listo: revisé los reportes de las corridas de `shop-api` (el quiebre de `login-ramp` y el antes y después del arreglo) y se entiende qué pasó sin mirar la terminal (17 oct 2026). Se va a ajustar cuando se integre con la GUI.
 
 ## Backlog (sin orden)
 
