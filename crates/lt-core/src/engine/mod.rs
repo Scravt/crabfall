@@ -265,7 +265,14 @@ pub async fn run(plan: Arc<Plan>, progress: Arc<Progress>) -> RunResult {
     };
     let scheduler_lag = dispatch.lag.as_ref().and_then(Percentiles::from);
     let mut warnings = warnings(&totals, scheduler_lag.as_ref());
-    if dispatch.paced > 0 {
+    // Las esperas cortas al arrancar (todos los VUs a la vez) no limitan la carga: se avisa
+    // solo si algún segundo llegó cerca del tope.
+    let cap = plan.request_cap.unwrap_or(f64::INFINITY);
+    let near_cap = series
+        .points
+        .iter()
+        .any(|p| p.requests as f64 >= 0.9 * cap * f64::from(series.window_s));
+    if dispatch.paced > 0 && near_cap {
         warnings.push(format!(
             "{} iteraciones esperaron para no superar limits.max_rps ({}/s): la carga quedó limitada por el entorno.",
             dispatch.paced,
