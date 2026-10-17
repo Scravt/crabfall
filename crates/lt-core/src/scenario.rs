@@ -171,7 +171,7 @@ pub struct Check {
 }
 
 /// Criterio sobre una métrica, por ejemplo `{ metric: http.latency.p95, lt: 300ms }`. Usá exactamente uno de `lt`, `lte`, `gt`, `gte`.
-#[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Threshold {
     /// `http.latency.p50` … `http.latency.p99.9`, `http.latency.avg`, `http.latency.max` (duración, ej. `300ms`); `http.error_rate` y `checks.pass_rate` (porcentaje, ej. `1%`); `http.rps` (número).

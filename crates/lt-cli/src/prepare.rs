@@ -178,7 +178,7 @@ fn read_dotenv(path: &Path) -> BTreeMap<String, String> {
 /// `--var nombre=un valor` → `--var "nombre=un valor"`, para copiar y pegar en una shell.
 fn quote(flag: &str) -> String {
     match flag.split_once(' ') {
-        Some((name, value)) if value.contains([' ', '"', '\'']) => {
+        Some((name, value)) if value.contains([' ', '"', '\'', '<', '>', '|', '&']) => {
             format!("{name} \"{}\"", value.replace('"', "\\\""))
         }
         _ => flag.to_string(),
@@ -192,6 +192,10 @@ mod tests {
     #[test]
     fn quotes_values_with_spaces_only() {
         assert_eq!(quote("--rate 100/s"), "--rate 100/s");
+        assert_eq!(
+            quote("--threshold http.latency.p95<300ms"),
+            "--threshold \"http.latency.p95<300ms\""
+        );
         assert_eq!(quote("--var who=bob maría"), "--var \"who=bob maría\"");
         assert_eq!(quote("--var q=say \"hi\""), "--var \"q=say \\\"hi\\\"\"");
     }

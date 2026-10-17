@@ -93,3 +93,36 @@ fn tweaks_that_do_not_fit_say_which_flag_is_missing() {
     assert_eq!(o.status.code(), Some(INVALID));
     assert!(out(&o).contains("mayor que el máximo"), "{}", out(&o));
 }
+
+#[test]
+fn thresholds_by_flag_are_checked_like_the_yaml() {
+    let dir = project("thresholds");
+    let o = lt(
+        &dir,
+        &[
+            "validate",
+            "s",
+            "--threshold",
+            "http.latency.p95<300ms",
+            "--threshold",
+            "http.rps>=1",
+        ],
+    );
+    assert_eq!(o.status.code(), Some(0), "{}", out(&o));
+
+    let o = lt(
+        &dir,
+        &[
+            "validate",
+            "s",
+            "--threshold",
+            "http.latency.p95{step=nope}<1s",
+        ],
+    );
+    assert_eq!(o.status.code(), Some(INVALID));
+    assert!(out(&o).contains("ningún paso"), "{}", out(&o));
+
+    let o = lt(&dir, &["validate", "s", "--threshold", "http.error_rate<1"]);
+    assert_eq!(o.status.code(), Some(INVALID));
+    assert!(out(&o).contains("porcentaje"), "{}", out(&o));
+}
