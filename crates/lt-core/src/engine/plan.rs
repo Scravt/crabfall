@@ -56,6 +56,10 @@ pub struct Plan {
     pub scenario: String,
     /// Pasos que corren una vez antes de la carga.
     pub setup: Vec<StepPlan>,
+    /// Pasos que cada VU corre una vez antes de la carga.
+    pub vu_setup: Vec<StepPlan>,
+    /// Índices en `data` de los datasets que usa `vu_setup` (una fila por VU).
+    pub vu_data: Vec<usize>,
     pub flows: Vec<FlowPlan>,
     pub load: LoadPlan,
     /// Hosts a los que se va a conectar.
@@ -299,7 +303,7 @@ impl Plan {
             &mut after_setup,
             &mut setup_ids,
         );
-        // Las columnas de los datasets solo existen en los flows.
+        // Las columnas de los datasets existen en `vu_setup` y en los flows, no en `setup`.
         let mut data = Vec::new();
         let mut data_errors = Vec::new();
         for name in scenario.data.keys() {
@@ -314,6 +318,16 @@ impl Plan {
                 None => data_errors.push(format!("data.{name}: el dataset no se cargó")),
             }
         }
+        // Lo que extrae `vu_setup` lo ven los flows: se suma a `after_setup`.
+        let mut vu_ids = 0;
+        let vu_setup = build_steps(
+            &scenario.vu_setup,
+            "vu_setup",
+            None,
+            &mut after_setup,
+            &mut vu_ids,
+        );
+        let vu_data = datasets_used(&data, &vu_setup);
         let flows: Vec<FlowPlan> = scenario
             .flows
             .iter()
@@ -325,11 +339,10 @@ impl Plan {
                     &mut after_setup.clone(),
                     &mut flow_ids,
                 );
-                let data = data
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, d)| steps.iter().any(|s| s.uses_dataset(&d.dataset.name)))
-                    .map(|(i, _)| i)
+                // Un dataset de `vu_setup` es del VU: los flows ven su fila, no toman otra.
+                let data = datasets_used(&data, &steps)
+                    .into_iter()
+                    .filter(|i| !vu_data.contains(i))
                     .collect();
                 FlowPlan {
                     name: flow_name.clone(),
@@ -348,6 +361,8 @@ impl Plan {
         let plan = Self {
             scenario: scenario.name.clone(),
             setup,
+            vu_setup,
+            vu_data,
             flows,
             load: scenario.load.plan(),
             hosts,
@@ -451,6 +466,10 @@ impl Plan {
             "setup": setup,
             "flows": flows,
         });
+        // Solo si hay `vu_setup`, para no invalidar las aprobaciones de antes (ADR-010).
+        if !self.vu_setup.is_empty() {
+            canonical["vu_setup"] = self.vu_setup.iter().map(step).collect();
+        }
         // Solo si hay datasets, para no invalidar las aprobaciones de antes (ADR-007).
         // Se firma el contenido del archivo, no solo su nombre.
         if !self.data.is_empty() {
@@ -468,7 +487,16 @@ impl Plan {
 
     /// Variables de las filas que toma una iteración de `flow`: `dataset.columna` → valor.
     pub fn row_vars(&self, flow: &FlowPlan) -> HashMap<String, Value> {
-        flow.data
+        self.rows(&flow.data)
+    }
+
+    /// Variables de las filas que toma un VU para su `vu_setup`.
+    pub fn vu_row_vars(&self) -> HashMap<String, Value> {
+        self.rows(&self.vu_data)
+    }
+
+    fn rows(&self, datasets: &[usize]) -> HashMap<String, Value> {
+        datasets
             .iter()
             .flat_map(|&i| {
                 let d = &self.data[i];
@@ -516,7 +544,7 @@ impl Plan {
 
     /// `setup` y flows: todo lo que se envía.
     pub fn all_steps(&self) -> impl Iterator<Item = &StepPlan> {
-        self.setup.iter().chain(self.steps())
+        self.setup.iter().chain(&self.vu_setup).chain(self.steps())
     }
 
     /// Límites duros del entorno (ADR-004). `run` los exige; `check` no los necesita
@@ -622,6 +650,15 @@ fn check_references(
 }
 
 /// Por qué `dataset.columna` no se puede usar en este paso.
+/// Índices de los datasets que usan estos pasos.
+fn datasets_used(data: &[DataPlan], steps: &[StepPlan]) -> Vec<usize> {
+    data.iter()
+        .enumerate()
+        .filter(|(_, d)| steps.iter().any(|s| s.uses_dataset(&d.dataset.name)))
+        .map(|(i, _)| i)
+        .collect()
+}
+
 fn unknown_column(var: &str, columns: &BTreeMap<&str, &[String]>) -> String {
     let (dataset, column) = var.split_once('.').unwrap_or((var, ""));
     match columns.get(dataset) {

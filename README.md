@@ -3,7 +3,7 @@
 Herramienta de pruebas de carga en Rust, pensada para usarse junto a Claude Code:
 Claude diseña el escenario y analiza los resultados; una persona aprueba y ejecuta la carga.
 
-Estado: **rebanada 9 terminada** (reporte HTML). Ya funcionan: diseño con Claude, aprobación firmada, escenarios con `setup`, `extract`, checks y thresholds, tres executors, diagnóstico, comparación de corridas, datasets, pausas entre pasos, ajustes de la corrida por flag y un reporte HTML por corrida. Ver el [roadmap](docs/roadmap.md).
+Estado: **rebanada 10** (setup por VU). Ya funcionan: diseño con Claude, aprobación firmada, escenarios con `setup`, `extract`, checks y thresholds, tres executors, diagnóstico, comparación de corridas, datasets, pausas entre pasos, ajustes de la corrida por flag, un reporte HTML por corrida y login por usuario virtual (`vu_setup`). Ver el [roadmap](docs/roadmap.md).
 
 ## Uso
 
@@ -67,6 +67,19 @@ flows:
 
 Cada iteración toma una fila, en orden o al azar (`pick: random`). Editar el archivo invalida la aprobación ([ADR-007](docs/adr/ADR-007-datasets.md)). `think` también va en `defaults` para todos los pasos; no cuenta en la latencia y `lt check` lo ignora.
 
+Para APIs con sesión, `vu_setup` corre una vez por usuario virtual, antes de la carga: cada VU hace su login con su fila del dataset y usa su token en todas sus iteraciones, sin medir el login en cada una:
+
+```yaml
+vu_setup:
+  - name: login
+    request: { method: POST, url: /auth/login, json: { user: "{{users.user}}", password: "{{users.password}}" } }
+    extract: { token: { json: $.access_token } }
+defaults:
+  headers: { Authorization: "Bearer {{token}}" }
+```
+
+Se prepara un VU por cada `vus` (o `max_vus`); el resumen de `lt approve` muestra cuántos logins son ([ADR-010](docs/adr/ADR-010-setup-por-vu.md)).
+
 ### Ajustes sin editar el YAML
 
 `validate`, `check`, `approve` y `run` aceptan flags que pisan al escenario para esa corrida. Son lo que tendría un panel de personalización:
@@ -118,3 +131,4 @@ Para probar contra una API más realista: [shop-api](../shop-api) (repo aparte),
 - [ADR-007 — Datasets](docs/adr/ADR-007-datasets.md)
 - [ADR-008 — Think time y ajustes por flag](docs/adr/ADR-008-think-time-y-ajustes.md)
 - [ADR-009 — Reporte HTML](docs/adr/ADR-009-reporte-html.md)
+- [ADR-010 — Setup por VU](docs/adr/ADR-010-setup-por-vu.md)

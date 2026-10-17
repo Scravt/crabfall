@@ -132,9 +132,18 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente. Al cerrar
 - [x] Verificado con Edge headless sobre las corridas reales de `shop-api` (capturas en claro y oscuro, mouse simulado por DevTools)
 - Listo: revisé los reportes de las corridas de `shop-api` (el quiebre de `login-ramp` y el antes y después del arreglo) y se entiende qué pasó sin mirar la terminal (17 oct 2026). Se va a ajustar cuando se integre con la GUI.
 
+**10. Setup por VU**
+- [x] `vu_setup:` en la raíz: cada VU corre esos pasos una vez antes de la carga; lo extraído queda como variable del VU (ADR-010)
+- [x] Una fila de cada dataset por VU; si `vu_setup` usa un dataset, los flows ven la fila de su VU
+- [x] Preparación antes de la carga para `vus` o `max_vus`, con hasta 50 a la vez y respetando `limits.max_rps`; el modelo abierto reparte VUs desde un pool
+- [x] VUs que fallan quedan afuera con aviso; si fallan todos, se aborta; `lt check` lo corre una vez
+- [x] Firma solo si existe; `results.json`, el resumen de `run`, `approve` y el reporte lo muestran aparte de las métricas de carga
+- [x] Tests: un login por VU con `constant_vus` y con el modelo abierto, el token correcto en cada iteración, falla total, validación y firma
+- Listo cuando: en `shop-api`, `orders-per-user` (3 VUs, uno por usuario de `data/users.csv`) hace 3 logins y después compra en loop, con 0 checks fallidos: cada pedido queda a nombre del usuario de su VU. `check` pasa (17 oct 2026). **Pendiente:** la corrida (la aprueba y ejecuta una persona).
+
 ## Backlog (sin orden)
 
-Más reglas de diagnóstico, corrida base fija para CI (`lt compare --baseline`), servidor MCP, importadores (OpenAPI, curl, Postman), GUI con Tauri, HTTP/2, `pick: unique` para datasets, setup por VU, GitHub Action, correlación con métricas del servidor (OTLP, Prometheus), WebSockets, gRPC, Kafka.
+Más reglas de diagnóstico, corrida base fija para CI (`lt compare --baseline`), servidor MCP, importadores (OpenAPI, curl, Postman), GUI con Tauri, HTTP/2, `pick: unique` para datasets, renovar tokens que vencen durante la carga, GitHub Action, correlación con métricas del servidor (OTLP, Prometheus), WebSockets, gRPC, Kafka.
 
 ## Decisiones abiertas
 
@@ -168,3 +177,4 @@ Más reglas de diagnóstico, corrida base fija para CI (`lt compare --baseline`)
 | 16 oct 2026 | Datasets: `{{dataset.columna}}`, una fila por iteración, CSV como strings y JSON con tipos; se firma el SHA-256 de cada archivo | ADR-007 |
 | 17 oct 2026 | Think time después de cada paso; todo ajuste de una corrida entra por flag y se firma | ADR-008 |
 | 17 oct 2026 | Reporte HTML autocontenido por corrida, generado por `lt run` | ADR-009 |
+| 17 oct 2026 | `vu_setup`: cada VU hace su login antes de la carga; el modelo abierto reparte VUs desde un pool | ADR-010 |

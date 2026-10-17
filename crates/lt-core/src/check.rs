@@ -109,9 +109,24 @@ pub async fn check(plan: &Plan) -> Result<CheckResult, String> {
         steps.push(result);
     }
 
+    // vu_setup: un solo VU, que después recorre los flows.
+    let mut vu_vars = plan.vu_row_vars();
+    let mut vu_failed = setup_failed;
+    for step in &plan.vu_setup {
+        if vu_failed {
+            skipped.push(step.name.clone());
+            continue;
+        }
+        let (result, extracted) = check_step(&client, plan, step, &setup_vars, &vu_vars).await;
+        vu_failed = !result.ok;
+        vu_vars.extend(extracted);
+        steps.push(result);
+    }
+
     for flow in &plan.flows {
-        let mut locals = plan.row_vars(flow);
-        let mut flow_failed = setup_failed;
+        let mut locals = vu_vars.clone();
+        locals.extend(plan.row_vars(flow));
+        let mut flow_failed = vu_failed;
         for step in &flow.steps {
             if flow_failed || steps.len() >= MAX_REQUESTS {
                 skipped.push(step.name.clone());

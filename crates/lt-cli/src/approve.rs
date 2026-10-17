@@ -225,6 +225,19 @@ fn print_summary(
     if let Some(think) = plan.think_summary() {
         eprintln!("Pausas      {think}");
     }
+    if !plan.vu_setup.is_empty() {
+        let vus = plan.load.concurrency();
+        let steps: Vec<String> = plan
+            .vu_setup
+            .iter()
+            .map(|s| format!("{} ({} {})", s.name, s.method, s.url()))
+            .collect();
+        eprintln!(
+            "Por VU      {} × {vus} VUs = {} requests antes de la carga",
+            steps.join(", "),
+            vus as usize * steps.len()
+        );
+    }
     for (i, d) in plan.data.iter().enumerate() {
         let label = if i == 0 { "Datos" } else { "" };
         eprintln!("{label:<11} {}", d.dataset.describe());

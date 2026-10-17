@@ -182,6 +182,15 @@ fn check_rules(s: &Scenario, errors: &mut Vec<Issue>) {
             ));
         }
     }
+    for (i, step) in s.vu_setup.iter().enumerate() {
+        check_step(step, &format!("vu_setup[{i}]"), &mut seen, errors);
+        if step.think.is_some() {
+            errors.push(Issue::at(
+                format!("vu_setup[{i}].think"),
+                "`vu_setup` corre antes de la carga: no lleva pausas",
+            ));
+        }
+    }
     for (flow_name, flow) in &s.flows {
         let flow_path = format!("flows.{flow_name}");
         if flow.weight == 0 {
@@ -478,6 +487,21 @@ load:
             .map(|e| e.path)
             .collect();
         assert_eq!(paths, ["load.rate", "load.max_vus", "load.vus"]);
+    }
+
+    #[test]
+    fn vu_setup_steps_are_checked_and_take_no_pauses() {
+        let yaml = OK.replacen(
+            "flows:",
+            "vu_setup:
+  - name: login
+    request: { method: POST, url: login }
+    think: 1s
+flows:",
+            1,
+        );
+        let paths: Vec<_> = errors(&yaml).into_iter().map(|e| e.path).collect();
+        assert_eq!(paths, ["vu_setup[0].request.url", "vu_setup[0].think"]);
     }
 
     #[test]
