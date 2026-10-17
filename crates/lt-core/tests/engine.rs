@@ -766,3 +766,111 @@ async fn a_high_rate_cap_that_is_never_reached_does_not_warn() {
         r.warnings
     );
 }
+
+/// Cada VU "se loguea" con su fila de `users`: el token es el target que devuelve el eco.
+/// El flow manda ese token y verifica que sea el de su propio usuario.
+fn vu_scenario(login_url: &str, load: &str) -> (lt_core::scenario::Scenario, Inputs) {
+    let yaml = format!(
+        "version: 1\nname: vus\ndata:\n  users: {{ file: data/users.csv }}
+vu_setup:
+  - name: login
+    request: {{ method: POST, url: \"{login_url}\" }}
+    extract:
+      token: {{ json: $.target }}
+flows:
+  main:
+    steps:
+      - name: me
+        request:
+          method: GET
+          url: /echo/me
+          headers: {{ Authorization: \"{{{{token}}}}\" }}
+        checks:
+          - json: $.auth
+            equals: \"/echo/login/{{{{users.id}}}}\"
+load:\n{load}"
+    );
+    let s = parse_scenario(&yaml).unwrap_or_else(|r| panic!("{r:?}"));
+    let users = lt_core::data::Dataset::parse("users", &s.data["users"], b"id\n1\n2\n3\n").unwrap();
+    let inputs = Inputs {
+        data: [("users".to_string(), users)].into(),
+        ..Default::default()
+    };
+    (s, inputs)
+}
+
+#[test]
+fn vu_setup_owns_its_datasets_and_is_signed() {
+    let (s, inputs) = vu_scenario(
+        "/echo/login/{{users.id}}",
+        "  executor: constant_vus\n  vus: 2\n  duration: 1s\n",
+    );
+    let env = environment("http://127.0.0.1:1");
+    let plan = Plan::build(&s, &env, &inputs).unwrap();
+    // `users` es del VU: el flow no toma otra fila, ve la de su VU.
+    assert_eq!(plan.vu_data, [0]);
+    assert!(plan.flows[0].data.is_empty());
+    let canonical = plan.canonical(&env);
+    assert_eq!(canonical["vu_setup"][0]["name"], "login");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn each_vu_logs_in_once_and_keeps_its_token() {
+    lt_core::timer::high_resolution();
+    let base = server().await;
+    let (s, inputs) = vu_scenario(
+        "/echo/login/{{users.id}}",
+        "  executor: constant_vus\n  vus: 3\n  duration: 1s\n  graceful_stop: 1s\n",
+    );
+    let plan = Plan::build(&s, &environment(&base), &inputs).unwrap();
+    let r = engine::run(Arc::new(plan), Arc::new(Progress::default())).await;
+
+    let v = r.vu_setup.as_ref().unwrap();
+    assert_eq!((v.vus, v.failed), (3, 0));
+    // Un login por VU, no uno por iteración.
+    assert_eq!(v.steps[0].requests, 3);
+    assert!(r.totals.started > 3, "{:?}", r.totals);
+    assert!(r.totals.checks_passed > 3);
+    assert_eq!(r.totals.checks_failed, 0, "{:?}", r.steps[0].checks);
+    // Las métricas de carga no incluyen el login.
+    assert_eq!(r.steps.len(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn open_model_prepares_max_vus_and_hands_them_out() {
+    lt_core::timer::high_resolution();
+    let base = server().await;
+    let (s, inputs) = vu_scenario(
+        "/echo/login/{{users.id}}",
+        "  executor: constant_rate\n  rate: 20/s\n  duration: 1s\n  max_vus: 4\n",
+    );
+    let plan = Plan::build(&s, &environment(&base), &inputs).unwrap();
+    let r = engine::run(Arc::new(plan), Arc::new(Progress::default())).await;
+
+    assert_eq!(r.vu_setup.as_ref().unwrap().steps[0].requests, 4);
+    assert!(r.totals.started >= 18, "{:?}", r.totals);
+    assert_eq!(r.totals.checks_failed, 0, "{:?}", r.steps[0].checks);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn vu_setup_failing_everywhere_aborts_and_check_shows_it() {
+    let base = server().await;
+    let (s, inputs) = vu_scenario(
+        "/missing",
+        "  executor: constant_vus\n  vus: 2\n  duration: 1s\n",
+    );
+    let plan = Plan::build(&s, &environment(&base), &inputs).unwrap();
+
+    let checked = lt_core::check::check(&plan).await.unwrap();
+    assert_eq!(checked.steps[0].flow, "vu_setup");
+    assert!(!checked.ok);
+    assert_eq!(checked.skipped, ["me"]);
+
+    let r = engine::run(Arc::new(plan), Arc::new(Progress::default())).await;
+    let why = r.aborted.as_deref().unwrap();
+    assert!(
+        why.contains("los 2 VUs") && why.contains("respondió 405"),
+        "{why}"
+    );
+    assert_eq!(r.vu_setup.unwrap().failed, 2);
+}

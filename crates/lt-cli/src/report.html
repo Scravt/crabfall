@@ -562,6 +562,26 @@ function rawData(pts) {
         el("td", {}, num(p.errors)), el("td", {}, ms(p.p50)), el("td", {}, ms(p.p95)), el("td", {}, ms(p.p99))))))));
 }
 
+function vuSetupSection() {
+  const v = run.vu_setup;
+  if (!v) return null;
+  const state = v.failed ? pill("serious", `${v.failed} de ${v.vus} VUs quedaron afuera`) : pill("good", `${v.vus} VUs listos`);
+  const cols = ["paso", "requests", "fallidos", "p50", "p95", "max", ""];
+  return el("section", {}, el("h2", {}, "Setup por VU"),
+    el("div", { class: "card" },
+      el("div", { style: "display:flex;gap:8px;align-items:center;flex-wrap:wrap" }, state,
+        el("span", { class: "muted" }, `antes de la carga, en ${num(v.duration_ms / 1000)} s; no entra en las métricas de los pasos`)),
+      el("div", { class: "scroll", style: "margin-top:8px" }, el("table", {},
+        el("thead", {}, el("tr", {}, cols.map((h, i) => el("th", { class: i === 6 ? "l" : null }, h)))),
+        el("tbody", {}, v.steps.map((s) => {
+          const l = s.latency_ms || {};
+          return el("tr", {},
+            el("td", {}, s.name), el("td", {}, num(s.requests)), el("td", {}, num(s.failed)),
+            el("td", {}, ms(l.p50)), el("td", {}, ms(l.p95)), el("td", {}, ms(l.max)),
+            el("td", { class: "l muted", style: "white-space:normal" }, (s.errors || []).join(" · ")));
+        }))))));
+}
+
 function stepsTable() {
   const steps = run.steps || [];
   if (!steps.length) return null;
@@ -609,7 +629,7 @@ function warningsSection() {
   return el("section", {}, el("h2", {}, "Avisos"), el("div", { class: "card" }, el("ul", { class: "plain" }, list.map((w) => el("li", {}, w)))));
 }
 
-app.append(header(), tiles(), ...[warningsSection(), findings(), comparison(), chartsSection(), stepsTable(), checksSection(), thresholdsSection()].filter(Boolean),
+app.append(header(), tiles(), ...[warningsSection(), findings(), comparison(), chartsSection(), stepsTable(), vuSetupSection(), checksSection(), thresholdsSection()].filter(Boolean),
   el("footer", {}, `Generado por lt ${DATA.lt_version} desde ${DATA.results_file}. Los datos están dentro de este archivo: se abre sin conexión.`));
 charts.forEach((d) => d());
 let resizeTimer;

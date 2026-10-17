@@ -44,6 +44,9 @@ pub struct Scenario {
     /// Pasos que corren una vez, en orden, antes de la carga (por ejemplo, login). Sus `extract` quedan como variables para todos los flows. Si alguno falla, la corrida se aborta.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub setup: Vec<Step>,
+    /// Pasos que cada VU corre una vez, antes de la carga (por ejemplo, el login de cada usuario). Sus `extract` quedan como variables de ese VU en todas sus iteraciones. Ven `setup` y los datasets (una fila por VU). Corren para `vus` (constant_vus) o `max_vus` (executors de tasa). Si fallan en un VU, ese VU queda afuera; si fallan en todos, la corrida se aborta.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub vu_setup: Vec<Step>,
     /// Flujos de usuario. Cada iteración elige uno según su `weight` y ejecuta sus pasos en orden.
     pub flows: IndexMap<String, Flow>,
     /// Perfil de carga. La tasa se mide en iteraciones por segundo, no en requests.

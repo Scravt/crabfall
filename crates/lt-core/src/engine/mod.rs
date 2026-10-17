@@ -22,7 +22,10 @@ use tokio::{
 
 use crate::{
     load::LoadPlan,
-    metrics::{Collector, Outcome, Percentiles, RunResult, SetupStep, Totals, histogram, record},
+    metrics::{
+        Collector, Outcome, Percentiles, RunResult, SetupStep, Totals, VuSetupResult, VuSetupStep,
+        histogram, record,
+    },
 };
 use http::{Body, Client, Failure, FailureKind, Response};
 use hyper::Request;
@@ -35,6 +38,9 @@ pub struct Progress {
     pub dropped: AtomicU64,
     pub requests: AtomicU64,
     pub failed: AtomicU64,
+    /// VUs que completaron `vu_setup`, de `vus_total`.
+    pub vus_ready: AtomicU64,
+    pub vus_total: AtomicU64,
 }
 
 /// Lo que el motor le cuenta al colector, con su instante.
@@ -122,6 +128,121 @@ pub async fn run_step(
     }
 }
 
+/// Por qué un paso de `setup` o `vu_setup` no sirve: sin respuesta, status >= 400, un
+/// `extract` fallido o un check fallido. `None` si salió bien.
+fn step_problem(step: &StepPlan, run: &StepRun) -> Option<String> {
+    match (&run.result, &run.extract_error) {
+        (Err(f), _) => Some(f.message.clone()),
+        (Ok(r), _) if r.status >= 400 => Some(format!("respondió {}", r.status)),
+        (_, Some(e)) => Some(e.clone()),
+        _ => step.checks.iter().zip(&run.checks).find_map(|(c, r)| {
+            r.as_ref()
+                .map(|why| format!("el check `{}` falló: {why}", c.label))
+        }),
+    }
+}
+
+/// VUs preparados a la vez como máximo durante `vu_setup`.
+const VU_SETUP_CONCURRENCY: usize = 50;
+
+/// Corre `vu_setup` para `count` VUs, antes de la carga: a lo sumo 50 a la vez y sin
+/// superar `limits.max_rps`. Devuelve las variables de cada VU que lo completó.
+async fn prepare_vus(
+    client: &Arc<Client>,
+    plan: &Arc<Plan>,
+    setup: &Arc<HashMap<String, Value>>,
+    count: u32,
+    progress: &Arc<Progress>,
+) -> (Vec<Arc<HashMap<String, Value>>>, VuSetupResult) {
+    let started = Instant::now();
+    let limit = Arc::new(Semaphore::new(VU_SETUP_CONCURRENCY));
+    let pacer = plan.request_cap.map(|cap| {
+        Arc::new(Pacer::new(
+            Duration::from_secs_f64(plan.vu_setup.len().max(1) as f64 / cap),
+            started,
+        ))
+    });
+    let never = started + Duration::from_secs(10 * 365 * 24 * 3600);
+    progress.vus_total.store(u64::from(count), Relaxed);
+
+    let mut tasks = JoinSet::new();
+    for _ in 0..count {
+        let (client, plan, setup, limit, pacer, progress) = (
+            client.clone(),
+            plan.clone(),
+            setup.clone(),
+            limit.clone(),
+            pacer.clone(),
+            progress.clone(),
+        );
+        tasks.spawn(async move {
+            let _permit = limit
+                .acquire_owned()
+                .await
+                .expect("el semáforo no se cierra");
+            if let Some(p) = &pacer {
+                p.wait(never).await;
+            }
+            let mut vars = plan.vu_row_vars();
+            let mut samples = Vec::new();
+            for (i, step) in plan.vu_setup.iter().enumerate() {
+                let t = Instant::now();
+                let run = run_step(&client, &plan, step, &setup, &vars).await;
+                let problem = step_problem(step, &run);
+                samples.push((i, t.elapsed(), problem.clone()));
+                if problem.is_some() {
+                    return (None, samples);
+                }
+                vars.extend(run.extracted);
+            }
+            progress.vus_ready.fetch_add(1, Relaxed);
+            (Some(vars), samples)
+        });
+    }
+
+    let mut ready = Vec::new();
+    let mut stats: Vec<(Histogram<u64>, u64, u64, Vec<String>)> = plan
+        .vu_setup
+        .iter()
+        .map(|_| (histogram(), 0, 0, Vec::new()))
+        .collect();
+    while let Some(joined) = tasks.join_next().await {
+        let (vars, samples) = joined.expect("la preparación de un VU no entra en pánico");
+        for (i, latency, problem) in samples {
+            let (h, requests, failed, errors) = &mut stats[i];
+            record(h, latency);
+            *requests += 1;
+            if let Some(p) = problem {
+                *failed += 1;
+                if errors.len() < 3 && !errors.contains(&p) {
+                    errors.push(p);
+                }
+            }
+        }
+        if let Some(vars) = vars {
+            ready.push(Arc::new(vars));
+        }
+    }
+    let result = VuSetupResult {
+        vus: count,
+        failed: count - ready.len() as u32,
+        duration_ms: round3(started.elapsed().as_secs_f64() * 1000.0),
+        steps: plan
+            .vu_setup
+            .iter()
+            .zip(stats)
+            .map(|(step, (h, requests, failed, errors))| VuSetupStep {
+                name: step.name.clone(),
+                requests,
+                failed,
+                latency_ms: Percentiles::from(&h),
+                errors,
+            })
+            .collect(),
+    };
+    (ready, result)
+}
+
 /// Corre `setup` en orden. Devuelve las variables extraídas, el detalle de cada paso y,
 /// si algo falló, por qué se aborta la corrida.
 pub async fn run_setup(
@@ -134,15 +255,7 @@ pub async fn run_setup(
         let start = Instant::now();
         let run = run_step(client, plan, step, &vars, &HashMap::new()).await;
         let status = run.result.as_ref().ok().map(|r| r.status);
-        let problem = match (&run.result, &run.extract_error) {
-            (Err(f), _) => Some(f.message.clone()),
-            (Ok(r), _) if r.status >= 400 => Some(format!("respondió {}", r.status)),
-            (_, Some(e)) => Some(e.clone()),
-            _ => step.checks.iter().zip(&run.checks).find_map(|(c, r)| {
-                r.as_ref()
-                    .map(|why| format!("el check `{}` falló: {why}", c.label))
-            }),
-        };
+        let problem = step_problem(step, &run);
         steps.push(SetupStep {
             name: step.name.clone(),
             status,
@@ -173,19 +286,13 @@ struct Shared {
 }
 
 impl Shared {
-    async fn iteration(&self, flow: usize, intended: Instant) {
-        iteration(
-            &self.plan,
-            flow,
-            &self.client,
-            &self.setup,
-            &self.tx,
-            &self.progress,
-            intended,
-        )
-        .await;
+    async fn iteration(&self, flow: usize, intended: Instant, vu: &HashMap<String, Value>) {
+        iteration(self, flow, vu, intended).await;
     }
 }
+
+/// Las variables de cada VU (lo que extrajo su `vu_setup`). Sin `vu_setup`, todos vacíos.
+type Vu = Arc<HashMap<String, Value>>;
 
 /// Lo que devuelve cada modelo de carga.
 struct Dispatch {
@@ -206,6 +313,32 @@ pub async fn run(plan: Arc<Plan>, progress: Arc<Progress>) -> RunResult {
     if let Some(reason) = aborted {
         return RunResult::aborted(&plan, setup, reason);
     }
+    let setup_vars = Arc::new(setup_vars);
+
+    // Un VU por cada lugar de concurrencia; con `vu_setup`, cada uno se prepara antes de la carga.
+    let concurrency = plan.load.concurrency();
+    let (vus, vu_setup) = if plan.vu_setup.is_empty() {
+        let empty: Vu = Arc::new(HashMap::new());
+        (vec![empty; concurrency as usize], None)
+    } else {
+        let (ready, result) =
+            prepare_vus(&client, &plan, &setup_vars, concurrency, &progress).await;
+        if ready.is_empty() {
+            let why = result
+                .steps
+                .iter()
+                .find_map(|s| s.errors.first().map(|e| format!("`{}`: {e}", s.name)))
+                .unwrap_or_default();
+            let mut aborted = RunResult::aborted(
+                &plan,
+                setup,
+                format!("el vu_setup falló en los {concurrency} VUs; {why}"),
+            );
+            aborted.vu_setup = Some(result);
+            return aborted;
+        }
+        (ready, Some(result))
+    };
 
     let start = Instant::now() + Duration::from_millis(50);
     let (tx, mut rx) = mpsc::unbounded_channel::<Event>();
@@ -231,15 +364,13 @@ pub async fn run(plan: Arc<Plan>, progress: Arc<Progress>) -> RunResult {
     let shared = Shared {
         plan: plan.clone(),
         client,
-        setup: Arc::new(setup_vars),
+        setup: setup_vars,
         tx,
         progress: progress.clone(),
     };
     let dispatch = match &plan.load {
-        LoadPlan::Open { .. } => open_model(shared, start).await,
-        LoadPlan::Closed { vus, duration, .. } => {
-            closed_model(shared, start, *vus, *duration).await
-        }
+        LoadPlan::Open { .. } => open_model(shared, start, vus).await,
+        LoadPlan::Closed { duration, .. } => closed_model(shared, start, vus, *duration).await,
     };
 
     let elapsed = start.elapsed().as_secs_f64();
@@ -265,6 +396,14 @@ pub async fn run(plan: Arc<Plan>, progress: Arc<Progress>) -> RunResult {
     };
     let scheduler_lag = dispatch.lag.as_ref().and_then(Percentiles::from);
     let mut warnings = warnings(&totals, scheduler_lag.as_ref());
+    if let Some(v) = vu_setup.as_ref().filter(|v| v.failed > 0) {
+        warnings.push(format!(
+            "{} de {} VUs no completaron vu_setup y quedaron afuera: la carga corrió con {}.",
+            v.failed,
+            v.vus,
+            v.vus - v.failed
+        ));
+    }
     // Las esperas cortas al arrancar (todos los VUs a la vez) no limitan la carga: se avisa
     // solo si algún segundo llegó cerca del tope.
     let cap = plan.request_cap.unwrap_or(f64::INFINITY);
@@ -285,6 +424,7 @@ pub async fn run(plan: Arc<Plan>, progress: Arc<Progress>) -> RunResult {
         duration_s: round1(elapsed),
         aborted: None,
         setup,
+        vu_setup,
         totals,
         thresholds,
         scheduler_lag_ms: scheduler_lag,
@@ -299,9 +439,10 @@ pub async fn run(plan: Arc<Plan>, progress: Arc<Progress>) -> RunResult {
 
 /// Modelo abierto: cada iteración arranca en su instante planificado; si no hay VU
 /// libre, se descarta (nunca se demora).
-async fn open_model(shared: Shared, start: Instant) -> Dispatch {
+async fn open_model(shared: Shared, start: Instant, vus: Vec<Vu>) -> Dispatch {
     let plan = shared.plan.clone();
-    let vus = Arc::new(Semaphore::new(plan.load.concurrency() as usize));
+    // VUs libres. Una iteración toma uno y lo devuelve al terminar; si no hay, se descarta.
+    let free = Arc::new(std::sync::Mutex::new(vus));
     let mut picker = WeightedPicker::new(plan.flows.iter().map(|f| f.weight).collect());
     let mut lag = histogram();
     let mut tasks = JoinSet::new();
@@ -317,17 +458,17 @@ async fn open_model(shared: Shared, start: Instant) -> Dispatch {
         while tasks.try_join_next().is_some() {}
 
         let flow = picker.next();
-        let Ok(permit) = vus.clone().try_acquire_owned() else {
+        let Some(vu) = free.lock().unwrap().pop() else {
             shared.progress.dropped.fetch_add(1, Relaxed);
             let _ = shared.tx.send(Event::Dropped(intended));
             continue;
         };
         shared.progress.started.fetch_add(1, Relaxed);
         let _ = shared.tx.send(Event::Started(intended));
-        let shared = shared.clone();
+        let (shared, free) = (shared.clone(), free.clone());
         tasks.spawn(async move {
-            shared.iteration(flow, intended).await;
-            drop(permit);
+            shared.iteration(flow, intended, &vu).await;
+            free.lock().unwrap().push(vu);
         });
     }
     let schedule_secs = (last_dispatch - start).as_secs_f64().max(1e-3);
@@ -344,7 +485,12 @@ async fn open_model(shared: Shared, start: Instant) -> Dispatch {
 
 /// Modelo cerrado: `vus` usuarios en loop hasta `duration`. Si el entorno tiene
 /// `max_rps`, un pacer espacia los inicios para no superarlo.
-async fn closed_model(shared: Shared, start: Instant, vus: u32, duration: Duration) -> Dispatch {
+async fn closed_model(
+    shared: Shared,
+    start: Instant,
+    vus: Vec<Vu>,
+    duration: Duration,
+) -> Dispatch {
     let plan = shared.plan.clone();
     let deadline = start + duration;
     let picker = Arc::new(std::sync::Mutex::new(WeightedPicker::new(
@@ -365,7 +511,7 @@ async fn closed_model(shared: Shared, start: Instant, vus: u32, duration: Durati
     });
 
     let mut tasks = JoinSet::new();
-    for _ in 0..vus {
+    for vu in vus {
         let (shared, picker, pacer) = (shared.clone(), picker.clone(), pacer.clone());
         tasks.spawn(async move {
             sleep_until(start.into()).await;
@@ -381,7 +527,7 @@ async fn closed_model(shared: Shared, start: Instant, vus: u32, duration: Durati
                 let flow = picker.lock().unwrap().next();
                 shared.progress.started.fetch_add(1, Relaxed);
                 let _ = shared.tx.send(Event::Started(Instant::now()));
-                shared.iteration(flow, Instant::now()).await;
+                shared.iteration(flow, Instant::now(), &vu).await;
             }
         });
     }
@@ -447,17 +593,18 @@ impl Pacer {
 
 /// Ejecuta los pasos de un flow en orden. Si un paso falla sin respuesta o un `extract`
 /// no encuentra su valor, la iteración se corta: los pasos siguientes dependen de él.
-async fn iteration(
-    plan: &Plan,
-    flow: usize,
-    client: &Client,
-    setup: &HashMap<String, Value>,
-    tx: &mpsc::UnboundedSender<Event>,
-    progress: &Progress,
-    intended: Instant,
-) {
+async fn iteration(shared: &Shared, flow: usize, vu: &HashMap<String, Value>, intended: Instant) {
+    let Shared {
+        plan,
+        client,
+        setup,
+        tx,
+        progress,
+    } = shared;
     let mut from = intended;
-    let mut locals = plan.row_vars(&plan.flows[flow]);
+    // Lo del VU (su `vu_setup`) y las filas de esta iteración; lo extraído después lo pisa.
+    let mut locals = vu.clone();
+    locals.extend(plan.row_vars(&plan.flows[flow]));
     for step in &plan.flows[flow].steps {
         let run = run_step(client, plan, step, setup, &locals).await;
         let done = Instant::now();

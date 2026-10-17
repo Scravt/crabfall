@@ -505,6 +505,9 @@ pub struct RunResult {
     pub aborted: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub setup: Vec<SetupStep>,
+    /// La preparación de los VUs (`vu_setup`), si el escenario la tiene.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vu_setup: Option<VuSetupResult>,
     pub totals: Totals,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub thresholds: Vec<ThresholdResult>,
@@ -515,6 +518,28 @@ pub struct RunResult {
     pub findings: Vec<crate::diagnose::Finding>,
     /// Serie por segundo: la materia prima del diagnóstico.
     pub series: Series,
+}
+
+/// Cómo les fue a los VUs con `vu_setup`. No entra en las métricas de carga.
+#[derive(Debug, Serialize)]
+pub struct VuSetupResult {
+    /// VUs que lo intentaron.
+    pub vus: u32,
+    /// VUs que no lo completaron y quedaron afuera de la carga.
+    pub failed: u32,
+    pub duration_ms: f64,
+    pub steps: Vec<VuSetupStep>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct VuSetupStep {
+    pub name: String,
+    pub requests: u64,
+    pub failed: u64,
+    pub latency_ms: Option<Percentiles>,
+    /// Hasta tres motivos distintos de falla.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub errors: Vec<String>,
 }
 
 /// Un paso de `setup`. No entra en las métricas de carga.
@@ -538,6 +563,7 @@ impl RunResult {
             duration_s: 0.0,
             aborted: Some(reason),
             setup,
+            vu_setup: None,
             totals: Totals::default(),
             thresholds: vec![],
             scheduler_lag_ms: None,

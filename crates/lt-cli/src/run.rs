@@ -48,6 +48,14 @@ pub fn cmd_run(target: &crate::Target, as_json: bool) -> u8 {
     if let Some(think) = plan.think_summary() {
         eprintln!("  pausas: {think}");
     }
+    if !plan.vu_setup.is_empty() {
+        let names: Vec<&str> = plan.vu_setup.iter().map(|s| s.name.as_str()).collect();
+        eprintln!(
+            "  por VU: {} ({} VUs, antes de la carga)",
+            names.join(", "),
+            plan.load.concurrency()
+        );
+    }
     if !tweaks.is_empty() {
         eprintln!("  ajustes: {}", tweaks.join(" "));
     }
@@ -119,9 +127,19 @@ pub fn cmd_run(target: &crate::Target, as_json: bool) -> u8 {
 }
 
 async fn show_progress(p: Arc<Progress>, total: Duration) {
-    let start = Instant::now();
+    let mut start = Instant::now();
     loop {
         tokio::time::sleep(Duration::from_secs(1)).await;
+        // Mientras los VUs hacen su vu_setup, la carga todavía no empezó.
+        let total_vus = p.vus_total.load(Relaxed);
+        if total_vus > 0 && p.started.load(Relaxed) == 0 && p.dropped.load(Relaxed) == 0 {
+            eprint!(
+                "\r  preparando VUs (vu_setup) {}/{total_vus}   ",
+                p.vus_ready.load(Relaxed)
+            );
+            start = Instant::now();
+            continue;
+        }
         eprint!(
             "\r  {:>4}s / {}s  iteraciones {}  descartadas {}  requests {}  fallas {}   ",
             start.elapsed().as_secs(),
@@ -188,6 +206,31 @@ fn print_summary(r: &RunResult) {
             "setup  {}  {status}  {} ms{extracted}",
             s.name, s.duration_ms
         );
+    }
+    if let Some(v) = &r.vu_setup {
+        let ok = if v.failed == 0 {
+            "todos listos".to_string()
+        } else {
+            format!("{} quedaron afuera", v.failed)
+        };
+        println!(
+            "vu_setup  {} VUs en {:.1} s: {ok}",
+            v.vus,
+            v.duration_ms / 1000.0
+        );
+        for s in &v.steps {
+            let p50 = s
+                .latency_ms
+                .as_ref()
+                .map_or("-".into(), |l| format!("{:.2} ms", l.p50));
+            println!(
+                "          {}  {} requests  {} fallidos  p50 {p50}",
+                s.name, s.requests, s.failed
+            );
+            for e in &s.errors {
+                println!("            {e}");
+            }
+        }
     }
     if let Some(reason) = &r.aborted {
         println!("✗ {reason}. No se generó carga.");

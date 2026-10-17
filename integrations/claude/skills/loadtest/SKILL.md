@@ -73,13 +73,14 @@ Podés usar libremente: `lt validate`, `lt check` (solo contra loopback), `lt sc
        headers: { Authorization: "Bearer {{token}}" }
      ```
      Lo extraído en `setup` vale para todos los flows; lo extraído en un flow, solo para los pasos siguientes de esa iteración. Si el `setup` falla, la corrida se aborta; si un `extract` falla, se corta esa iteración.
+   - **Login por usuario** (`vu_setup:`, lista de pasos en la raíz): cada VU los corre una vez antes de la carga y lo que extraen queda como variable de ese VU. Es lo correcto para APIs con sesión: con `setup` todos comparten un token, y con el login como primer paso del flow se mide sobre todo el login. Usá `vu_setup` con un dataset de usuarios (`{{users.user}}`): cada VU toma una fila y los flows ven esa misma fila. Se preparan `vus` (o `max_vus`) VUs, uno por login: dimensioná `max_vus` sabiendo que es la cantidad de logins previos. No lleva `think`. Si falla en algunos VUs, quedan afuera; si falla en todos, la corrida se aborta.
    - **Datos por iteración** (usuarios, IDs, búsquedas distintas): `data:` en la raíz, con archivos relativos a `.loadtest/`. Cada iteración toma una fila de cada dataset que usa su flow, y la ve como `{{dataset.columna}}` en todos sus pasos:
      ```yaml
      data:
        users: { file: data/users.csv }                     # CSV con encabezado: todo string
        products: { file: data/products.json, pick: random } # arreglo de objetos: conserva tipos
      ```
-     `pick: sequential` (por defecto) recorre las filas en orden y vuelve a empezar; `random` elige una al azar. Las columnas no se pueden usar en `setup`: si cada usuario tiene que hacer login, poné el login como primer paso del flow y extraé el token ahí. No inventes usuarios ni credenciales: si no existen datos de prueba, dejá un `todo` y pedíselos a la persona. Editar el archivo invalida la aprobación.
+     `pick: sequential` (por defecto) recorre las filas en orden y vuelve a empezar; `random` elige una al azar. Las columnas no se pueden usar en `setup`, sí en `vu_setup` (una fila por VU) y en los flows. No inventes usuarios ni credenciales: si no existen datos de prueba, dejá un `todo` y pedíselos a la persona. Editar el archivo invalida la aprobación.
    - **Checks** (en cada paso, no bloqueantes): `- status: 201`, `- status_in: [200, 201]`, `- { json: $.id, exists: true }`, `- { json: $.status, equals: paid }` (admite `"{{variable}}"`), `- { json: $.name, matches: "^a" }`, `- { header: content-type, contains: json }`, `- body_contains: ok`, `- body_matches: "regex"`. Si un paso tiene checks de status, `lt check` no exige 2xx.
    - **Thresholds** (en la raíz; si alguno falla, `lt run` sale con código 1):
      ```yaml
