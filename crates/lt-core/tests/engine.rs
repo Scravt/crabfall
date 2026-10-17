@@ -744,3 +744,25 @@ fn approval_signs_think_time_only_when_there_is_one() {
     let without = build(&THINK_FLOWS.replace("        think: 200ms\n", ""));
     assert!(without["flows"][0]["steps"][0].get("think").is_none());
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_high_rate_cap_that_is_never_reached_does_not_warn() {
+    lt_core::timer::high_resolution();
+    let base = server().await;
+    // 5 VUs arrancan juntos y el pacer los separa por milisegundos: eso no es "limitar la carga".
+    let yaml = format!(
+        "version: 1\nname: think\nflows:\n{THINK_FLOWS}\
+         load:\n  executor: constant_vus\n  vus: 5\n  duration: 1s\n  graceful_stop: 1s\n"
+    );
+    let s = parse_scenario(&yaml).unwrap_or_else(|r| panic!("{r:?}"));
+    let mut env = environment(&base);
+    env.limits.max_rps = Some(2000.0);
+    let plan = Plan::build(&s, &env, &Default::default()).unwrap();
+    let r = engine::run(Arc::new(plan), Arc::new(Progress::default())).await;
+    assert!(r.totals.started > 0);
+    assert!(
+        !r.warnings.iter().any(|w| w.contains("max_rps")),
+        "{:?}",
+        r.warnings
+    );
+}
