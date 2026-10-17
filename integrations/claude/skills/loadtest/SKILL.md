@@ -108,7 +108,7 @@ Podés usar libremente: `lt validate`, `lt check` (solo contra loopback), `lt sc
 
 ## Analizar resultados
 
-Empezá siempre por `lt findings --json` (la corrida más reciente; `lt findings <id> --json` para otra). Es un resumen compacto: totales, thresholds, hallazgos y métricas por paso. Abrí `.loadtest/runs/<id>/results.json` solo si necesitás la serie por segundo (`series`).
+Empezá siempre por `lt findings --json` (la corrida más reciente; `lt findings <id> --json` para otra). Es un resumen compacto: totales, thresholds, hallazgos y métricas por paso. Abrí `.loadtest/runs/<id>/results.json` solo si necesitás la serie por segundo (`series`). Para la persona hay un reporte gráfico en `.loadtest/runs/<id>/report.html` (lo genera `lt run`; `lt report <id>` lo regenera): mencionáselo al cerrar el análisis. Vos leé el JSON, no el HTML.
 
 1. **¿El resultado es válido?** Si hay un hallazgo `invalid_result`, decilo primero y no saques conclusiones de esa corrida.
 2. **Hallazgos (`findings[]`)**, de más a menos grave. Cada uno trae `title`, `step`, `source`, `window`, `evidence` (los números) y `causes` (causas probables, no conclusiones):

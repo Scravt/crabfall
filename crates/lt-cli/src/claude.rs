@@ -18,6 +18,7 @@ const ALLOWED: &[&str] = &[
     "Bash(lt schema)",
     "Bash(lt findings:*)",
     "Bash(lt compare:*)",
+    "Bash(lt report:*)",
 ];
 
 pub fn cmd_install() -> u8 {
@@ -143,7 +144,7 @@ mod tests {
             HOOK_COMMAND
         );
         let allow = s["permissions"]["allow"].as_array().unwrap();
-        assert_eq!(allow.len(), 6);
+        assert_eq!(allow.len(), 7);
         assert_eq!(allow[0], "Bash(npm test)");
     }
 }

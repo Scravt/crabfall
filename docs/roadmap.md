@@ -124,9 +124,17 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente. Al cerrar
 - [x] Tests: unidades, aplicación de ajustes, firma, el motor con pausas y el binario
 - Listo: en `shop-api`, `login-users --executor constant_vus --vus 5 --duration 20s --think 1s-2s` da 1,8 iteraciones por segundo (36 en 20 s; se esperaban ~1,7), 108 checks pasados y 0 fallidos, y el p50 de `login` en 34 ms, igual que sin pausas: la pausa no entra en la latencia. `results.json` guarda los ajustes en `tweaks` y las pausas en `load.think` (17 oct 2026).
 
+**9. Reporte HTML**
+- [x] `report.html` autocontenido por corrida (sin CDN; se abre sin conexión), generado por `lt run`; `lt report [corrida] [--open]` lo regenera (ADR-009)
+- [x] Encabezado con veredicto, carga, pausas y ajustes; indicadores; hallazgos con evidencia y ventana sombreada; comparación con la corrida anterior y p95 antes/después con la misma carga
+- [x] Gráficos por segundo con un solo eje, crosshair y tooltip (también con teclado), escala log opcional para la latencia, p95 por paso, modo claro y oscuro, tablas como vista sin gráficos
+- [x] Datos embebidos sin poder cerrar el `<script>`; texto siempre con `textContent`
+- [x] Verificado con Edge headless sobre las corridas reales de `shop-api` (capturas en claro y oscuro, mouse simulado por DevTools)
+- Listo cuando: abro el reporte de una corrida mía y entiendo qué pasó sin mirar la terminal. **Pendiente** de tu revisión.
+
 ## Backlog (sin orden)
 
-Más reglas de diagnóstico, reporte HTML, corrida base fija para CI (`lt compare --baseline`), servidor MCP, importadores (OpenAPI, curl, Postman), GUI con Tauri, HTTP/2, `pick: unique` para datasets, setup por VU, GitHub Action, correlación con métricas del servidor (OTLP, Prometheus), WebSockets, gRPC, Kafka.
+Más reglas de diagnóstico, corrida base fija para CI (`lt compare --baseline`), servidor MCP, importadores (OpenAPI, curl, Postman), GUI con Tauri, HTTP/2, `pick: unique` para datasets, setup por VU, GitHub Action, correlación con métricas del servidor (OTLP, Prometheus), WebSockets, gRPC, Kafka.
 
 ## Decisiones abiertas
 
@@ -159,3 +167,4 @@ Más reglas de diagnóstico, reporte HTML, corrida base fija para CI (`lt compar
 | 15 oct 2026 | `lt compare`: veredicto por paso con magnitud + test de signos sobre segundos emparejados; regresiones salen con código 1 | ADR-006 |
 | 16 oct 2026 | Datasets: `{{dataset.columna}}`, una fila por iteración, CSV como strings y JSON con tipos; se firma el SHA-256 de cada archivo | ADR-007 |
 | 17 oct 2026 | Think time después de cada paso; todo ajuste de una corrida entra por flag y se firma | ADR-008 |
+| 17 oct 2026 | Reporte HTML autocontenido por corrida, generado por `lt run` | ADR-009 |

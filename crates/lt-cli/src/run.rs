@@ -101,6 +101,10 @@ pub fn cmd_run(target: &crate::Target, as_json: bool) -> u8 {
     match saved {
         Ok(file) => {
             eprintln!("resultados: {}", display(&file));
+            match crate::report::write(&project, &file) {
+                Ok(report) => eprintln!("reporte:    {}", display(&report)),
+                Err(e) => eprintln!("AVISO: no se generó el reporte: {e}"),
+            }
             if result.passed {
                 exit::OK
             } else {

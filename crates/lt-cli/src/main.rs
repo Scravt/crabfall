@@ -5,6 +5,7 @@ mod compare;
 mod findings;
 mod hook;
 mod prepare;
+mod report;
 mod run;
 mod runs;
 
@@ -163,6 +164,16 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Reporte HTML de una corrida (por defecto, la más reciente): gráficos, hallazgos y comparación.
+    ///
+    /// Escribe `report.html` al lado de `results.json`. `lt run` lo genera solo.
+    Report {
+        /// Id de la corrida (carpeta en .loadtest/runs/) o `latest`.
+        run: Option<String>,
+        /// Lo abre en el navegador.
+        #[arg(long)]
+        open: bool,
+    },
     /// Imprime el JSON Schema del escenario (para editores y agentes).
     Schema,
     /// Smoke check: corre cada flow una vez, en serie, solo contra loopback. No necesita aprobación.
@@ -202,6 +213,7 @@ fn main() -> ExitCode {
         Command::Compare { base, new, json } => {
             compare::cmd_compare(base.as_deref(), new.as_deref(), json)
         }
+        Command::Report { run, open } => report::cmd_report(run.as_deref(), open),
         Command::Schema => {
             let schema = lt_core::scenario::json_schema();
             println!("{}", serde_json::to_string_pretty(&schema).unwrap());
