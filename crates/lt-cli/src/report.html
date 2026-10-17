@@ -1,0 +1,620 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reporte lt</title>
+<style>
+:root {
+  color-scheme: light;
+  --page: #f9f9f7;
+  --surface: #fcfcfb;
+  --ink: #0b0b0b;
+  --ink-2: #52514e;
+  --muted: #898781;
+  --grid: #e1e0d9;
+  --axis: #c3c2b7;
+  --border: rgba(11, 11, 11, 0.10);
+  --s1: #2a78d6;
+  --s2: #eb6834;
+  --s3: #1baf7a;
+  --band: rgba(208, 59, 59, 0.08);
+  --good: #0ca30c;
+  --good-text: #006300;
+  --warning: #fab219;
+  --serious: #ec835a;
+  --critical: #d03b3b;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --page: #0d0d0d;
+    --surface: #1a1a19;
+    --ink: #f0efec;
+    --ink-2: #c3c2b7;
+    --muted: #898781;
+    --grid: #2c2c2a;
+    --axis: #383835;
+    --border: rgba(255, 255, 255, 0.10);
+    --s1: #3987e5;
+    --s2: #d95926;
+    --s3: #199e70;
+    --band: rgba(208, 59, 59, 0.10);
+    --good-text: #0ca30c;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0d0d0d;
+  --surface: #1a1a19;
+  --ink: #f0efec;
+  --ink-2: #c3c2b7;
+  --muted: #898781;
+  --grid: #2c2c2a;
+  --axis: #383835;
+  --border: rgba(255, 255, 255, 0.10);
+  --s1: #3987e5;
+  --s2: #d95926;
+  --s3: #199e70;
+  --band: rgba(208, 59, 59, 0.16);
+  --good-text: #0ca30c;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--page);
+  color: var(--ink);
+  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+main { max-width: 1120px; margin: 0 auto; padding: 24px 16px 64px; }
+header { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline; justify-content: space-between; }
+h1 { font-size: 22px; font-weight: 600; margin: 0; }
+h2 { font-size: 16px; font-weight: 600; margin: 32px 0 12px; }
+h3 { font-size: 14px; font-weight: 600; margin: 0 0 4px; }
+.sub { color: var(--ink-2); margin: 4px 0 0; }
+.muted { color: var(--muted); }
+code, .mono { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 12.5px; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+.pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface); font-weight: 600; white-space: nowrap; }
+.dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-top: 20px; }
+.tile .label { color: var(--ink-2); font-size: 13px; }
+.tile .value { font-size: 26px; font-weight: 600; margin-top: 2px; }
+.tile .note { color: var(--muted); font-size: 12px; }
+.meta { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin-top: 16px; color: var(--ink-2); }
+.meta dt { color: var(--muted); }
+.meta dd { margin: 0; overflow-wrap: anywhere; }
+.list { display: grid; gap: 12px; }
+.finding { display: grid; gap: 6px; }
+.finding .head { display: flex; gap: 8px; align-items: flex-start; }
+.finding .head .pill { font-size: 12px; }
+.evidence { display: flex; flex-wrap: wrap; gap: 4px 16px; color: var(--ink-2); font-size: 13px; }
+.evidence b { color: var(--ink); font-weight: 600; }
+ul.plain { margin: 4px 0 0; padding-left: 18px; color: var(--ink-2); }
+.charts { display: grid; gap: 12px; }
+.chart .legend { display: flex; flex-wrap: wrap; gap: 4px 16px; color: var(--ink-2); font-size: 13px; margin: 4px 0 8px; }
+.key { display: inline-flex; align-items: center; gap: 6px; }
+.key i { display: inline-block; width: 14px; height: 2px; border-radius: 1px; }
+.key i.band { height: 10px; background: var(--band); border: 1px solid var(--critical); border-width: 0 0 0 0; }
+.plot { position: relative; }
+.plot svg { display: block; width: 100%; overflow: visible; }
+.plot svg:focus { outline: 2px solid var(--s1); outline-offset: 2px; border-radius: 4px; }
+.tip { position: absolute; pointer-events: none; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; box-shadow: 0 4px 16px rgba(0,0,0,0.12); font-size: 12.5px; min-width: 140px; display: none; z-index: 2; }
+.tip .t { color: var(--muted); margin-bottom: 4px; }
+.tip .row { display: flex; align-items: center; gap: 8px; }
+.tip .row b { font-variant-numeric: tabular-nums; }
+.tip .row span { color: var(--ink-2); }
+.multiples { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { text-align: right; padding: 6px 10px; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+th { color: var(--muted); font-weight: 500; }
+th:first-child, td:first-child, th.l, td.l { text-align: left; }
+td { font-variant-numeric: tabular-nums; }
+.scroll { overflow-x: auto; }
+.status { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; }
+.ok { color: var(--good-text); }
+details { margin-top: 12px; }
+summary { cursor: pointer; color: var(--ink-2); }
+.toolbar { display: flex; gap: 8px; align-items: center; }
+button.theme { font: inherit; color: var(--ink-2); background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 4px 10px; cursor: pointer; }
+footer { margin-top: 40px; color: var(--muted); font-size: 12px; }
+@media print { button.theme { display: none; } .card { break-inside: avoid; } }
+</style>
+</head>
+<body>
+<main id="app"></main>
+<script id="lt-data" type="application/json">/*LT_DATA*/</script>
+<script>
+"use strict";
+const DATA = JSON.parse(document.getElementById("lt-data").textContent);
+const run = DATA.run;
+const cmp = DATA.comparison;
+
+// ---------- DOM helpers: todo el texto entra con textContent (los datos vienen de la corrida). ----------
+function el(tag, attrs, ...children) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v == null || v === false) continue;
+    if (k === "class") e.className = v;
+    else if (k === "style") e.style.cssText = v;
+    else e.setAttribute(k, v);
+  }
+  for (const c of children.flat()) {
+    if (c == null || c === false) continue;
+    e.append(c instanceof Node ? c : document.createTextNode(String(c)));
+  }
+  return e;
+}
+const SVG = "http://www.w3.org/2000/svg";
+function sv(tag, attrs) {
+  const e = document.createElementNS(SVG, tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v == null) continue;
+    // var(--x) no vale en atributos de presentación SVG en todos los navegadores: va como estilo.
+    if ((k === "fill" || k === "stroke") && String(v).startsWith("var(")) e.style.setProperty(k, v);
+    else e.setAttribute(k, v);
+  }
+  return e;
+}
+
+// ---------- Formatos ----------
+const nf = new Intl.NumberFormat("es-AR", { maximumFractionDigits: 1 });
+function num(n) { return n == null ? "—" : nf.format(n); }
+function compact(n) {
+  if (n == null) return "—";
+  const a = Math.abs(n);
+  if (a >= 1e6) return nf.format(n / 1e6) + "M";
+  if (a >= 1e4) return nf.format(n / 1e3) + "K";
+  return nf.format(n);
+}
+function ms(v) {
+  if (v == null) return "—";
+  if (v >= 1000) return nf.format(v / 1000) + " s";
+  if (v >= 10) return nf.format(Math.round(v)) + " ms";
+  return new Intl.NumberFormat("es-AR", { maximumFractionDigits: 2 }).format(v) + " ms";
+}
+function pct(part, total) { return total ? nf.format((part * 100) / total) + "%" : "—"; }
+function when(iso) {
+  const d = new Date(iso);
+  return isNaN(d) ? iso : d.toLocaleString("es-AR", { dateStyle: "medium", timeStyle: "short" });
+}
+
+// ---------- Estado (icono + texto, nunca solo color) ----------
+const STATUS = {
+  good: { color: "var(--good)", icon: "✓" },
+  warning: { color: "var(--warning)", icon: "!" },
+  serious: { color: "var(--serious)", icon: "!" },
+  critical: { color: "var(--critical)", icon: "✗" },
+};
+function pill(kind, text) {
+  const s = STATUS[kind];
+  return el("span", { class: "pill" },
+    el("span", { class: "dot", style: `background:${s.color}` }),
+    `${s.icon} ${text}`);
+}
+const SEVERITY = { high: ["critical", "alta"], medium: ["serious", "media"], low: ["warning", "baja"], info: ["good", "info"] };
+
+// Texto con `código` (los títulos de los hallazgos nombran pasos así), siempre con nodos de texto.
+function rich(text) {
+  return String(text).split("`").map((part, i) => (i % 2 ? el("code", {}, part) : part));
+}
+
+// Nombres de la evidencia de los hallazgos (ADR-005). Una clave nueva se muestra tal cual.
+const EVIDENCE = {
+  offered_iterations_per_s: "iteraciones ofrecidas/s",
+  sustained_iterations_per_s: "iteraciones sostenidas/s",
+  requests_per_s_at_break: "requests/s en el quiebre",
+  max_requests_per_s: "máximo de requests/s",
+  baseline_p95_ms: "p95 antes (ms)",
+  p95_ms: "p95 (ms)",
+  p95_ms_after_break: "p95 después (ms)",
+  p95_ms_trend_start: "p95 al empezar (ms)",
+  p95_ms_trend_end: "p95 al terminar (ms)",
+  dropped: "descartadas",
+  dropped_after_break: "descartadas después",
+  dropped_ratio: "proporción descartada",
+  error_rate_before: "errores antes (%)",
+  error_rate_at_start_of_window: "errores al empezar (%)",
+  new_connections: "conexiones nuevas",
+  requests: "requests",
+  ratio: "veces",
+  r2: "R²",
+  vus: "VUs",
+  step: "paso",
+};
+
+// ---------- Gráfico de líneas: un eje, crosshair y tooltip con todas las series ----------
+// series: [{ name, color, values: (number|null)[] }]; bands: [{ from, to, label }]
+// logToggle: ofrece escala logarítmica (la latencia suele cubrir varios órdenes de magnitud).
+function lineChart({ title, subtitle, unit, xs, series, bands = [], height = 220, format = (v) => num(v), logToggle = false }) {
+  const box = el("div", { class: "card chart" });
+  // `report.html?log` abre la latencia en escala logarítmica.
+  let log = logToggle && new URLSearchParams(location.search).has("log");
+  const head = el("div", { style: "display:flex;justify-content:space-between;gap:8px;align-items:flex-start" },
+    el("div", {}, el("h3", {}, title), subtitle && el("div", { class: "muted", style: "font-size:13px" }, subtitle)));
+  if (logToggle) {
+    const label = () => (log ? "Ver en escala lineal" : "Ver en escala logarítmica");
+    const btn = el("button", { class: "theme", type: "button", "aria-pressed": String(log) }, label());
+    btn.addEventListener("click", () => {
+      log = !log;
+      btn.textContent = label();
+      btn.setAttribute("aria-pressed", String(log));
+      draw();
+    });
+    head.append(btn);
+  }
+  box.append(head);
+  if (series.length > 1 || bands.length) {
+    const legend = el("div", { class: "legend" });
+    for (const s of series) legend.append(el("span", { class: "key" }, el("i", { style: `background:${s.color}` }), s.name));
+    for (const b of bands) legend.append(el("span", { class: "key" }, el("i", { class: "band" }), b.label));
+    box.append(legend);
+  }
+  const plot = el("div", { class: "plot" });
+  const tip = el("div", { class: "tip", role: "status" });
+  plot.append(tip);
+  box.append(plot);
+
+  function draw() {
+    plot.querySelector("svg")?.remove();
+    const W = Math.max(plot.clientWidth, 280);
+    const H = height;
+    const m = { l: 52, r: 12, t: 8, b: 26 };
+    const iw = W - m.l - m.r, ih = H - m.t - m.b;
+    const all = series.flatMap((s) => s.values).filter((v) => v != null);
+    const top = all.length ? Math.max(...all) : 1;
+    // Conteos chicos: divisiones enteras (0, 2, 4, 6, 8), no 1,25.
+    const max = unit !== "ms" && top < 20 ? Math.max(4, Math.ceil(top / 4) * 4) : niceMax(top);
+    const xmin = xs[0] ?? 0, xmax = xs[xs.length - 1] ?? 1;
+    const x = (t) => m.l + (xmax === xmin ? iw / 2 : ((t - xmin) / (xmax - xmin)) * iw);
+    // Log: de la potencia de 10 debajo del mínimo positivo a la de arriba del máximo.
+    const positive = all.filter((v) => v > 0);
+    const lo = Math.pow(10, Math.floor(Math.log10(positive.length ? Math.min(...positive) : 1)));
+    const hi = Math.pow(10, Math.ceil(Math.log10(Math.max(max, lo * 10))));
+    const y = log
+      ? (v) => m.t + ih - ((Math.log10(Math.max(v, lo)) - Math.log10(lo)) / (Math.log10(hi) - Math.log10(lo))) * ih
+      : (v) => m.t + ih - (v / max) * ih;
+
+    const svg = sv("svg", { viewBox: `0 0 ${W} ${H}`, height: H, tabindex: 0, role: "img", "aria-label": `${title}. Usá las flechas para recorrer los segundos.` });
+    for (const b of bands) {
+      svg.append(sv("rect", { x: x(b.from), y: m.t, width: Math.max(x(b.to) - x(b.from), 1), height: ih, fill: "var(--band)" }));
+    }
+    const yTicks = log ? logTicks(lo, hi) : ticks(max);
+    for (const v of yTicks) {
+      svg.append(sv("line", { x1: m.l, x2: W - m.r, y1: y(v), y2: y(v), stroke: v === yTicks[0] ? "var(--axis)" : "var(--grid)", "stroke-width": 1, "shape-rendering": "crispEdges" }));
+      const label = sv("text", { x: m.l - 8, y: y(v) + 4, "text-anchor": "end", fill: "var(--muted)", "font-size": 11 });
+      label.textContent = unit === "ms" ? msTick(v) : compact(v);
+      svg.append(label);
+    }
+    for (const t of xTicks(xmin, xmax, iw)) {
+      const label = sv("text", { x: x(t), y: H - 6, "text-anchor": "middle", fill: "var(--muted)", "font-size": 11 });
+      label.textContent = `${t}s`;
+      svg.append(label);
+    }
+    for (const s of series) {
+      let d = "", pen = false;
+      s.values.forEach((v, i) => {
+        if (v == null) { pen = false; return; }
+        d += `${pen ? "L" : "M"}${x(xs[i]).toFixed(1)},${y(v).toFixed(1)}`;
+        pen = true;
+      });
+      svg.append(sv("path", { d, fill: "none", stroke: s.color, "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }));
+    }
+    const cross = sv("line", { y1: m.t, y2: m.t + ih, stroke: "var(--axis)", "stroke-width": 1, visibility: "hidden" });
+    svg.append(cross);
+    const dots = series.map((s) => {
+      const c = sv("circle", { r: 4, fill: s.color, stroke: "var(--surface)", "stroke-width": 2, visibility: "hidden" });
+      svg.append(c);
+      return c;
+    });
+    const hit = sv("rect", { x: m.l, y: m.t, width: iw, height: ih, fill: "transparent" });
+    svg.append(hit);
+    plot.prepend(svg);
+
+    let current = -1;
+    function show(i) {
+      if (i < 0 || i >= xs.length) return hide();
+      current = i;
+      const px = x(xs[i]);
+      cross.setAttribute("x1", px); cross.setAttribute("x2", px);
+      cross.setAttribute("visibility", "visible");
+      tip.replaceChildren(el("div", { class: "t" }, `segundo ${xs[i]}`));
+      series.forEach((s, k) => {
+        const v = s.values[i];
+        if (v == null) { dots[k].setAttribute("visibility", "hidden"); }
+        else {
+          dots[k].setAttribute("cx", px); dots[k].setAttribute("cy", y(v));
+          dots[k].setAttribute("visibility", "visible");
+        }
+        tip.append(el("div", { class: "row" },
+          el("span", { class: "key" }, el("i", { style: `background:${s.color}` })),
+          el("b", {}, v == null ? "—" : format(v)), el("span", {}, s.name)));
+      });
+      for (const b of bands) if (xs[i] >= b.from && xs[i] <= b.to) tip.append(el("div", { class: "t", style: "margin:4px 0 0" }, b.label));
+      tip.style.display = "block";
+      const scale = plot.clientWidth / W;
+      const left = px * scale + 12;
+      tip.style.left = (left + tip.offsetWidth > plot.clientWidth ? px * scale - tip.offsetWidth - 12 : left) + "px";
+      tip.style.top = "8px";
+    }
+    function hide() {
+      current = -1;
+      tip.style.display = "none";
+      cross.setAttribute("visibility", "hidden");
+      dots.forEach((d) => d.setAttribute("visibility", "hidden"));
+    }
+    function nearest(clientX) {
+      const r = svg.getBoundingClientRect();
+      const t = xmin + ((clientX - r.left) * (W / r.width) - m.l) / iw * (xmax - xmin);
+      let best = 0;
+      xs.forEach((v, i) => { if (Math.abs(v - t) < Math.abs(xs[best] - t)) best = i; });
+      return best;
+    }
+    hit.addEventListener("pointermove", (e) => show(nearest(e.clientX)));
+    hit.addEventListener("pointerleave", hide);
+    svg.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowRight") { show(Math.min(current + 1, xs.length - 1)); e.preventDefault(); }
+      if (e.key === "ArrowLeft") { show(Math.max(current - 1, 0)); e.preventDefault(); }
+      if (e.key === "Escape") hide();
+    });
+    svg.addEventListener("focus", () => show(current < 0 ? xs.length - 1 : current));
+    svg.addEventListener("blur", hide);
+  }
+  charts.push(draw);
+  return box;
+}
+const charts = [];
+function niceMax(v) {
+  if (!(v > 0)) return 1;
+  const p = Math.pow(10, Math.floor(Math.log10(v)));
+  for (const k of [1, 2, 2.5, 5, 10]) if (k * p >= v) return k * p;
+  return 10 * p;
+}
+function ticks(max) { return [0, max / 4, max / 2, (3 * max) / 4, max]; }
+function logTicks(lo, hi) { const out = []; for (let v = lo; v <= hi * 1.0001; v *= 10) out.push(v); return out; }
+function msTick(v) { return v >= 1000 ? nf.format(v / 1000) + " s" : new Intl.NumberFormat("es-AR", { maximumFractionDigits: 2 }).format(v) + " ms"; }
+function xTicks(a, b, width) {
+  const span = b - a, want = Math.max(2, Math.floor(width / 70));
+  const step = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600].find((s) => span / s <= want) || 1200;
+  const out = [];
+  for (let t = Math.ceil(a / step) * step; t <= b; t += step) out.push(t);
+  return out;
+}
+
+// ---------- Secciones ----------
+const app = document.getElementById("app");
+const t = run.totals || {};
+const failedThresholds = (run.thresholds || []).filter((x) => !x.passed);
+document.title = `${run.scenario} · ${run.environment} · lt`;
+
+function header() {
+  let verdict;
+  if (run.aborted) verdict = pill("critical", "abortada");
+  else if (!(run.thresholds || []).length) verdict = el("span", { class: "pill" }, "sin thresholds");
+  else if (failedThresholds.length) verdict = pill("critical", `${failedThresholds.length} threshold(s) no se cumplieron`);
+  else verdict = pill("good", "thresholds cumplidos");
+
+  const theme = el("button", { class: "theme", type: "button" }, "Tema");
+  theme.addEventListener("click", () => {
+    const root = document.documentElement;
+    const dark = root.dataset.theme ? root.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+    root.dataset.theme = dark ? "light" : "dark";
+    charts.forEach((d) => d());
+  });
+
+  const meta = el("dl", { class: "meta" });
+  const row = (k, v) => v && meta.append(el("dt", {}, k), el("dd", {}, v));
+  row("Carga", describeLoad(run.load));
+  row("Pausas", run.load && run.load.think);
+  row("Ajustes", (run.tweaks || []).join(" "));
+  row("Escenario", run.scenario_file);
+  row("Aprobada", run.approval && `${run.approval.approved_by} · ${when(run.approval.approved_at)}`);
+
+  return el("header", {},
+    el("div", {},
+      el("h1", {}, `${run.scenario} · ${run.environment}`),
+      el("p", { class: "sub" }, `${when(run.started_at)} · corrida ${run.run_id} · ${num(run.duration_s)} s`)),
+    el("div", { class: "toolbar" }, verdict, theme),
+    el("div", { style: "flex-basis:100%" }, meta));
+}
+
+function describeLoad(l) {
+  if (!l) return null;
+  if (l.executor === "constant_rate") return `constant_rate ${l.rate} durante ${l.duration}, max_vus ${l.max_vus}`;
+  if (l.executor === "ramping_rate") return `ramping_rate ${l.start_rate || "0/s"} → ${(l.stages || []).map((s) => `${s.target} (${s.duration})`).join(" → ")}, max_vus ${l.max_vus}`;
+  if (l.executor === "constant_vus") return `constant_vus ${l.vus} VUs durante ${l.duration}`;
+  return l.executor;
+}
+
+function tiles() {
+  const checks = (t.checks_passed || 0) + (t.checks_failed || 0);
+  const tile = (label, value, note) => el("div", { class: "card tile" }, el("div", { class: "label" }, label), el("div", { class: "value" }, value), note && el("div", { class: "note" }, note));
+  return el("section", { class: "tiles" },
+    tile("Requests", compact(t.requests), `${num(t.request_rate)} por segundo`),
+    tile("Iteraciones", compact(t.started), `${num(t.iteration_rate)} por segundo`),
+    tile("Errores", pct(t.failed || 0, t.requests), `${num(t.failed)} sin respuesta · ${num(t.non_2xx)} no-2xx`),
+    tile("Descartadas", pct(t.dropped || 0, t.planned), `${num(t.dropped)} de ${num(t.planned)} planificadas`),
+    checks ? tile("Checks", pct(t.checks_passed, checks), `${num(t.checks_failed)} fallidos de ${num(checks)}`) : null);
+}
+
+function findings() {
+  const list = run.findings || [];
+  const sec = el("section", {}, el("h2", {}, "Hallazgos"));
+  if (!list.length) {
+    sec.append(el("div", { class: "card" }, run.aborted ? "La corrida se abortó: no hay datos para diagnosticar." : "Sin hallazgos: no se detectó ningún patrón conocido."));
+    return sec;
+  }
+  const wrap = el("div", { class: "list" });
+  for (const f of list) {
+    const [kind, label] = SEVERITY[f.severity] || ["warning", f.severity];
+    const card = el("div", { class: "card finding" },
+      el("div", { class: "head" }, pill(kind, label), el("div", {}, rich(f.title))));
+    const ev = el("div", { class: "evidence" });
+    for (const [k, v] of Object.entries(f.evidence || {})) {
+      if (v == null || typeof v === "object") continue;
+      ev.append(el("span", {}, `${EVIDENCE[k] || k.replaceAll("_", " ")}: `, el("b", {}, typeof v === "number" ? num(v) : v)));
+    }
+    if (ev.childNodes.length) card.append(ev);
+    if (f.window) card.append(el("div", { class: "muted" }, `entre los segundos ${f.window.from_s} y ${f.window.to_s} (sombreado en los gráficos)`));
+    if (f.source) card.append(el("div", { class: "mono muted" }, [f.source.file, f.source.symbol].filter(Boolean).join(" · ")));
+    if ((f.causes || []).length) card.append(el("div", {}, el("div", { class: "muted" }, "Causas posibles (hipótesis, no medidas)"), el("ul", { class: "plain" }, f.causes.map((c) => el("li", {}, c)))));
+    wrap.append(card);
+  }
+  sec.append(wrap);
+  return sec;
+}
+
+function comparison() {
+  if (!cmp) return null;
+  const VERDICT = { better: ["good", "mejoró"], worse: ["critical", "empeoró"], mixed: ["serious", "mixto"], same: [null, "sin cambios"] };
+  const [kind, label] = VERDICT[cmp.verdict] || [null, cmp.verdict];
+  const card = el("div", { class: "card" },
+    el("div", { class: "head", style: "display:flex;gap:8px;align-items:center;flex-wrap:wrap" },
+      kind ? pill(kind, label) : el("span", { class: "pill" }, label),
+      el("span", { class: "muted" }, `contra ${cmp.base.run_id}`),
+      el("span", { class: "muted" }, cmp.same_load ? `· misma carga: ${cmp.paired_windows} segundos emparejados` : "· cargas distintas: solo agregados")));
+  const block = (title, items, k) => items.length && el("div", { style: "margin-top:10px" },
+    el("div", { class: "status" }, el("span", { class: "dot", style: `background:${STATUS[k].color}` }), title),
+    el("ul", { class: "plain" }, items.map((i) => el("li", {}, rich(i)))));
+  card.append(block("Regresiones", cmp.regressions || [], "critical") || "", block("Mejoras", cmp.improvements || [], "good") || "");
+  for (const w of cmp.warnings || []) card.append(el("div", { class: "muted", style: "margin-top:8px" }, `Aviso: ${w}`));
+
+  const rows = (cmp.steps || []).filter((s) => s.p95_ms);
+  if (rows.length) {
+    const CH = { better: "mejoró", worse: "empeoró", same: "igual", uncertain: "puede ser ruido" };
+    card.append(el("div", { class: "scroll", style: "margin-top:12px" }, el("table", {},
+      el("thead", {}, el("tr", {}, ["paso", "p95 antes", "p95 ahora", "cambio", "veredicto"].map((h) => el("th", {}, h)))),
+      el("tbody", {}, rows.map((s) => el("tr", {},
+        el("td", {}, s.name), el("td", {}, ms(s.p95_ms.base)), el("td", {}, ms(s.p95_ms.new)),
+        el("td", {}, s.p95_ms.change_pct == null ? "—" : `${s.p95_ms.change_pct > 0 ? "+" : ""}${num(s.p95_ms.change_pct)}%`),
+        el("td", {}, (CH[s.change] || s.change || "—") + (s.sign_test ? ` (${s.sign_test[s.change === "worse" ? "worse" : "better"]} de ${s.sign_test.windows} s)` : ""))))))));
+  }
+  return el("section", {}, el("h2", {}, "Comparación con la corrida anterior"), card);
+}
+
+function bandsFor(step) {
+  return (run.findings || []).filter((f) => f.window && (!step || !f.step || f.step === step))
+    .map((f) => ({ from: f.window.from_s, to: f.window.to_s, label: f.id === "breaking_point" ? "después del quiebre" : f.id.replaceAll("_", " ") }));
+}
+
+function chartsSection() {
+  const pts = (run.series && run.series.points) || [];
+  if (!pts.length) return null;
+  const xs = pts.map((p) => p.t);
+  const sec = el("section", {}, el("h2", {}, "Por segundo"));
+  const grid = el("div", { class: "charts" });
+  grid.append(lineChart({
+    title: "Iteraciones por segundo", subtitle: "iniciadas y descartadas por falta de VUs",
+    xs, series: [
+      { name: "iniciadas", color: "var(--s1)", values: pts.map((p) => p.started) },
+      { name: "descartadas", color: "var(--s2)", values: pts.map((p) => p.dropped) },
+    ], bands: bandsFor(null),
+  }));
+  grid.append(lineChart({
+    title: "Latencia", subtitle: "todos los pasos, desde el instante planificado", unit: "ms", format: ms, logToggle: true,
+    xs, series: [
+      { name: "p50", color: "var(--s1)", values: pts.map((p) => p.p50) },
+      { name: "p95", color: "var(--s2)", values: pts.map((p) => p.p95) },
+      { name: "p99", color: "var(--s3)", values: pts.map((p) => p.p99) },
+    ], bands: bandsFor(null),
+  }));
+  // Antes y después, segundo a segundo: solo con la misma carga (los segundos se emparejan).
+  const base = DATA.base_points;
+  if (cmp && cmp.same_load && base && base.length) {
+    const byT = new Map(base.map((p) => [p.t, p.p95]));
+    grid.append(lineChart({
+      title: "p95: esta corrida y la anterior", subtitle: `misma carga, segundo a segundo; la anterior es ${cmp.base.run_id}`,
+      unit: "ms", format: ms, logToggle: true, xs, series: [
+        { name: "esta corrida", color: "var(--s1)", values: pts.map((p) => p.p95) },
+        { name: "anterior", color: "var(--muted)", values: xs.map((x) => byT.get(x) ?? null) },
+      ],
+    }));
+  }
+  if (pts.some((p) => p.errors > 0)) {
+    grid.append(lineChart({ title: "Errores por segundo", subtitle: "sin respuesta, status ≥ 400 o extract fallido", xs, series: [{ name: "errores", color: "var(--s1)", values: pts.map((p) => p.errors) }] }));
+  }
+  sec.append(grid);
+
+  const steps = (run.series && run.series.steps) || [];
+  if (steps.length > 1) {
+    sec.append(el("h2", {}, "p95 por paso"));
+    const mult = el("div", { class: "multiples" });
+    for (const s of steps) {
+      const byT = new Map(s.points.map((p) => [p.t, p]));
+      mult.append(lineChart({
+        title: s.name, unit: "ms", format: ms, height: 160, xs, logToggle: true,
+        series: [{ name: "p95", color: "var(--s1)", values: xs.map((x) => byT.get(x)?.p95 ?? null) }],
+        bands: bandsFor(s.name),
+      }));
+    }
+    sec.append(mult);
+  }
+  sec.append(rawData(pts));
+  return sec;
+}
+
+function rawData(pts) {
+  return el("details", {}, el("summary", {}, "Ver los datos por segundo"),
+    el("div", { class: "card scroll", style: "margin-top:8px" }, el("table", {},
+      el("thead", {}, el("tr", {}, ["segundo", "iniciadas", "descartadas", "requests", "errores", "p50", "p95", "p99"].map((h) => el("th", {}, h)))),
+      el("tbody", {}, pts.map((p) => el("tr", {},
+        el("td", {}, p.t), el("td", {}, num(p.started)), el("td", {}, num(p.dropped)), el("td", {}, num(p.requests)),
+        el("td", {}, num(p.errors)), el("td", {}, ms(p.p50)), el("td", {}, ms(p.p95)), el("td", {}, ms(p.p99))))))));
+}
+
+function stepsTable() {
+  const steps = run.steps || [];
+  if (!steps.length) return null;
+  const cols = ["paso", "requests", "fallas", "no-2xx", "p50", "p90", "p95", "p99", "p99.9", "max"];
+  return el("section", {}, el("h2", {}, "Pasos"), el("div", { class: "card scroll" }, el("table", {},
+    el("thead", {}, el("tr", {}, cols.map((h) => el("th", {}, h)))),
+    el("tbody", {}, steps.map((s) => {
+      const l = s.latency_ms || {};
+      const codes = Object.entries(s.status_codes || {}).map(([c, n]) => `${c}×${n}`).join("  ");
+      return el("tr", { title: codes ? `códigos: ${codes}` : null },
+        el("td", {}, el("div", {}, s.name), el("div", { class: "mono muted" }, `${s.method} ${s.url}`)),
+        el("td", {}, num(s.requests)), el("td", {}, num(s.failed)), el("td", {}, num(s.non_2xx)),
+        el("td", {}, ms(l.p50)), el("td", {}, ms(l.p90)), el("td", {}, ms(l.p95)), el("td", {}, ms(l.p99)), el("td", {}, ms(l.p999)), el("td", {}, ms(l.max)));
+    })))));
+}
+
+function checksSection() {
+  const rows = (run.steps || []).flatMap((s) => (s.checks || []).map((c) => ({ step: s.name, ...c })));
+  if (!rows.length) return null;
+  return el("section", {}, el("h2", {}, "Checks"), el("div", { class: "card scroll" }, el("table", {},
+    el("thead", {}, el("tr", {}, ["paso", "check", "pasaron", "fallaron", ""].map((h, i) => el("th", { class: i === 1 || i === 4 ? "l" : null }, h)))),
+    el("tbody", {}, rows.map((c) => el("tr", {},
+      el("td", {}, c.step), el("td", { class: "mono l" }, c.check),
+      el("td", {}, num(c.passed)), el("td", {}, num(c.failed)),
+      el("td", { style: "text-align:left;white-space:normal" }, c.failed
+        ? el("span", {}, el("span", { class: "status", style: "color:var(--critical)" }, `✗ ${pct(c.failed, c.passed + c.failed)}`), " ", el("span", { class: "muted" }, (c.samples || []).join(" · ")))
+        : el("span", { class: "status ok" }, "✓"))))))));
+}
+
+function thresholdsSection() {
+  const list = run.thresholds || [];
+  if (!list.length) return null;
+  return el("section", {}, el("h2", {}, "Thresholds"), el("div", { class: "card scroll" }, el("table", {},
+    el("thead", {}, el("tr", {}, ["criterio", "medido", ""].map((h, i) => el("th", { class: i === 2 ? "l" : null }, h)))),
+    el("tbody", {}, list.map((x) => el("tr", {},
+      el("td", { class: "mono" }, x.threshold),
+      el("td", {}, x.actual == null ? "sin datos" : `${num(x.actual)} ${x.unit}`),
+      el("td", {}, x.passed ? el("span", { class: "status ok" }, "✓ cumple") : el("span", { class: "status", style: "color:var(--critical)" }, "✗ no cumple"))))))));
+}
+
+function warningsSection() {
+  const list = [...(run.warnings || [])];
+  if (run.aborted) list.unshift(`Corrida abortada: ${run.aborted}`);
+  if (!list.length) return null;
+  return el("section", {}, el("h2", {}, "Avisos"), el("div", { class: "card" }, el("ul", { class: "plain" }, list.map((w) => el("li", {}, w)))));
+}
+
+app.append(header(), tiles(), ...[warningsSection(), findings(), comparison(), chartsSection(), stepsTable(), checksSection(), thresholdsSection()].filter(Boolean),
+  el("footer", {}, `Generado por lt ${DATA.lt_version} desde ${DATA.results_file}. Los datos están dentro de este archivo: se abre sin conexión.`));
+charts.forEach((d) => d());
+let resizeTimer;
+addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => charts.forEach((d) => d()), 100); });
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => charts.forEach((d) => d()));
+</script>
+</body>
+</html>

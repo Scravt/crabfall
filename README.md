@@ -3,7 +3,7 @@
 Herramienta de pruebas de carga en Rust, pensada para usarse junto a Claude Code:
 Claude diseña el escenario y analiza los resultados; una persona aprueba y ejecuta la carga.
 
-Estado: **rebanada 8 terminada** (think time y ajustes por flag). Ya funcionan: diseño con Claude, aprobación firmada, escenarios con `setup`, `extract`, checks y thresholds, tres executors, diagnóstico, comparación de corridas, datasets, pausas entre pasos y ajustes de la corrida por flag. Ver el [roadmap](docs/roadmap.md).
+Estado: **rebanada 9** (reporte HTML). Ya funcionan: diseño con Claude, aprobación firmada, escenarios con `setup`, `extract`, checks y thresholds, tres executors, diagnóstico, comparación de corridas, datasets, pausas entre pasos, ajustes de la corrida por flag y un reporte HTML por corrida. Ver el [roadmap](docs/roadmap.md).
 
 ## Uso
 
@@ -91,6 +91,8 @@ Después, en una sesión de Claude Code: *"armame una prueba de carga del flujo 
 
 `lt findings [--json]` muestra los hallazgos de la última corrida (o de una por id). `lt compare [base] [nueva] [--json]` compara dos corridas (por defecto, la última con la anterior del mismo escenario): qué mejoró, qué empeoró y si el cambio es consistente o puede ser ruido ([ADR-006](docs/adr/ADR-006-comparacion.md)). `lt schema` imprime el JSON Schema del escenario.
 
+Cada `lt run` deja además `report.html` al lado de `results.json`: un archivo que se abre sin conexión, con gráficos por segundo (iteraciones, latencia, p95 por paso), los hallazgos con la ventana sombreada, la comparación con la corrida anterior y las tablas. `lt report [corrida] --open` lo regenera y lo abre en el navegador ([ADR-009](docs/adr/ADR-009-reporte-html.md)).
+
 Códigos de salida: `0` ok · `1` `check` con pasos fallidos, thresholds no cumplidos, `setup` fallido o `compare` con regresiones · `2` escenario o configuración inválidos · `3` rechazado (sin aprobación válida, host no permitido, límites, sin terminal) · `4` error al guardar o al acceder al keyring.
 
 Formato completo del escenario: [ADR-002](docs/adr/ADR-002-formato-escenario.md).
@@ -115,3 +117,4 @@ Para probar contra una API más realista: [shop-api](../shop-api) (repo aparte),
 - [ADR-006 — Comparar corridas](docs/adr/ADR-006-comparacion.md)
 - [ADR-007 — Datasets](docs/adr/ADR-007-datasets.md)
 - [ADR-008 — Think time y ajustes por flag](docs/adr/ADR-008-think-time-y-ajustes.md)
+- [ADR-009 — Reporte HTML](docs/adr/ADR-009-reporte-html.md)
