@@ -13,7 +13,7 @@ pub fn cmd_check(target: &crate::Target, as_json: bool) -> u8 {
         path,
         plan,
         ..
-    } = match prepare(&target.scenario, target.env.as_deref(), &target.vars) {
+    } = match prepare(target) {
         Ok(p) => p,
         Err(code) => return code,
     };

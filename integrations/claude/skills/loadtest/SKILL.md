@@ -57,7 +57,8 @@ Podés usar libremente: `lt validate`, `lt check` (solo contra loopback), `lt sc
    - Marcá con `tags: [write]` todo paso que cree, modifique o borre datos.
    - Los `weight` reflejan la mezcla de tráfico pedida; son relativos.
    - La tasa de requests es `rate × pasos del flow más largo`. Tiene que quedar dentro de `limits.max_rps`.
-   - `max_vus` ≈ `rate × latencia esperada (s) × 5`, con un mínimo de 10. Si es bajo, `lt` descarta iteraciones.
+   - `max_vus` ≈ `rate × (latencia esperada + pausas de la iteración) (s) × 5`, con un mínimo de 10. Si es bajo, `lt` descarta iteraciones.
+   - **Pausas** (`think`): si piden simular personas, poné `think: 1s-3s` en `defaults` (o `think` en un paso: `2s` fija, `1s-3s` al azar; `0s` la quita). Va después del paso, no cuenta en la latencia y ocupa el VU. Con `constant_vus` es casi obligatoria: sin pausas, 10 VUs no son 10 personas. No se permite en `setup`, y `lt check` la ignora.
    - Si no conocés un valor, escribí `{ todo: "qué hace falta" }`. No inventes IDs ni credenciales.
    - **Variables:** `vars:` en la raíz y `{{nombre}}` en `url`, `query`, `headers` y bodies. Si un valor JSON es exactamente `"{{x}}"`, conserva el tipo (número, booleano). Dinámicos: `{{$uuid}}`, `{{$timestamp}}`, `{{$randomInt(1,100)}}`. Credenciales: `{{env.NOMBRE}}`, declarando `NOMBRE` en `secrets:` de `config.yaml` (el valor sale del entorno o de `.env`; nunca lo escribas en el escenario). El host de una URL no puede tener variables.
    - **`defaults:`** `headers` y `timeout` comunes a todos los pasos de `flows`.
@@ -102,6 +103,8 @@ Podés usar libremente: `lt validate`, `lt check` (solo contra loopback), `lt sc
    lt run <nombre> --env <entorno>
    ```
    Cualquier cambio posterior al escenario o al entorno invalida la aprobación: si corregís algo, avisá que hay que aprobar de nuevo.
+
+   **Ajustes por flag.** Para variar una corrida sin tocar el YAML ("lo mismo con el doble de tasa", "probalo con 20 usuarios", "con otros usuarios"), usá flags en lugar de editar el escenario: `--rate`, `--duration`, `--vus`, `--max-vus`, `--start-rate`, `--stages 100/s:1m,0/s:30s`, `--graceful-stop`, `--executor`, `--think 1s-3s`, `--data users=data/otros.csv` y `--pick users=random` (lista en `lt run --help`). Validalos con `lt validate <nombre> <flags> --json`: el error dice qué flag falta o sobra. Los mismos flags van en `lt approve` y en `lt run`, porque la aprobación los firma. Entregá los dos comandos con los flags completos. Si un ajuste se va a usar siempre, va en el YAML.
 
 ## Analizar resultados
 

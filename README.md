@@ -3,7 +3,7 @@
 Herramienta de pruebas de carga en Rust, pensada para usarse junto a Claude Code:
 Claude diseña el escenario y analiza los resultados; una persona aprueba y ejecuta la carga.
 
-Estado: **rebanada 7 terminada** (datasets). Ya funcionan: diseño con Claude, aprobación firmada, escenarios con `setup`, `extract`, checks y thresholds, tres executors, diagnóstico, comparación de corridas y datasets. Ver el [roadmap](docs/roadmap.md).
+Estado: **rebanada 8** (think time y ajustes por flag). Ya funcionan: diseño con Claude, aprobación firmada, escenarios con `setup`, `extract`, checks y thresholds, tres executors, diagnóstico, comparación de corridas, datasets, pausas entre pasos y ajustes de la corrida por flag. Ver el [roadmap](docs/roadmap.md).
 
 ## Uso
 
@@ -62,9 +62,23 @@ flows:
           method: POST
           url: /auth/login
           json: { user: "{{users.user}}", password: "{{users.password}}" }
+        think: 1s-3s                  # pausa después del paso, como una persona
 ```
 
-Cada iteración toma una fila, en orden o al azar (`pick: random`). Editar el archivo invalida la aprobación ([ADR-007](docs/adr/ADR-007-datasets.md)).
+Cada iteración toma una fila, en orden o al azar (`pick: random`). Editar el archivo invalida la aprobación ([ADR-007](docs/adr/ADR-007-datasets.md)). `think` también va en `defaults` para todos los pasos; no cuenta en la latencia y `lt check` lo ignora.
+
+### Ajustes sin editar el YAML
+
+`validate`, `check`, `approve` y `run` aceptan flags que pisan al escenario para esa corrida. Son lo que tendría un panel de personalización:
+
+```bash
+lt run checkout --env local --rate 100/s --duration 2m --think 1s-3s
+lt run checkout --executor constant_vus --vus 20 --duration 5m
+lt run checkout --executor ramping_rate --stages 50/s:1m,200/s:3m,0/s:30s
+lt run login-users --data users=data/otros.csv --pick users=random
+```
+
+Lista completa en `lt run --help`. Cambian el tráfico, así que la aprobación los firma: pasá los mismos a `lt approve` y a `lt run` ([ADR-008](docs/adr/ADR-008-think-time-y-ajustes.md)).
 
 ## Con Claude Code
 
@@ -99,3 +113,4 @@ Para probar contra una API más realista: [shop-api](../shop-api) (repo aparte),
 - [ADR-005 — Diagnóstico](docs/adr/ADR-005-diagnostico.md)
 - [ADR-006 — Comparar corridas](docs/adr/ADR-006-comparacion.md)
 - [ADR-007 — Datasets](docs/adr/ADR-007-datasets.md)
+- [ADR-008 — Think time y ajustes por flag](docs/adr/ADR-008-think-time-y-ajustes.md)

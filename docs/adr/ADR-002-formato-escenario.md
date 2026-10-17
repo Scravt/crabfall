@@ -281,8 +281,8 @@ load:
 | --- | --- | --- |
 | raíz | `version`, `name`, `description`, `meta`, `vars`, `data`, `setup`, `defaults`, `flows`, `load`, `thresholds` | Obligatorios: `version`, `name`, `flows`, `load` |
 | flow | `weight`, `steps` | `weight` opcional, por defecto `1` |
-| defaults | `headers`, `timeout` | Solo para pasos de `flows`, no de `setup` |
-| paso | `name`, `request`, `checks`, `extract`, `tags`, `source` | `name` único en todo el escenario |
+| defaults | `headers`, `timeout`, `think` | Solo para pasos de `flows`, no de `setup` |
+| paso | `name`, `request`, `checks`, `extract`, `tags`, `source`, `think` | `name` único en todo el escenario. `think`: pausa después del paso (`2s` o `1s-3s`), no en `setup` |
 | request | `method`, `url`, `headers`, `query`, `timeout` + uno de `json` / `form` / `body` | `timeout` por defecto 30s. `url` relativa a `base_url` o absoluta; los hosts se validan contra `allowed_hosts` |
 | check | `status`, `status_in`, `json` + (`exists` / `equals` / `matches`), `header` + (`exists` / `equals` / `contains` / `matches`), `body_contains`, `body_matches` | No bloqueantes: cuentan para `checks.pass_rate`. `equals` admite `{{variables}}`. El body usa claves propias (`body_contains`, `body_matches`) porque no tiene selector |
 | extract | `{ json: <path> }`, `{ header: <nombre> }`, `{ regex: <patrón> }` | En `setup`: global de solo lectura. En flows: por iteración |
@@ -304,4 +304,4 @@ Cualquier escenario se puede verificar con `lt check <escenario>`. Corre el `set
 
 - **Setup por VU** (cada usuario virtual con su propio login): se deja para más adelante, salvo que un caso real lo necesite antes.
 - **Datasets** (CSV/JSON): resuelto en ADR-007, con el campo `data` en la raíz.
-- **Think time** entre pasos: queda en el backlog; reservar `think` en el paso.
+- **Think time** entre pasos: resuelto en ADR-008, con `think` en el paso y en `defaults`.

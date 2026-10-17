@@ -29,7 +29,7 @@ use crate::{
     scenario::{Defaults, Pick, Scenario, Source, Step},
     template::{Scope, Template, ValueTemplate, to_text},
     threshold::{Filter, ThresholdPlan},
-    units::HumanDuration,
+    units::{HumanDuration, Think},
 };
 
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -128,6 +128,8 @@ pub struct StepPlan {
     headers: Vec<(HeaderName, Template)>,
     pub body: BodyPlan,
     pub timeout: Duration,
+    /// Pausa después del paso; `None` si no hay.
+    pub think: Option<Think>,
     /// Variables que salen de la respuesta.
     pub extract: Vec<(String, Extractor)>,
     /// Verificaciones de la respuesta.
@@ -411,7 +413,7 @@ impl Plan {
                 .iter()
                 .map(|(name, e)| json!([name, e.source()]))
                 .collect();
-            json!({
+            let mut step = json!({
                 "name": s.name,
                 "method": s.method.as_str(),
                 "url": s.url(),
@@ -420,7 +422,12 @@ impl Plan {
                 "timeout": d(s.timeout),
                 "tags": s.tags,
                 "extract": extract,
-            })
+            });
+            // Solo si hay pausa, para no invalidar las aprobaciones de antes (ADR-008).
+            if let Some(think) = s.think {
+                step["think"] = json!(think.to_string());
+            }
+            step
         };
         let setup: Vec<Value> = self.setup.iter().map(step).collect();
         let flows: Vec<Value> = self
@@ -482,6 +489,24 @@ impl Plan {
                     .into()
             }
         }
+    }
+
+    /// Pausas de los flows para los resúmenes: `1s-3s después de cada paso`, o paso por paso
+    /// si no son todas iguales. `None` si no hay pausas.
+    pub fn think_summary(&self) -> Option<String> {
+        let thinks: Vec<_> = self.steps().map(|s| (s.name.as_str(), s.think)).collect();
+        if thinks.iter().all(|(_, t)| t.is_none()) {
+            return None;
+        }
+        let first = thinks[0].1;
+        if thinks.iter().all(|(_, t)| *t == first) {
+            return first.map(|t| format!("{t} después de cada paso"));
+        }
+        let each: Vec<String> = thinks
+            .iter()
+            .filter_map(|(name, t)| t.map(|t| format!("{name} {t}")))
+            .collect();
+        Some(format!("después de {}", each.join(", ")))
     }
 
     /// Pasos de los flows (los que generan carga y tienen métricas).
@@ -727,6 +752,10 @@ fn build_step(
             .timeout
             .or(defaults.and_then(|d| d.timeout))
             .map_or(DEFAULT_TIMEOUT, |t| t.0),
+        think: step
+            .think
+            .or(defaults.and_then(|d| d.think))
+            .filter(|t| !t.is_zero()),
     })
 }
 
@@ -812,6 +841,7 @@ mod tests {
             extract: vec![],
             checks: vec![],
             timeout: DEFAULT_TIMEOUT,
+            think: None,
         };
         assert_eq!(step.target(&NoVars).unwrap(), "/a%20b/1?q=x+y%26z");
     }
