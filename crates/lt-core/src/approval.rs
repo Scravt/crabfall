@@ -85,6 +85,10 @@ pub struct Approval {
     pub approved_by: String,
     /// El plan canónico aprobado, para mostrar qué cambió después.
     pub plan: Value,
+    /// Flags con los que se aprobó (`--var`, `--rate`...), para sugerir el comando de `run`.
+    /// No se firma: es una ayuda; lo que autoriza es el hash.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub flags: Vec<String>,
     pub signature: String,
 }
 
@@ -138,6 +142,7 @@ pub fn approve(
         approved_at: approved_at.to_string(),
         approved_by: approved_by.to_string(),
         plan: canonical,
+        flags: Vec::new(),
         signature: String::new(),
     };
     approval.signature = to_hex(&sign(&key, &approval));

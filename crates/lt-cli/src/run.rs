@@ -56,7 +56,8 @@ pub fn cmd_run(target: &crate::Target, as_json: bool) -> u8 {
     }
     let (duration, graceful_stop) = (plan.load.duration(), plan.load.graceful_stop());
 
-    let Ok(approval) = crate::approve::verify_for_run(&project, &plan, &env, &env_name) else {
+    let Ok(approval) = crate::approve::verify_for_run(&project, &plan, &env, &env_name, &tweaks)
+    else {
         return exit::REFUSED;
     };
     eprintln!(

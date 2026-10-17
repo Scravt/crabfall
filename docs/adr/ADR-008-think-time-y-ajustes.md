@@ -45,7 +45,7 @@ Criterio: entra por flag todo lo que tendría sentido en un panel de personaliza
 - **Comandos:** los cuatro que arman el plan aceptan los mismos flags: `validate`, `check`, `approve` y `run`. Una GUI valida con los mismos parámetros con los que después corre.
 - **Cuándo se aplican:** sobre el escenario parseado, **antes** de armar el plan, y después se vuelven a correr las reglas de `validate`. Por eso valen las mismas reglas que en el YAML, y el error dice qué flag lo corrige: `falta stages (usá --stages)`, o `duration no aplica a ramping_rate (sacá --duration)`.
 - **`--executor`** descarta los campos de `load` que no le aplican. Por ejemplo, `--executor constant_vus` saca `rate` y `max_vus` y conserva `duration`.
-- **Firma:** como cambian el plan, la aprobación los firma igual que a `--var`. Hay que pasar los mismos flags a `approve` y a `run`; si no coinciden, `run` rechaza y muestra el diff del plan.
+- **Firma:** como cambian el plan, la aprobación los firma igual que a `--var`. Hay que pasar los mismos flags a `approve` y a `run`; si no coinciden, `run` rechaza y muestra el diff del plan. La aprobación guarda además, sin firmar, los flags con los que se aprobó. Si `run` llega con otros, muestra los dos juegos y los comandos para correr lo aprobado o aprobar lo nuevo. Ese campo es solo una ayuda: lo que autoriza sigue siendo el hash.
 - **Visibilidad:** el resumen de `approve` los muestra en la línea `Ajustes`, para que quien aprueba vea que la corrida no es exactamente el YAML. `run` los muestra en el encabezado y `results.json` los guarda en `tweaks`.
 - **En el código:** `lt-core` tiene el tipo `Overrides` (`overrides.rs`) y la CLI solo parsea. Una GUI, o un servidor MCP, usan el mismo tipo sin pasar por la CLI.
 
