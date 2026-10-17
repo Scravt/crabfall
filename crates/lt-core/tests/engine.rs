@@ -694,3 +694,53 @@ async fn each_iteration_uses_one_row_in_all_its_steps() {
     assert!(r.totals.checks_passed > 0);
     assert_eq!(r.totals.checks_failed, 0);
 }
+
+const THINK_FLOWS: &str = "  main:
+    steps:
+      - name: first
+        request: { method: GET, url: /ok }
+        think: 200ms
+      - name: second
+        request: { method: GET, url: /ok }
+";
+
+#[tokio::test(flavor = "multi_thread")]
+async fn think_time_holds_the_vu_but_not_the_latency() {
+    lt_core::timer::high_resolution();
+    let base = server().await;
+    let yaml = format!(
+        "version: 1\nname: think\nflows:\n{THINK_FLOWS}\
+         load:\n  executor: constant_vus\n  vus: 1\n  duration: 1s\n  graceful_stop: 1s\n"
+    );
+    let s = parse_scenario(&yaml).unwrap_or_else(|r| panic!("{r:?}"));
+    let plan = Plan::build(&s, &environment(&base), &Default::default()).unwrap();
+    assert_eq!(
+        plan.think_summary().as_deref(),
+        Some("después de first 200ms")
+    );
+
+    let r = engine::run(Arc::new(plan), Arc::new(Progress::default())).await;
+    // Un VU con 200 ms de pausa por iteración: unas 5 en un segundo, no cientos.
+    assert!((3..=7).contains(&r.totals.started), "{:?}", r.totals);
+    let second = r.steps.iter().find(|s| s.name == "second").unwrap();
+    assert!(
+        second.latency_ms.as_ref().unwrap().max < 100.0,
+        "{second:?}"
+    );
+}
+
+#[test]
+fn approval_signs_think_time_only_when_there_is_one() {
+    let env = environment("http://127.0.0.1:1");
+    let build = |flows: &str| {
+        let s = scenario(flows, "  rate: 1/s\n  duration: 1s\n  max_vus: 1\n");
+        Plan::build(&s, &env, &Default::default())
+            .unwrap()
+            .canonical(&env)
+    };
+    let with = build(THINK_FLOWS);
+    assert_eq!(with["flows"][0]["steps"][0]["think"], "200ms");
+    assert!(with["flows"][0]["steps"][1].get("think").is_none());
+    let without = build(&THINK_FLOWS.replace("        think: 200ms\n", ""));
+    assert!(without["flows"][0]["steps"][0].get("think").is_none());
+}

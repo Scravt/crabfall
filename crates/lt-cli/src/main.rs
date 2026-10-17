@@ -55,6 +55,66 @@ pub struct Target {
     /// Variable `nombre=valor`; pisa a las del escenario y el entorno. Se puede repetir.
     #[arg(long = "var", value_name = "NOMBRE=VALOR")]
     vars: Vec<String>,
+    #[command(flatten)]
+    tweaks: Tweaks,
+}
+
+/// Ajustes de la corrida sin editar el YAML (ADR-008). Cambian el tráfico, así que la
+/// aprobación los firma: pasá los mismos a `approve` y a `run`.
+#[derive(Args, Default)]
+#[command(next_help_heading = "Ajustes (pisan al escenario)")]
+pub struct Tweaks {
+    /// Executor: constant_rate, ramping_rate o constant_vus. Descarta los campos de `load` que no le aplican.
+    #[arg(long)]
+    executor: Option<lt_core::scenario::Executor>,
+    /// Iteraciones por segundo de constant_rate (50/s, 3000/m).
+    #[arg(long, value_name = "50/s")]
+    rate: Option<lt_core::units::Rate>,
+    /// Duración de constant_rate o constant_vus (30s, 5m).
+    #[arg(long, value_name = "30s")]
+    duration: Option<lt_core::units::HumanDuration>,
+    /// Usuarios concurrentes de constant_vus.
+    #[arg(long, value_name = "N")]
+    vus: Option<u32>,
+    /// Máximo de iteraciones en vuelo de constant_rate y ramping_rate.
+    #[arg(long, value_name = "N")]
+    max_vus: Option<u32>,
+    /// Tasa inicial de ramping_rate.
+    #[arg(long, value_name = "0/s")]
+    start_rate: Option<lt_core::units::Rate>,
+    /// Etapas de ramping_rate: tasa:duración separadas por comas (100/s:1m,0/s:30s).
+    #[arg(long, value_name = "TASA:DURACIÓN,...", value_parser = lt_core::overrides::parse_stages)]
+    stages: Option<lt_core::overrides::Stages>,
+    /// Espera a las iteraciones en curso al terminar (30s).
+    #[arg(long, value_name = "30s")]
+    graceful_stop: Option<lt_core::units::HumanDuration>,
+    /// Pausa después de cada paso de los flows, fija (2s) o al azar (1s-3s); 0s la quita. Pisa a la del escenario.
+    #[arg(long, value_name = "1s-3s")]
+    think: Option<lt_core::units::Think>,
+    /// Otro archivo para un dataset, relativo a .loadtest/. Se puede repetir.
+    #[arg(long = "data", value_name = "DATASET=ARCHIVO", value_parser = lt_core::overrides::parse_pair::<String>)]
+    data: Vec<(String, String)>,
+    /// Cómo elige filas un dataset: sequential o random. Se puede repetir.
+    #[arg(long = "pick", value_name = "DATASET=MODO", value_parser = lt_core::overrides::parse_pair::<lt_core::scenario::Pick>)]
+    pick: Vec<(String, lt_core::scenario::Pick)>,
+}
+
+impl Tweaks {
+    pub fn overrides(&self) -> lt_core::overrides::Overrides {
+        lt_core::overrides::Overrides {
+            executor: self.executor,
+            rate: self.rate,
+            duration: self.duration,
+            vus: self.vus,
+            max_vus: self.max_vus,
+            start_rate: self.start_rate,
+            stages: self.stages.clone(),
+            graceful_stop: self.graceful_stop,
+            think: self.think,
+            data: self.data.clone(),
+            pick: self.pick.clone(),
+        }
+    }
 }
 
 #[derive(Subcommand)]
@@ -72,13 +132,10 @@ enum Command {
     },
     /// Valida un escenario: campos, tipos, unidades, variables y valores pendientes (`todo`).
     Validate {
-        /// Nombre (busca en .loadtest/scenarios/) o ruta al archivo.
-        scenario: String,
-        /// Entorno contra el que se verifican variables y hosts (por defecto, default_environment).
-        #[arg(long)]
-        env: Option<String>,
+        #[command(flatten)]
+        target: Target,
         /// Salida JSON para agentes.
-        #[arg(long)]
+        #[arg(long, help_heading = None::<&str>)]
         json: bool,
     },
     /// Hallazgos de una corrida (por defecto, la más reciente).
@@ -109,7 +166,7 @@ enum Command {
         #[command(flatten)]
         target: Target,
         /// Salida JSON para agentes (incluye los bodies, truncados a 2 KB).
-        #[arg(long)]
+        #[arg(long, help_heading = None::<&str>)]
         json: bool,
     },
     /// Aprueba un escenario para un entorno. Lo ejecuta una persona, en una terminal.
@@ -122,7 +179,7 @@ enum Command {
         #[command(flatten)]
         target: Target,
         /// Imprime los resultados completos en JSON.
-        #[arg(long)]
+        #[arg(long, help_heading = None::<&str>)]
         json: bool,
     },
 }
@@ -130,11 +187,7 @@ enum Command {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let code = match cli.command {
-        Command::Validate {
-            scenario,
-            env,
-            json,
-        } => cmd_validate(&scenario, env.as_deref(), json),
+        Command::Validate { target, json } => cmd_validate(&target, json),
         Command::Claude {
             action: ClaudeAction::Install,
         } => claude::cmd_install(),
@@ -166,18 +219,24 @@ fn display(path: &Path) -> String {
         .to_string()
 }
 
-fn cmd_validate(arg: &str, env_name: Option<&str>, as_json: bool) -> u8 {
+fn cmd_validate(target: &Target, as_json: bool) -> u8 {
     let project = std::env::current_dir()
         .ok()
         .and_then(|cwd| Project::discover(&cwd));
-    let path = Project::scenario_path(project.as_ref(), arg);
+    let path = Project::scenario_path(project.as_ref(), &target.scenario);
 
     let report = match std::fs::read_to_string(&path) {
         Ok(text) => match validate::parse_scenario(&text) {
-            Ok(scenario) => Report {
-                errors: plan_errors(project.as_ref(), &scenario, env_name),
-                todos: vec![],
-            },
+            Ok(mut scenario) => {
+                let mut errors = target.tweaks.overrides().apply(&mut scenario);
+                if errors.is_empty() {
+                    errors = plan_errors(project.as_ref(), &scenario, target);
+                }
+                Report {
+                    errors,
+                    todos: vec![],
+                }
+            }
             Err(report) => report,
         },
         Err(e) => Report {
@@ -224,7 +283,7 @@ fn cmd_validate(arg: &str, env_name: Option<&str>, as_json: bool) -> u8 {
 fn plan_errors(
     project: Option<&Project>,
     scenario: &lt_core::scenario::Scenario,
-    env_name: Option<&str>,
+    target: &Target,
 ) -> Vec<Issue> {
     let Some(project) = project else {
         return vec![];
@@ -233,11 +292,11 @@ fn plan_errors(
         Ok(c) => c,
         Err(e) => return vec![issue(e)],
     };
-    let env = match config.environment(env_name) {
+    let env = match config.environment(target.env.as_deref()) {
         Ok((_, env)) => env,
         Err(e) => return vec![issue(e)],
     };
-    let mut inputs = match prepare::inputs(project, &config, scenario, &[]) {
+    let mut inputs = match prepare::inputs(project, &config, scenario, &target.vars) {
         Ok(i) => i,
         Err(e) => return vec![issue(e)],
     };

@@ -482,6 +482,11 @@ async fn iteration(
         }
         locals.extend(run.extracted);
         from = done;
+        // La pausa ocupa el VU, pero no cuenta en la latencia del paso siguiente.
+        if let Some(think) = step.think {
+            tokio::time::sleep(think.sample()).await;
+            from = Instant::now();
+        }
     }
 }
 

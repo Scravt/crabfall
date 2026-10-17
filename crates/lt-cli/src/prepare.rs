@@ -1,4 +1,5 @@
-//! Carga común de `run`, `check` y `approve`: proyecto, entorno, escenario validado y plan.
+//! Carga común de `run`, `check` y `approve`: proyecto, entorno, escenario validado con
+//! los ajustes de la CLI, y plan.
 
 use std::{
     collections::BTreeMap,
@@ -23,10 +24,13 @@ pub struct Prepared {
     pub env: Environment,
     pub path: PathBuf,
     pub plan: Plan,
+    /// Ajustes de la CLI aplicados, como flags (`--rate 100/s`).
+    pub tweaks: Vec<String>,
 }
 
 /// Imprime los errores en stderr y devuelve el código de salida si algo falla.
-pub fn prepare(arg: &str, env_name: Option<&str>, vars: &[String]) -> Result<Prepared, u8> {
+pub fn prepare(target: &crate::Target) -> Result<Prepared, u8> {
+    let (arg, env_name, vars) = (&target.scenario, target.env.as_deref(), &target.vars);
     let fail = |code: u8, msg: String| {
         eprintln!("✗ {msg}");
         code
@@ -54,13 +58,22 @@ pub fn prepare(arg: &str, env_name: Option<&str>, vars: &[String]) -> Result<Pre
             format!("no se pudo leer {}: {e}", display(&path)),
         )
     })?;
-    let scenario = validate::parse_scenario(&text).map_err(|report| {
+    let mut scenario = validate::parse_scenario(&text).map_err(|report| {
         eprintln!("✗ {} no es válido (corré `lt validate`):", display(&path));
         for issue in report.errors.iter().chain(&report.todos) {
             eprintln!("  {}", describe(issue));
         }
         exit::INVALID
     })?;
+    let overrides = target.tweaks.overrides();
+    let problems = overrides.apply(&mut scenario);
+    if !problems.is_empty() {
+        eprintln!("✗ los ajustes no sirven para {}:", scenario.name);
+        for issue in &problems {
+            eprintln!("  {}", describe(issue));
+        }
+        return Err(exit::INVALID);
+    }
     let inputs = inputs(&project, &config, &scenario, vars).map_err(|e| fail(exit::INVALID, e))?;
     let plan = Plan::build(&scenario, &env, &inputs).map_err(|errors| {
         eprintln!("✗ no se puede armar {} en `{env_name}`:", scenario.name);
@@ -76,6 +89,7 @@ pub fn prepare(arg: &str, env_name: Option<&str>, vars: &[String]) -> Result<Pre
         env,
         path,
         plan,
+        tweaks: overrides.describe(),
     })
 }
 

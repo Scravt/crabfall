@@ -175,6 +175,12 @@ fn check_rules(s: &Scenario, errors: &mut Vec<Issue>) {
     let mut seen = HashSet::new();
     for (i, step) in s.setup.iter().enumerate() {
         check_step(step, &format!("setup[{i}]"), &mut seen, errors);
+        if step.think.is_some() {
+            errors.push(Issue::at(
+                format!("setup[{i}].think"),
+                "`setup` corre una vez antes de la carga: no lleva pausas",
+            ));
+        }
     }
     for (flow_name, flow) in &s.flows {
         let flow_path = format!("flows.{flow_name}");
@@ -297,12 +303,25 @@ fn valid_var_name(name: &str) -> bool {
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
-fn check_load(l: &Load, errors: &mut Vec<Issue>) {
-    let (required, allowed): (&[&str], &[&str]) = match l.executor {
+/// Reglas que el tipo no expresa, sobre un escenario ya parseado (por ejemplo, después
+/// de aplicarle ajustes de la CLI).
+pub fn check_scenario(s: &Scenario) -> Vec<Issue> {
+    let mut errors = Vec::new();
+    check_rules(s, &mut errors);
+    errors
+}
+
+/// Campos de `load` (obligatorios, opcionales) de cada executor.
+pub fn load_fields(executor: Executor) -> (&'static [&'static str], &'static [&'static str]) {
+    match executor {
         Executor::ConstantRate => (&["rate", "duration", "max_vus"], &["graceful_stop"]),
         Executor::RampingRate => (&["stages", "max_vus"], &["start_rate", "graceful_stop"]),
         Executor::ConstantVus => (&["vus", "duration"], &["graceful_stop"]),
-    };
+    }
+}
+
+fn check_load(l: &Load, errors: &mut Vec<Issue>) {
+    let (required, allowed) = load_fields(l.executor);
     let present = [
         ("rate", l.rate.is_some()),
         ("duration", l.duration.is_some()),

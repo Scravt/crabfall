@@ -27,7 +27,8 @@ pub fn cmd_run(target: &crate::Target, as_json: bool) -> u8 {
         env,
         path,
         plan,
-    } = match prepare(&target.scenario, target.env.as_deref(), &target.vars) {
+        tweaks,
+    } = match prepare(target) {
         Ok(p) => p,
         Err(code) => return code,
     };
@@ -44,6 +45,12 @@ pub fn cmd_run(target: &crate::Target, as_json: bool) -> u8 {
     let hosts: Vec<&str> = plan.hosts.iter().map(String::as_str).collect();
     eprintln!("{} → {env_name} ({})", plan.scenario, hosts.join(", "));
     eprintln!("  {} · {}", plan.load.describe(), plan.rate_summary());
+    if let Some(think) = plan.think_summary() {
+        eprintln!("  pausas: {think}");
+    }
+    if !tweaks.is_empty() {
+        eprintln!("  ajustes: {}", tweaks.join(" "));
+    }
     for d in &plan.data {
         eprintln!("  datos: {}", d.dataset.describe());
     }
@@ -75,6 +82,9 @@ pub fn cmd_run(target: &crate::Target, as_json: bool) -> u8 {
 
     let run_id = started_at.strftime("%Y%m%d-%H%M%S").to_string();
     let mut doc = results_document(&run_id, &started_at, &path, &env_name, &plan, &result);
+    if !tweaks.is_empty() {
+        doc["tweaks"] = json!(tweaks);
+    }
     doc["approval"] = json!({
         "hash": approval.hash,
         "approved_by": approval.approved_by,
@@ -129,6 +139,11 @@ fn results_document(
 ) -> Value {
     let mut load = plan.load.canonical();
     load["max_request_rate"] = json!(plan.max_request_rate);
+    // Con pausas distintas, `lt compare` no empareja los segundos. Solo si hay pausas,
+    // para que las corridas de antes sigan siendo comparables.
+    if let Some(think) = plan.think_summary() {
+        load["think"] = json!(think);
+    }
     let mut doc = json!({
         "format": JSON_FORMAT,
         "run_id": run_id,

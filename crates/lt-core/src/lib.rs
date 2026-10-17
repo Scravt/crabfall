@@ -11,6 +11,7 @@ pub mod engine;
 pub mod extract;
 pub mod load;
 pub mod metrics;
+pub mod overrides;
 pub mod project;
 pub mod scenario;
 pub mod template;

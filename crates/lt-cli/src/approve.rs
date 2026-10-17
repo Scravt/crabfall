@@ -21,8 +21,9 @@ pub fn cmd_approve(target: &crate::Target) -> u8 {
         env_name,
         env,
         plan,
+        tweaks,
         ..
-    } = match prepare(&target.scenario, target.env.as_deref(), &target.vars) {
+    } = match prepare(target) {
         Ok(p) => p,
         Err(code) => return code,
     };
@@ -57,7 +58,7 @@ pub fn cmd_approve(target: &crate::Target) -> u8 {
         Some(p) if p.hash == approval::fingerprint(&canonical) => Change::Same,
         Some(p) => Change::Changed(approval::diff(&p.plan, &canonical)),
     };
-    print_summary(&plan, &env, &env_name, &change);
+    print_summary(&plan, &env, &env_name, &change, &tweaks);
 
     let target = plan
         .hosts
@@ -161,7 +162,13 @@ enum Change {
     Changed(String),
 }
 
-fn print_summary(plan: &Plan, env: &Environment, env_name: &str, change: &Change) {
+fn print_summary(
+    plan: &Plan,
+    env: &Environment,
+    env_name: &str,
+    change: &Change,
+    tweaks: &[String],
+) {
     let hosts: Vec<&str> = plan.hosts.iter().map(String::as_str).collect();
     let (duration, graceful_stop) = (plan.load.duration(), plan.load.graceful_stop());
     let status = match change {
@@ -172,6 +179,9 @@ fn print_summary(plan: &Plan, env: &Environment, env_name: &str, change: &Change
 
     eprintln!("Escenario   {}  ({status})", plan.scenario);
     eprintln!("Entorno     {env_name} → {}", hosts.join(", "));
+    if !tweaks.is_empty() {
+        eprintln!("Ajustes     {}  (pisan al escenario)", tweaks.join(" "));
+    }
     eprintln!("Carga       {}", plan.load.describe());
     if let Some(n) = plan.load.planned_iterations() {
         eprintln!("            ≈{n} iteraciones");
@@ -182,6 +192,9 @@ fn print_summary(plan: &Plan, env: &Environment, env_name: &str, change: &Change
         HumanDuration(duration),
         HumanDuration(graceful_stop)
     );
+    if let Some(think) = plan.think_summary() {
+        eprintln!("Pausas      {think}");
+    }
     for (i, d) in plan.data.iter().enumerate() {
         let label = if i == 0 { "Datos" } else { "" };
         eprintln!("{label:<11} {}", d.dataset.describe());

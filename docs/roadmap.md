@@ -14,6 +14,7 @@ Pasar de "tengo una API" a "sé dónde se rompe y por qué" sin armar un proyect
 4. **Un núcleo, interfaces delgadas.** CLI primero; MCP y GUI después (ADR-001).
 5. **Local-first.** Escenarios YAML versionados en el repo del proyecto. Sin cuentas ni nube.
 6. **Uso propio primero.** Algo está terminado cuando se usa en un caso real.
+7. **Todo ajuste de una corrida entra por flag.** Lo que tendría sentido en un panel de personalización (carga, pausas, datos, entorno, variables) se puede pasar como `--algo` a `validate`, `check`, `approve` y `run`, con la misma lógica en `lt-core`. Así la GUI es una capa delgada (ADR-008).
 
 ## Cómo se usa
 
@@ -113,9 +114,18 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente. Al cerrar
 - [x] Tests: carga de CSV y JSON, orden de las filas, firma, errores y el motor contra el servidor de eco
 - Listo: en `shop-api`, `login-users` hace login con un usuario distinto por iteración (`data/users.csv`) y pide productos al azar de `data/products.json`. La corrida aprobada (50 iteraciones, 100 requests) da 150 checks pasados y 0 fallidos, incluido `$.id == "{{products.id}}"`, que confirma que la fila llega con su tipo (17 oct 2026).
 
+**8. Think time y ajustes por flag**
+- [x] `think` en el paso y en `defaults`: fijo (`2s`) o al azar (`1s-3s`), después del paso; ocupa el VU, no cuenta en la latencia; `check` lo ignora y `setup` no lo permite (ADR-008)
+- [x] Flags de ajuste en `validate`, `check`, `approve` y `run`: `--executor`, `--rate`, `--duration`, `--vus`, `--max-vus`, `--start-rate`, `--stages`, `--graceful-stop`, `--think`, `--data`, `--pick`
+- [x] Los ajustes se vuelven a validar y el error dice qué flag falta o sobra; la aprobación los firma; `approve`, `run` y `results.json` los muestran
+- [x] `Overrides` en `lt-core`, para que la GUI y MCP no dependan de la CLI
+- [x] Skill: pausas y ajustes por flag; README con ejemplos
+- [x] Tests: unidades, aplicación de ajustes, firma, el motor con pausas y el binario
+- Listo cuando: en `shop-api`, `login-users --executor constant_vus --vus 5 --duration 20s --think 1s-2s` da ~1,7 iteraciones por segundo (5 VUs, cada iteración con dos pausas de ~1,5 s) en lugar de cientos, y el resumen de `approve` muestra los ajustes. **Pendiente** (la corrida la aprueba y ejecuta una persona).
+
 ## Backlog (sin orden)
 
-Más reglas de diagnóstico, reporte HTML, corrida base fija para CI (`lt compare --baseline`), servidor MCP, importadores (OpenAPI, curl, Postman), GUI con Tauri, HTTP/2, `pick: unique` para datasets, setup por VU, think time, GitHub Action, correlación con métricas del servidor (OTLP, Prometheus), WebSockets, gRPC, Kafka.
+Más reglas de diagnóstico, reporte HTML, corrida base fija para CI (`lt compare --baseline`), servidor MCP, importadores (OpenAPI, curl, Postman), GUI con Tauri, HTTP/2, `pick: unique` para datasets, setup por VU, thresholds por flag, GitHub Action, correlación con métricas del servidor (OTLP, Prometheus), WebSockets, gRPC, Kafka.
 
 ## Decisiones abiertas
 
@@ -147,3 +157,4 @@ Más reglas de diagnóstico, reporte HTML, corrida base fija para CI (`lt compar
 | 15 oct 2026 | `new_connections` descuenta una conexión por VU (el pool crece hasta la concurrencia) | ADR-005 |
 | 15 oct 2026 | `lt compare`: veredicto por paso con magnitud + test de signos sobre segundos emparejados; regresiones salen con código 1 | ADR-006 |
 | 16 oct 2026 | Datasets: `{{dataset.columna}}`, una fila por iteración, CSV como strings y JSON con tipos; se firma el SHA-256 de cada archivo | ADR-007 |
+| 17 oct 2026 | Think time después de cada paso; todo ajuste de una corrida entra por flag y se firma | ADR-008 |

@@ -13,7 +13,7 @@ use serde_json::Value;
 
 use crate::{
     load::{LoadPlan, Segment},
-    units::{HumanDuration, Rate},
+    units::{HumanDuration, Rate, Think},
 };
 
 pub const FORMAT_VERSION: u32 = 1;
@@ -61,6 +61,9 @@ pub struct Defaults {
     pub headers: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout: Option<HumanDuration>,
+    /// Pausa después de cada paso de los flows, como `think` del paso. Un paso con su propio `think` (incluso `0s`) la pisa.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub think: Option<Think>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
@@ -126,6 +129,9 @@ pub struct Step {
     /// Verificaciones de la respuesta. No cortan la iteración: se cuentan en `checks.pass_rate`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub checks: Vec<Check>,
+    /// Pausa después de este paso, como una persona que lee la página: `2s` o al azar en un rango (`1s-3s`). No cuenta en la latencia, pero ocupa el VU. `lt check` la ignora y en `setup` no se permite.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub think: Option<Think>,
 }
 
 /// Una verificación. Elegí un sujeto (`status`, `status_in`, `json`, `header`, `body_contains`, `body_matches`); `json` y `header` llevan además un predicado (`exists`, `equals`, `contains`, `matches`).
@@ -281,7 +287,7 @@ pub enum Executor {
     ConstantVus,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Stage {
     /// Tasa al final de la etapa, por ejemplo `100/s`.
