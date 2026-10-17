@@ -121,7 +121,7 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente. Al cerrar
 - [x] `Overrides` en `lt-core`, para que la GUI y MCP no dependan de la CLI
 - [x] Skill: pausas y ajustes por flag; README con ejemplos
 - [x] Tests: unidades, aplicación de ajustes, firma, el motor con pausas y el binario
-- Listo cuando: en `shop-api`, `login-users --executor constant_vus --vus 5 --duration 20s --think 1s-2s` da ~1,7 iteraciones por segundo (5 VUs, cada iteración con dos pausas de ~1,5 s) en lugar de cientos, y el resumen de `approve` muestra los ajustes. **Pendiente** (la corrida la aprueba y ejecuta una persona).
+- Listo: en `shop-api`, `login-users --executor constant_vus --vus 5 --duration 20s --think 1s-2s` da 1,8 iteraciones por segundo (36 en 20 s; se esperaban ~1,7), 108 checks pasados y 0 fallidos, y el p50 de `login` en 34 ms, igual que sin pausas: la pausa no entra en la latencia. `results.json` guarda los ajustes en `tweaks` y las pausas en `load.think` (17 oct 2026).
 
 ## Backlog (sin orden)
 
