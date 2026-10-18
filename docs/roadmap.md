@@ -66,7 +66,7 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente. Al cerrar
 - [x] `lt validate [--json]` con ruta exacta del error y `todo` pendientes
 - [x] `lt run` → resumen en terminal y `results.json` con p50/p90/p95/p99 por paso
 - [x] Guarda interina (reemplazada en la rebanada 3 por la aprobación firmada)
-- Listo: probado contra `shop-api` (API local de ejemplo, repo aparte). **Pendiente:** una API real del trabajo y TLS contra un servidor real.
+- Listo: probado contra `shop-api` (API local de ejemplo, repo aparte). **Pendiente:** TLS contra un servidor real, con `market-api` (Postgres, JWT, rate limit; repo aparte, 18 oct 2026) subida a un servidor.
 
 **2. Claude diseña**
 - [x] `lt check [--json]` según ADR-004
@@ -143,7 +143,7 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente. Al cerrar
 
 ## Backlog (sin orden)
 
-Más reglas de diagnóstico, corrida base fija para CI (`lt compare --baseline`), servidor MCP, importadores (OpenAPI, curl, Postman), GUI con Tauri, HTTP/2, `pick: unique` para datasets, renovar tokens que vencen durante la carga, GitHub Action, correlación con métricas del servidor (OTLP, Prometheus), WebSockets, gRPC, Kafka.
+Requests multipart (subir archivos; `market-api` tiene `POST /files`), más reglas de diagnóstico, corrida base fija para CI (`lt compare --baseline`), servidor MCP, importadores (OpenAPI, curl, Postman), GUI con Tauri, HTTP/2, `pick: unique` para datasets, renovar tokens que vencen durante la carga, GitHub Action, correlación con métricas del servidor (OTLP, Prometheus), WebSockets, gRPC, Kafka.
 
 ## Decisiones abiertas
 
