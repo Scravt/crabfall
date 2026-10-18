@@ -667,7 +667,9 @@ fn unknown_column(var: &str, columns: &BTreeMap<&str, &[String]>) -> String {
             "`{{{{{var}}}}}`: el dataset `{dataset}` no tiene la columna `{column}` (tiene: {})",
             cols.join(", ")
         ),
-        Some(_) => format!("`{{{{{var}}}}}`: los datasets no se pueden usar en `setup`"),
+        Some(_) => format!(
+            "`{{{{{var}}}}}`: los datasets no se pueden usar en `setup`, que corre una sola vez; para un paso por usuario (como el login), usá `vu_setup`"
+        ),
     }
 }
 
