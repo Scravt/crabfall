@@ -143,7 +143,7 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente. Al cerrar
 
 ## Backlog (sin orden)
 
-Requests multipart (subir archivos; `market-api` tiene `POST /files`), más reglas de diagnóstico, corrida base fija para CI (`lt compare --baseline`), servidor MCP, importadores (OpenAPI, curl, Postman), GUI con Tauri, HTTP/2, `pick: unique` para datasets, renovar tokens que vencen durante la carga, GitHub Action, correlación con métricas del servidor (OTLP, Prometheus), WebSockets, gRPC, Kafka.
+Requests multipart (subir archivos; `market-api` tiene `POST /files`), más reglas de diagnóstico, corrida base fija para CI (`lt compare --baseline`), servidor MCP, importadores (OpenAPI, curl, Postman), GUI con Tauri, HTTP/2, `pick: unique` para datasets, renovar tokens que vencen durante la carga, leer `Retry-After` en los 429 para que el hallazgo diga la ventana del límite, GitHub Action, correlación con métricas del servidor (OTLP, Prometheus), WebSockets, gRPC, Kafka.
 
 ## Decisiones abiertas
 
