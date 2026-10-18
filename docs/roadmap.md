@@ -139,7 +139,7 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente. Al cerrar
 - [x] VUs que fallan quedan afuera con aviso; si fallan todos, se aborta; `lt check` lo corre una vez
 - [x] Firma solo si existe; `results.json`, el resumen de `run`, `approve` y el reporte lo muestran aparte de las métricas de carga
 - [x] Tests: un login por VU con `constant_vus` y con el modelo abierto, el token correcto en cada iteración, falla total, validación y firma
-- Listo cuando: en `shop-api`, `orders-per-user` (3 VUs, uno por usuario de `data/users.csv`) hace 3 logins y después compra en loop, con 0 checks fallidos: cada pedido queda a nombre del usuario de su VU. `check` pasa (17 oct 2026). **Pendiente:** la corrida (la aprueba y ejecuta una persona).
+- Listo: en `shop-api`, `orders-per-user` (3 VUs, uno por usuario de `data/users.csv`) hizo 3 logins antes de la carga (p50 34 ms) y después 22 iteraciones de compra con pausas de 1-2 s: 44 requests, 88 checks pasados y 0 fallidos, así que cada pedido quedó a nombre del usuario de su VU (18 oct 2026).
 
 ## Backlog (sin orden)
 
