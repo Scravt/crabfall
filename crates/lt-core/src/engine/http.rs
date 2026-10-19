@@ -4,7 +4,12 @@ use std::{
     collections::HashMap,
     error::Error as _,
     io,
-    sync::{Arc, Mutex},
+    pin::Pin,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering::Relaxed},
+    },
+    task::{Context, Poll},
     time::{Duration, Instant},
 };
 
@@ -15,13 +20,14 @@ use hyper_util::rt::TokioIo;
 use rustls::pki_types::ServerName;
 use serde::Serialize;
 use tokio::{
-    io::{AsyncRead, AsyncWrite},
+    io::{AsyncRead, AsyncWrite, ReadBuf},
     net::TcpStream,
 };
 use tokio_rustls::TlsConnector;
 
 pub type Body = Full<Bytes>;
-type Conn = SendRequest<Body>;
+/// Una conexión y el lugar donde anota sus bytes.
+type Conn = (SendRequest<Body>, Wire);
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Origin {
@@ -100,12 +106,16 @@ impl Client {
 
     /// Envía un request. `make` se llama de nuevo si una conexión reutilizada
     /// resulta cerrada por el servidor antes de enviar (carrera normal de keep-alive).
+    /// Los bytes que pasan por el socket mientras tanto se anotan en `meter`, incluido el
+    /// handshake si se abre una conexión nueva.
     pub async fn send(
         &self,
         origin: &Origin,
         make: impl Fn() -> Request<Body>,
+        meter: &Arc<Meter>,
     ) -> Result<Response, Failure> {
         if let Some(conn) = self.pooled(origin) {
+            conn.1.attach(meter);
             match self
                 .exchange(origin, conn, make(), Timings::default())
                 .await
@@ -116,7 +126,7 @@ impl Client {
             }
         }
         let mut timings = Timings::default();
-        let conn = self.open(origin, &mut timings).await?;
+        let conn = self.open(origin, &mut timings, meter).await?;
         self.exchange(origin, conn, make(), timings)
             .await
             .map_err(|e| match e {
@@ -131,7 +141,7 @@ impl Client {
         let mut pools = self.pools.lock().unwrap();
         let pool = pools.get_mut(origin)?;
         while let Some(conn) = pool.pop() {
-            if !conn.is_closed() {
+            if !conn.0.is_closed() {
                 return Some(conn);
             }
         }
@@ -141,7 +151,7 @@ impl Client {
     async fn exchange(
         &self,
         origin: &Origin,
-        mut conn: Conn,
+        (mut conn, wire): Conn,
         request: Request<Body>,
         mut timings: Timings,
     ) -> Result<Response, Retry> {
@@ -180,7 +190,7 @@ impl Client {
                 .unwrap()
                 .entry(origin.clone())
                 .or_default()
-                .push(conn);
+                .push((conn, wire));
         }
         Ok(Response {
             status,
@@ -191,7 +201,12 @@ impl Client {
         })
     }
 
-    async fn open(&self, origin: &Origin, timings: &mut Timings) -> Result<Conn, Failure> {
+    async fn open(
+        &self,
+        origin: &Origin,
+        timings: &mut Timings,
+        meter: &Arc<Meter>,
+    ) -> Result<Conn, Failure> {
         let t = Instant::now();
         let host = origin.host.trim_start_matches('[').trim_end_matches(']');
         let addr = tokio::net::lookup_host((host, origin.port))
@@ -212,9 +227,16 @@ impl Client {
             .map_err(|e| Failure::new(classify_io(&e, FailureKind::Connect), e))?;
         tcp.set_nodelay(true).ok();
         timings.connect = Some(t.elapsed());
+        // Por debajo de TLS: cuenta lo que pasa por el cable, con el handshake y el cifrado.
+        let wire = Wire::default();
+        wire.attach(meter);
+        let tcp = Counted {
+            io: tcp,
+            wire: wire.clone(),
+        };
 
         if !origin.https {
-            return handshake(tcp).await;
+            return handshake(tcp, wire).await;
         }
         let t = Instant::now();
         let name = ServerName::try_from(host.to_string())
@@ -225,7 +247,105 @@ impl Client {
             .await
             .map_err(|e| Failure::new(FailureKind::Tls, e))?;
         timings.tls = Some(t.elapsed());
-        handshake(tls).await
+        handshake(tls, wire).await
+    }
+}
+
+/// Bytes de un request: lo que salió y lo que llegó por el socket.
+#[derive(Debug, Default)]
+pub struct Meter {
+    sent: AtomicU64,
+    received: AtomicU64,
+}
+
+impl Meter {
+    pub fn traffic(&self) -> Traffic {
+        Traffic {
+            sent: self.sent.load(Relaxed),
+            received: self.received.load(Relaxed),
+        }
+    }
+}
+
+/// Bytes enviados y recibidos.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct Traffic {
+    pub sent: u64,
+    pub received: u64,
+}
+
+/// El medidor del request que está usando la conexión. HTTP/1.1 manda un request a la vez
+/// por conexión, así que todo lo que pasa por el socket es suyo.
+#[derive(Debug, Clone, Default)]
+struct Wire(Arc<Mutex<Arc<Meter>>>);
+
+impl Wire {
+    fn attach(&self, meter: &Arc<Meter>) {
+        *self.0.lock().unwrap() = meter.clone();
+    }
+
+    fn meter(&self) -> Arc<Meter> {
+        self.0.lock().unwrap().clone()
+    }
+}
+
+/// Un socket que anota los bytes que lee y escribe.
+struct Counted<T> {
+    io: T,
+    wire: Wire,
+}
+
+impl<T: AsyncRead + Unpin> AsyncRead for Counted<T> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        let before = buf.filled().len();
+        let poll = Pin::new(&mut self.io).poll_read(cx, buf);
+        let n = buf.filled().len() - before;
+        if n > 0 {
+            self.wire.meter().received.fetch_add(n as u64, Relaxed);
+        }
+        poll
+    }
+}
+
+impl<T: AsyncWrite + Unpin> AsyncWrite for Counted<T> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        let poll = Pin::new(&mut self.io).poll_write(cx, buf);
+        if let Poll::Ready(Ok(n)) = poll {
+            self.wire.meter().sent.fetch_add(n as u64, Relaxed);
+        }
+        poll
+    }
+
+    fn poll_write_vectored(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bufs: &[io::IoSlice<'_>],
+    ) -> Poll<io::Result<usize>> {
+        let poll = Pin::new(&mut self.io).poll_write_vectored(cx, bufs);
+        if let Poll::Ready(Ok(n)) = poll {
+            self.wire.meter().sent.fetch_add(n as u64, Relaxed);
+        }
+        poll
+    }
+
+    fn is_write_vectored(&self) -> bool {
+        self.io.is_write_vectored()
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.io).poll_flush(cx)
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.io).poll_shutdown(cx)
     }
 }
 
@@ -235,7 +355,7 @@ enum Retry {
     No(Failure),
 }
 
-async fn handshake<T>(io: T) -> Result<Conn, Failure>
+async fn handshake<T>(io: T, wire: Wire) -> Result<Conn, Failure>
 where
     T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
@@ -245,7 +365,7 @@ where
     tokio::spawn(async move {
         let _ = connection.await;
     });
-    Ok(sender)
+    Ok((sender, wire))
 }
 
 fn tls_connector() -> TlsConnector {

@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     engine::{
-        http::{FailureKind, Timings},
+        http::{FailureKind, Timings, Traffic},
         plan::{Plan, StepPlan},
     },
     scenario::Source,
@@ -58,6 +58,11 @@ impl Percentiles {
     }
 }
 
+fn add(total: &mut Traffic, t: Traffic) {
+    total.sent += t.sent;
+    total.received += t.received;
+}
+
 fn round(x: f64) -> f64 {
     (x * 1000.0).round() / 1000.0
 }
@@ -77,6 +82,7 @@ struct CheckCount {
 
 struct StepStats {
     requests: u64,
+    traffic: Traffic,
     statuses: BTreeMap<u16, u64>,
     failures: BTreeMap<FailureKind, u64>,
     error_samples: Vec<String>,
@@ -92,6 +98,7 @@ impl StepStats {
     fn new(step: &StepPlan) -> Self {
         Self {
             requests: 0,
+            traffic: Traffic::default(),
             statuses: BTreeMap::new(),
             failures: BTreeMap::new(),
             error_samples: Vec::new(),
@@ -138,6 +145,7 @@ struct Window {
     dropped: u64,
     requests: u64,
     errors: u64,
+    traffic: Traffic,
     latency: Option<Histogram<u64>>,
     steps: Vec<WindowStep>,
 }
@@ -156,6 +164,7 @@ impl Window {
             dropped: 0,
             requests: 0,
             errors: 0,
+            traffic: Traffic::default(),
             latency: None,
             steps: (0..steps).map(|_| WindowStep::default()).collect(),
         }
@@ -211,6 +220,7 @@ impl Collector {
         at: Instant,
         latency: Duration,
         outcome: Outcome,
+        traffic: Traffic,
     ) -> bool {
         let is_error = match &outcome {
             Outcome::Response { status, .. } => *status >= 400,
@@ -219,6 +229,7 @@ impl Collector {
         let has_latency = matches!(outcome, Outcome::Response { .. });
         let w = self.window(at);
         w.requests += 1;
+        add(&mut w.traffic, traffic);
         w.steps[step].requests += 1;
         if is_error {
             w.errors += 1;
@@ -231,6 +242,7 @@ impl Collector {
 
         let s = &mut self.steps[step];
         s.requests += 1;
+        add(&mut s.traffic, traffic);
         match outcome {
             Outcome::Response { status, timings } => {
                 *s.statuses.entry(status).or_default() += 1;
@@ -295,6 +307,8 @@ impl Collector {
                     dropped: w.dropped,
                     requests: w.requests,
                     errors: w.errors,
+                    bytes_sent: w.traffic.sent,
+                    bytes_received: w.traffic.received,
                     p50,
                     p95,
                     p99,
@@ -392,6 +406,8 @@ impl Collector {
                     tags: p.tags.clone(),
                     source: p.source.clone(),
                     requests: s.requests,
+                    bytes_sent: s.traffic.sent,
+                    bytes_received: s.traffic.received,
                     failed: s.failures.values().sum(),
                     non_2xx,
                     status_codes: s
@@ -475,6 +491,9 @@ pub struct StepResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<Source>,
     pub requests: u64,
+    /// Bytes que pasaron por el socket: headers, body y, con HTTPS, TLS.
+    pub bytes_sent: u64,
+    pub bytes_received: u64,
     /// Requests sin respuesta (error de red, TLS, timeout) o con `extract` fallido.
     pub failed: u64,
     /// Respuestas con código fuera de 2xx.
@@ -511,6 +530,12 @@ pub struct Totals {
     /// Iteraciones iniciadas por segundo durante el período planificado.
     pub iteration_rate: f64,
     pub request_rate: f64,
+    /// Bytes que pasaron por el socket durante la carga (headers, body y, con HTTPS, TLS).
+    pub bytes_sent: u64,
+    pub bytes_received: u64,
+    /// Bytes por segundo, promedio de la corrida.
+    pub send_rate: f64,
+    pub receive_rate: f64,
 }
 
 #[derive(Debug, Serialize)]
@@ -628,6 +653,11 @@ pub struct Point {
     pub requests: u64,
     /// Sin respuesta, con status >= 400 o con `extract` fallido.
     pub errors: u64,
+    /// Bytes enviados y recibidos en la ventana (las corridas viejas no los tienen).
+    #[serde(default)]
+    pub bytes_sent: u64,
+    #[serde(default)]
+    pub bytes_received: u64,
     pub p50: Option<f64>,
     pub p95: Option<f64>,
     pub p99: Option<f64>,

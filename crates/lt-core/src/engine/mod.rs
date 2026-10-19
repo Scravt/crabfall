@@ -27,7 +27,7 @@ use crate::{
         VuSetupResult, VuSetupStep, histogram, record,
     },
 };
-use http::{Body, Client, Failure, FailureKind, Response};
+use http::{Body, Client, Failure, FailureKind, Meter, Response, Traffic};
 use hyper::Request;
 use plan::{Plan, StepPlan, Vars};
 
@@ -58,6 +58,7 @@ struct Sample {
     done: Instant,
     latency: Duration,
     outcome: Outcome,
+    traffic: Traffic,
     /// La respuesta llegó, pero un `extract` falló.
     extract_error: Option<String>,
     checks: Vec<Option<String>>,
@@ -66,6 +67,8 @@ struct Sample {
 /// Resultado de ejecutar un paso: la respuesta (o la falla) y lo extraído.
 pub struct StepRun {
     pub result: Result<Response, Failure>,
+    /// Bytes que pasaron por el socket, aunque no haya llegado respuesta.
+    pub traffic: Traffic,
     pub extracted: Vec<(String, Value)>,
     pub extract_error: Option<String>,
     /// Por check: `None` si pasó, o por qué falló. Vacío si no hubo respuesta.
@@ -92,7 +95,8 @@ pub async fn run_step(
         setup,
         locals,
     });
-    let result = send_step(client, step, request).await;
+    let meter = Arc::new(Meter::default());
+    let result = send_step(client, step, request, &meter).await;
     let mut extracted = Vec::new();
     let mut extract_error = None;
     let mut checks = Vec::new();
@@ -122,6 +126,7 @@ pub async fn run_step(
     }
     StepRun {
         result,
+        traffic: meter.traffic(),
         extracted,
         extract_error,
         checks,
@@ -501,7 +506,7 @@ pub async fn run(plan: Arc<Plan>, progress: Arc<Progress>) -> RunResult {
                 Event::Started(at) => c.record_started(at),
                 Event::Dropped(at) => c.record_dropped(at),
                 Event::Sample(s) => {
-                    let counted = c.record(s.step, s.done, s.latency, s.outcome);
+                    let counted = c.record(s.step, s.done, s.latency, s.outcome, s.traffic);
                     c.record_checks(s.step, &s.checks);
                     if let Some(e) = s.extract_error {
                         c.record_extract_failure(s.step, s.done, e, counted);
@@ -549,6 +554,8 @@ pub async fn run(plan: Arc<Plan>, progress: Arc<Progress>) -> RunResult {
 
     let started = progress.started.load(Relaxed);
     let requests: u64 = steps.iter().map(|s| s.requests).sum();
+    let bytes_sent: u64 = steps.iter().map(|s| s.bytes_sent).sum();
+    let bytes_received: u64 = steps.iter().map(|s| s.bytes_received).sum();
     let totals = Totals {
         planned: dispatch.planned.unwrap_or(started),
         started,
@@ -561,6 +568,10 @@ pub async fn run(plan: Arc<Plan>, progress: Arc<Progress>) -> RunResult {
         checks_failed: steps.iter().flat_map(|s| &s.checks).map(|c| c.failed).sum(),
         iteration_rate: round1(started as f64 / dispatch.schedule_secs),
         request_rate: round1(requests as f64 / elapsed),
+        bytes_sent,
+        bytes_received,
+        send_rate: round1(bytes_sent as f64 / elapsed),
+        receive_rate: round1(bytes_received as f64 / elapsed),
     };
     let scheduler_lag = dispatch.lag.as_ref().and_then(Percentiles::from);
     let mut warnings = warnings(&totals, scheduler_lag.as_ref());
@@ -813,6 +824,7 @@ async fn iteration(shared: &Shared, flow: usize, vu: &HashMap<String, Value>, in
             done,
             latency: done.saturating_duration_since(from),
             outcome,
+            traffic: run.traffic,
             extract_error: run.extract_error,
             checks: run.checks,
         }));
@@ -898,11 +910,12 @@ pub async fn send_step(
     client: &Client,
     step: &StepPlan,
     request: Result<Request<Body>, String>,
+    meter: &Arc<Meter>,
 ) -> Result<Response, Failure> {
     let request = request.map_err(|e| Failure::new(FailureKind::Template, e))?;
     match timeout(
         step.timeout,
-        client.send(&step.origin, || http::duplicate(&request)),
+        client.send(&step.origin, || http::duplicate(&request), meter),
     )
     .await
     {

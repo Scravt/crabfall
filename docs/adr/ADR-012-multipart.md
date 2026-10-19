@@ -41,4 +41,4 @@ request:
 ## Consecuencias
 
 - **A favor:** se pueden cargar endpoints de subida con archivos reales, y los checks pueden comparar el `sha256` que devuelve el servidor con el del archivo.
-- **En contra:** los resultados no registran todavía los bytes enviados por segundo. Con archivos grandes, el ancho de banda del generador puede ser el límite, y hoy eso no se ve directamente.
+- **En contra:** con archivos grandes, el ancho de banda del generador puede ser el límite. Desde el ADR-013 los resultados muestran los bytes por segundo, pero ninguna regla lo diagnostica todavía.

@@ -3,7 +3,7 @@
 Herramienta de pruebas de carga en Rust, pensada para usarse junto a Claude Code:
 Claude diseña el escenario y analiza los resultados; una persona aprueba y ejecuta la carga.
 
-Estado: **rebanada 12 cerrada** (subir archivos). Ya funcionan: diseño con Claude, aprobación firmada, escenarios con `setup`, `extract`, checks y thresholds, tres executors, diagnóstico, comparación de corridas, datasets, pausas entre pasos, ajustes de la corrida por flag, un reporte HTML por corrida, login por usuario virtual (`vu_setup`), renovación de tokens durante la carga (`vu_refresh`) y subida de archivos (`multipart`). Ver el [roadmap](docs/roadmap.md).
+Estado: **rebanada 13** (bytes por segundo). Ya funcionan: diseño con Claude, aprobación firmada, escenarios con `setup`, `extract`, checks y thresholds, tres executors, diagnóstico, comparación de corridas, datasets, pausas entre pasos, ajustes de la corrida por flag, un reporte HTML por corrida, login por usuario virtual (`vu_setup`), renovación de tokens durante la carga (`vu_refresh`), subida de archivos (`multipart`) y bytes enviados y recibidos por segundo. Ver el [roadmap](docs/roadmap.md).
 
 ## Uso
 
@@ -105,6 +105,12 @@ request:
 ```
 
 El archivo se lee una vez y va entero en cada request (hasta 100 MB). El tipo sale de la extensión, o de `content_type`. La aprobación firma su contenido ([ADR-012](docs/adr/ADR-012-multipart.md)).
+
+Con archivos grandes conviene mirar el tráfico: `lt run` muestra los bytes enviados y recibidos por el socket (headers, body y TLS), con el promedio y el pico por segundo, y el reporte los grafica ([ADR-013](docs/adr/ADR-013-trafico.md)):
+
+```
+tráfico      enviados 137.4 MB (2.1 MB/s, pico 4.3 MB/s = 36 Mbit/s)  recibidos 137.6 MB (2.1 MB/s, pico 4.1 MB/s = 34 Mbit/s)
+```
 
 ### Ajustes sin editar el YAML
 

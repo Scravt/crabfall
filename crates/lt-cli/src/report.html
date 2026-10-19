@@ -173,6 +173,13 @@ function ms(v) {
   if (v >= 10) return nf.format(Math.round(v)) + " ms";
   return new Intl.NumberFormat("es-AR", { maximumFractionDigits: 2 }).format(v) + " ms";
 }
+// Como `lt run`: 950 B, 120 KB, 2,4 MB (de a 1024).
+function bytes(n) {
+  if (n == null) return "—";
+  if (n < 1024) return `${Math.round(n)} B`;
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
+  return `${nf.format(Math.round(n / 1024 / 1024 * 10) / 10)} MB`;
+}
 function pct(part, total) { return total ? nf.format((part * 100) / total) + "%" : "—"; }
 function when(iso) {
   const d = new Date(iso);
@@ -227,7 +234,7 @@ const EVIDENCE = {
 // ---------- Gráfico de líneas: un eje, crosshair y tooltip con todas las series ----------
 // series: [{ name, color, values: (number|null)[] }]; bands: [{ from, to, label }]
 // logToggle: ofrece escala logarítmica (la latencia suele cubrir varios órdenes de magnitud).
-function lineChart({ title, subtitle, unit, xs, series, bands = [], height = 220, format = (v) => num(v), logToggle = false }) {
+function lineChart({ title, subtitle, unit, xs, series, bands = [], height = 220, format = (v) => num(v), tick = null, logToggle = false }) {
   const box = el("div", { class: "card chart" });
   // `report.html?log` abre la latencia en escala logarítmica.
   let log = logToggle && new URLSearchParams(location.search).has("log");
@@ -284,7 +291,7 @@ function lineChart({ title, subtitle, unit, xs, series, bands = [], height = 220
     for (const v of yTicks) {
       svg.append(sv("line", { x1: m.l, x2: W - m.r, y1: y(v), y2: y(v), stroke: v === yTicks[0] ? "var(--axis)" : "var(--grid)", "stroke-width": 1, "shape-rendering": "crispEdges" }));
       const label = sv("text", { x: m.l - 8, y: y(v) + 4, "text-anchor": "end", fill: "var(--muted)", "font-size": 11 });
-      label.textContent = unit === "ms" ? msTick(v) : compact(v);
+      label.textContent = unit === "ms" ? msTick(v) : (tick || compact)(v);
       svg.append(label);
     }
     for (const t of xTicks(xmin, xmax, iw)) {
@@ -435,6 +442,7 @@ function tiles() {
     tile("Iteraciones", compact(t.started), `${num(t.iteration_rate)} por segundo`),
     tile("Errores", pct(t.failed || 0, t.requests), `${num(t.failed)} sin respuesta · ${num(t.non_2xx)} no-2xx`),
     tile("Descartadas", pct(t.dropped || 0, t.planned), `${num(t.dropped)} de ${num(t.planned)} planificadas`),
+    t.bytes_sent + t.bytes_received ? tile("Tráfico", `${bytes(t.send_rate + t.receive_rate)}/s`, `enviados ${bytes(t.bytes_sent)} · recibidos ${bytes(t.bytes_received)}`) : null,
     checks ? tile("Checks", pct(t.checks_passed, checks), `${num(t.checks_failed)} fallidos de ${num(checks)}`) : null);
 }
 
@@ -534,6 +542,16 @@ function chartsSection() {
   if (pts.some((p) => p.errors > 0)) {
     grid.append(lineChart({ title: "Errores por segundo", subtitle: "sin respuesta, status ≥ 400 o extract fallido", xs, series: [{ name: "errores", color: "var(--s1)", values: pts.map((p) => p.errors) }] }));
   }
+  if (pts.some((p) => p.bytes_sent || p.bytes_received)) {
+    const perSecond = (v) => `${bytes(v)}/s`;
+    grid.append(lineChart({
+      title: "Tráfico por segundo", subtitle: "bytes por el socket: headers, body y TLS; ×8 para comparar con un enlace en bits",
+      unit: "B/s", format: perSecond, tick: bytes, xs, series: [
+        { name: "enviados", color: "var(--s1)", values: pts.map((p) => p.bytes_sent ?? null) },
+        { name: "recibidos", color: "var(--s2)", values: pts.map((p) => p.bytes_received ?? null) },
+      ], bands: bandsFor(null),
+    }));
+  }
   sec.append(grid);
 
   const steps = (run.series && run.series.steps) || [];
@@ -557,10 +575,11 @@ function chartsSection() {
 function rawData(pts) {
   return el("details", {}, el("summary", {}, "Ver los datos por segundo"),
     el("div", { class: "card scroll", style: "margin-top:8px" }, el("table", {},
-      el("thead", {}, el("tr", {}, ["segundo", "iniciadas", "descartadas", "requests", "errores", "p50", "p95", "p99"].map((h) => el("th", {}, h)))),
+      el("thead", {}, el("tr", {}, ["segundo", "iniciadas", "descartadas", "requests", "errores", "p50", "p95", "p99", "enviados", "recibidos"].map((h) => el("th", {}, h)))),
       el("tbody", {}, pts.map((p) => el("tr", {},
         el("td", {}, p.t), el("td", {}, num(p.started)), el("td", {}, num(p.dropped)), el("td", {}, num(p.requests)),
-        el("td", {}, num(p.errors)), el("td", {}, ms(p.p50)), el("td", {}, ms(p.p95)), el("td", {}, ms(p.p99))))))));
+        el("td", {}, num(p.errors)), el("td", {}, ms(p.p50)), el("td", {}, ms(p.p95)), el("td", {}, ms(p.p99)),
+        el("td", {}, bytes(p.bytes_sent)), el("td", {}, bytes(p.bytes_received))))))));
 }
 
 function vuSetupSection() {
@@ -599,7 +618,8 @@ function sessionSection(title, state, note, steps) {
 function stepsTable() {
   const steps = run.steps || [];
   if (!steps.length) return null;
-  const cols = ["paso", "requests", "fallas", "no-2xx", "p50", "p90", "p95", "p99", "p99.9", "max"];
+  const cols = ["paso", "requests", "fallas", "no-2xx", "p50", "p90", "p95", "p99", "p99.9", "max", "bytes/req"];
+  const perRequest = (total, n) => (total == null || !n ? "—" : bytes(total / n));
   return el("section", {}, el("h2", {}, "Pasos"), el("div", { class: "card scroll" }, el("table", {},
     el("thead", {}, el("tr", {}, cols.map((h) => el("th", {}, h)))),
     el("tbody", {}, steps.map((s) => {
@@ -608,7 +628,8 @@ function stepsTable() {
       return el("tr", { title: codes ? `códigos: ${codes}` : null },
         el("td", {}, el("div", {}, s.name), el("div", { class: "mono muted" }, `${s.method} ${s.url}`)),
         el("td", {}, num(s.requests)), el("td", {}, num(s.failed)), el("td", {}, num(s.non_2xx)),
-        el("td", {}, ms(l.p50)), el("td", {}, ms(l.p90)), el("td", {}, ms(l.p95)), el("td", {}, ms(l.p99)), el("td", {}, ms(l.p999)), el("td", {}, ms(l.max)));
+        el("td", {}, ms(l.p50)), el("td", {}, ms(l.p90)), el("td", {}, ms(l.p95)), el("td", {}, ms(l.p99)), el("td", {}, ms(l.p999)), el("td", {}, ms(l.max)),
+        el("td", { title: "enviados / recibidos por request" }, `${perRequest(s.bytes_sent, s.requests)} / ${perRequest(s.bytes_received, s.requests)}`));
     })))));
 }
 
