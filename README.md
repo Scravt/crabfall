@@ -150,7 +150,9 @@ cargo test --workspace
 cargo run --release -p lab-server -- --port 3999   # servidor de laboratorio
 ```
 
-Para probar contra una API más realista: [shop-api](../shop-api) (repo aparte), con escenarios en su `.crabfall/`.
+El CI (`.github/workflows/ci.yml`) corre `cargo fmt --check` y `clippy` en Linux, y los tests en Linux y Windows, en cada push a `main` o `dev` y en cada pull request. Los warnings cuentan como errores.
+
+Para probar contra APIs más realistas: [shop-api](../shop-api) (local, con problemas de performance plantados) y [market-api](../market-api) (Postgres, JWT, rate limit y uploads), repos aparte con escenarios en su `.crabfall/`.
 
 ## Documentación
 
