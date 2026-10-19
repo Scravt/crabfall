@@ -20,10 +20,10 @@ request:
 ```
 
 - **Campos:** cada clave es el nombre de un campo. Un string es un campo de texto y admite `{{variables}}`.
-- **Archivos:** un objeto con `file`, que se toma relativo a `.loadtest/` como los datasets, sin rutas absolutas ni `..`.
+- **Archivos:** un objeto con `file`, que se toma relativo a `.crabfall/` como los datasets, sin rutas absolutas ni `..`.
   - `filename` es opcional, por defecto el nombre del archivo, y admite variables.
   - `content_type` es opcional y por defecto sale de la extensión: los tipos comunes, y si no, `application/octet-stream`.
-- **Exclusiones:** excluye a `json` y a `body`. El `content-type` del request lo pone lt, porque lleva el boundary, así que definirlo a mano es un error de validación.
+- **Exclusiones:** excluye a `json` y a `body`. El `content-type` del request lo pone Crabfall, porque lleva el boundary, así que definirlo a mano es un error de validación.
 - **Formato:** el body sigue la RFC 7578. En los nombres, las comillas y los saltos de línea se codifican como en los navegadores (`%22`, `%0D`, `%0A`).
 
 ### Los archivos

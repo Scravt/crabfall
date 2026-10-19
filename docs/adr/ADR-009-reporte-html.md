@@ -4,13 +4,13 @@ Estado: **aceptado** · 17 oct 2026
 
 ## Contexto
 
-Los resultados se leen en la terminal (`lt run`, `lt findings`, `lt compare`) o en `results.json`. Para mirar la forma de una corrida (cuándo se rompe, qué tan rápido sube la latencia, si mejoró contra la anterior) hace falta un gráfico. También hace falta algo que se pueda pasar a otra persona sin que tenga `lt` instalado. Además, es el primer paso visual antes de la GUI (principio 4): lo que se resuelva acá se reusa allá.
+Los resultados se leen en la terminal (`crabfall run`, `crabfall findings`, `crabfall compare`) o en `results.json`. Para mirar la forma de una corrida (cuándo se rompe, qué tan rápido sube la latencia, si mejoró contra la anterior) hace falta un gráfico. También hace falta algo que se pueda pasar a otra persona sin que tenga `crabfall` instalado. Además, es el primer paso visual antes de la GUI (principio 4): lo que se resuelva acá se reusa allá.
 
 ## Decisión
 
 ### Un archivo por corrida, autocontenido
 
-- **Cuándo se genera:** `lt run` escribe `.loadtest/runs/<id>/report.html` al lado de `results.json`. `lt report [corrida] [--open]` lo regenera para cualquier corrida, por ejemplo una vieja, o después de actualizar `lt`.
+- **Cuándo se genera:** `crabfall run` escribe `.crabfall/runs/<id>/report.html` al lado de `results.json`. `crabfall report [corrida] [--open]` lo regenera para cualquier corrida, por ejemplo una vieja, o después de actualizar `crabfall`.
 - **Autocontenido:** es un solo archivo, sin CDN ni recursos externos. Se abre sin conexión y se puede adjuntar o mandar tal cual. Los datos van dentro, en un `<script type="application/json">`, y se escapa `<` para que ningún valor (un body, un mensaje de error del servidor) pueda cerrar el tag.
 - **Seguridad:** todo el texto que viene de la corrida entra al DOM con `textContent`, nunca como HTML.
 - **Comparación:** si hay una corrida anterior del mismo escenario y entorno, el reporte incluye la comparación (ADR-006). Con la misma carga, también un gráfico del p95 de las dos corridas, segundo a segundo.
@@ -38,5 +38,5 @@ Un archivo estático no necesita nada corriendo, se versiona o se adjunta, y no 
 
 ## Consecuencias
 
-- **A favor:** cada corrida tiene su vista gráfica sin pasos extra. Se comparte un archivo. La plantilla (`crates/lt-cli/src/report.html`) es HTML y JavaScript sin dependencias, reutilizable en la GUI.
+- **A favor:** cada corrida tiene su vista gráfica sin pasos extra. Se comparte un archivo. La plantilla (`crates/crabfall-cli/src/report.html`) es HTML y JavaScript sin dependencias, reutilizable en la GUI.
 - **En contra:** el archivo crece con la duración (~1 KB por segundo de corrida). La plantilla está en JavaScript sin tipos: los tests de Rust verifican que los datos entren bien, y la interacción se verificó a mano con Edge headless (captura y mouse simulado por el protocolo de DevTools).

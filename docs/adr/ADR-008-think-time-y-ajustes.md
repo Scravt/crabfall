@@ -27,9 +27,9 @@ flows:
 - **Valor:** `2s` es una pausa fija. `1s-3s` es una pausa al azar en ese rango, con distribución uniforme.
 - **Cuándo:** la pausa va **después** del paso, incluido el último, porque es lo que hace una persona que lee la página antes de seguir.
 - **Ocupa el VU, pero no cuenta en la latencia.** El paso siguiente mide desde que termina la pausa. En el modelo abierto, la pausa cuenta para `max_vus`: el skill lo tiene en cuenta al calcularlo.
-- **Dónde no aplica:** en `setup` no se permite, porque corre una sola vez. `lt check` ignora las pausas, para que el smoke check siga siendo rápido.
+- **Dónde no aplica:** en `setup` no se permite, porque corre una sola vez. `crabfall check` ignora las pausas, para que el smoke check siga siendo rápido.
 - **Firma:** la aprobación firma la pausa de cada paso. Solo aparece en el plan canónico si el paso tiene pausa, así que las aprobaciones de antes siguen valiendo.
-- **Comparación:** `results.json` guarda las pausas en `load.think`. Así, `lt compare` no empareja segundo a segundo dos corridas con pausas distintas, porque la carga ofrecida no es la misma.
+- **Comparación:** `results.json` guarda las pausas en `load.think`. Así, `crabfall compare` no empareja segundo a segundo dos corridas con pausas distintas, porque la carga ofrecida no es la misma.
 
 ### Ajustes por flag
 
@@ -48,7 +48,7 @@ Criterio: entra por flag todo lo que tendría sentido en un panel de personaliza
 - **`--executor`** descarta los campos de `load` que no le aplican. Por ejemplo, `--executor constant_vus` saca `rate` y `max_vus` y conserva `duration`.
 - **Firma:** como cambian el plan, la aprobación los firma igual que a `--var`. Hay que pasar los mismos flags a `approve` y a `run`; si no coinciden, `run` rechaza y muestra el diff del plan. La aprobación guarda además, sin firmar, los flags con los que se aprobó. Si `run` llega con otros, muestra los dos juegos y los comandos para correr lo aprobado o aprobar lo nuevo. Ese campo es solo una ayuda: lo que autoriza sigue siendo el hash.
 - **Visibilidad:** el resumen de `approve` los muestra en la línea `Ajustes`, para que quien aprueba vea que la corrida no es exactamente el YAML. `run` los muestra en el encabezado y `results.json` los guarda en `tweaks`.
-- **En el código:** `lt-core` tiene el tipo `Overrides` (`overrides.rs`) y la CLI solo parsea. Una GUI, o un servidor MCP, usan el mismo tipo sin pasar por la CLI.
+- **En el código:** `crabfall-core` tiene el tipo `Overrides` (`overrides.rs`) y la CLI solo parsea. Una GUI, o un servidor MCP, usan el mismo tipo sin pasar por la CLI.
 
 ### Fuera por ahora
 

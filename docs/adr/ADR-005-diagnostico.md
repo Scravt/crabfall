@@ -13,7 +13,7 @@ Dos capas, siempre separadas:
 1. **El motor detecta, con reglas deterministas**, sobre lo medido: series por segundo (globales y por paso), métricas por paso y totales. Cada hallazgo trae `id`, severidad, título con números, paso y `source`, ventana de tiempo, `evidence` y causas probables elegidas según la señal (un 429 no sugiere lo mismo que un timeout). Mismos datos, mismos hallazgos.
 2. **Claude explica**, yendo de `source` al código, y presenta lo que propone como **hipótesis**, separada de lo medido (skill, sección "Analizar resultados").
 
-### Reglas iniciales (`crates/lt-core/src/diagnose.rs`)
+### Reglas iniciales (`crates/crabfall-core/src/diagnose.rs`)
 
 | id | Cuándo | Señal |
 | --- | --- | --- |
@@ -30,12 +30,12 @@ La "base" es la mediana del p95 de las primeras ventanas con datos. El paso "cul
 ### Salida
 
 - `results.json` incluye `series` y `findings`.
-- `lt run` imprime los hallazgos al final.
-- `lt findings [id] [--json]`: el resumen para agentes (totales, thresholds, hallazgos y métricas por paso, sin series ni cuerpos).
+- `crabfall run` imprime los hallazgos al final.
+- `crabfall findings [id] [--json]`: el resumen para agentes (totales, thresholds, hallazgos y métricas por paso, sin series ni cuerpos).
 
 ## Validación
 
-`crates/lt-core/tests/diagnose.rs` levanta un servidor con cada patología y verifica que se dispare el hallazgo correcto: pool chico (quiebre en ~200 it/s), rate limiter a 150/s (429 desde ~150 it/s), trabajo que crece con cada request, una de cada 25 requests lenta, `Connection: close` en cada respuesta, y tasa constante por encima de la capacidad. Una rampa sana no dispara nada grave. Un servidor lento con keep-alive no dispara `new_connections` aunque el pool abra decenas de conexiones. Los umbrales están en constantes al principio del módulo para ajustarlos con el laboratorio.
+`crates/crabfall-core/tests/diagnose.rs` levanta un servidor con cada patología y verifica que se dispare el hallazgo correcto: pool chico (quiebre en ~200 it/s), rate limiter a 150/s (429 desde ~150 it/s), trabajo que crece con cada request, una de cada 25 requests lenta, `Connection: close` en cada respuesta, y tasa constante por encima de la capacidad. Una rampa sana no dispara nada grave. Un servidor lento con keep-alive no dispara `new_connections` aunque el pool abra decenas de conexiones. Los umbrales están en constantes al principio del módulo para ajustarlos con el laboratorio.
 
 ## Consecuencias
 

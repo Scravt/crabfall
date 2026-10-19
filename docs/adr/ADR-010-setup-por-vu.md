@@ -57,7 +57,7 @@ En el modelo abierto, el semáforo de concurrencia pasa a ser un **pool de VUs**
 
 - **Si falla en algunos VUs:** sin respuesta, status ≥ 400, `extract` o check fallido. Esos VUs quedan afuera, la carga corre con los demás y un aviso dice cuántos.
 - **Si falla en todos:** la corrida se aborta con el primer motivo, como pasa con `setup`.
-- **`lt check`:** corre `vu_setup` una vez, para un VU, y después los flows con sus variables.
+- **`crabfall check`:** corre `vu_setup` una vez, para un VU, y después los flows con sus variables.
 
 ### Firma y resultados
 

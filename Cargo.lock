@@ -525,6 +525,51 @@ dependencies = [
 ]
 
 [[package]]
+name = "crabfall-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "crabfall-core",
+ "jiff",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "crabfall-core"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "bytes",
+ "csv",
+ "fastrand",
+ "getrandom 0.4.3",
+ "hdrhistogram",
+ "hmac",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "indexmap",
+ "keyring",
+ "percent-encoding",
+ "regex",
+ "rustls",
+ "rustls-native-certs",
+ "schemars",
+ "serde",
+ "serde-saphyr",
+ "serde_json",
+ "serde_path_to_error",
+ "sha2",
+ "similar",
+ "tokio",
+ "tokio-rustls",
+ "url",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "crc32fast"
 version = "1.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1229,7 +1274,7 @@ dependencies = [
 
 [[package]]
 name = "lab-server"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "axum",
  "clap",
@@ -1257,7 +1302,7 @@ checksum = "47d9d19d1d6efa0109d2f65ff4c85cddd50bd572e5a00127ab10987290bcefae"
 
 [[package]]
 name = "load-spike"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "bytes",
  "clap",
@@ -1283,51 +1328,6 @@ name = "log"
 version = "0.4.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
-
-[[package]]
-name = "lt-cli"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "clap",
- "jiff",
- "lt-core",
- "serde_json",
- "tokio",
-]
-
-[[package]]
-name = "lt-core"
-version = "0.0.1"
-dependencies = [
- "axum",
- "bytes",
- "csv",
- "fastrand",
- "getrandom 0.4.3",
- "hdrhistogram",
- "hmac",
- "http-body-util",
- "hyper",
- "hyper-util",
- "indexmap",
- "keyring",
- "percent-encoding",
- "regex",
- "rustls",
- "rustls-native-certs",
- "schemars",
- "serde",
- "serde-saphyr",
- "serde_json",
- "serde_path_to_error",
- "sha2",
- "similar",
- "tokio",
- "tokio-rustls",
- "url",
- "windows-sys 0.61.2",
-]
 
 [[package]]
 name = "matchit"

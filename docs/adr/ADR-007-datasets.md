@@ -27,7 +27,7 @@ flows:
         request: { method: GET, url: "/products/{{products.id}}" }
 ```
 
-- `file` es relativo a `.loadtest/`. Se aceptan dos formatos:
+- `file` es relativo a `.crabfall/`. Se aceptan dos formatos:
   - **`.csv` con encabezado.** Todas las celdas son strings: inferir tipos rompe valores como `01234`.
   - **`.json` con un arreglo de objetos.** Conserva los tipos. Las columnas son las claves del primer objeto, y todas las filas tienen que tener exactamente esas claves.
 - Los nombres de columna y de dataset usan letras, números y `_`. El dataset no puede llamarse `env`, porque `{{env.X}}` ya son los secretos.
@@ -37,7 +37,7 @@ flows:
 
 ### Una fila por iteración
 
-Cada iteración toma **una** fila de cada dataset que usa su flow y la ve en todos sus pasos como `{{dataset.columna}}`. Así el email y la contraseña siempre son de la misma fila. Un flow que no usa un dataset no consume filas, así que la secuencia no se saltea filas por culpa de otros flows. `lt check` usa la primera fila con `sequential`.
+Cada iteración toma **una** fila de cada dataset que usa su flow y la ve en todos sus pasos como `{{dataset.columna}}`. Así el email y la contraseña siempre son de la misma fila. Un flow que no usa un dataset no consume filas, así que la secuencia no se saltea filas por culpa de otros flows. `crabfall check` usa la primera fila con `sequential`.
 
 La sintaxis `{{dataset.columna}}` no choca con nada: los nombres de variable y de `extract` no llevan puntos, y `env.` ya está tomado por los secretos. Con un valor que es exactamente `"{{users.id}}"`, el tipo se conserva como en cualquier variable (ADR-002 §6).
 
@@ -47,13 +47,13 @@ La sintaxis `{{dataset.columna}}` no choca con nada: los nombres de variable y d
 
 ### La aprobación firma el contenido
 
-Cambiar el archivo cambia el tráfico: otros usuarios, otros IDs. Por eso el plan canónico (ADR-004) incluye, por cada dataset, `name`, `file`, `pick` y el **SHA-256 del archivo**, pero no su contenido, que puede ser grande. Si se edita el CSV, `lt run` rechaza la aprobación igual que si se editara el escenario. La clave `data` solo aparece en el plan canónico cuando hay datasets, para no invalidar las aprobaciones de escenarios que no los usan.
+Cambiar el archivo cambia el tráfico: otros usuarios, otros IDs. Por eso el plan canónico (ADR-004) incluye, por cada dataset, `name`, `file`, `pick` y el **SHA-256 del archivo**, pero no su contenido, que puede ser grande. Si se edita el CSV, `crabfall run` rechaza la aprobación igual que si se editara el escenario. La clave `data` solo aparece en el plan canónico cuando hay datasets, para no invalidar las aprobaciones de escenarios que no los usan.
 
-El resumen de `lt approve` y el encabezado de `lt run` muestran cada dataset con su archivo, cantidad de filas y `pick`.
+El resumen de `crabfall approve` y el encabezado de `crabfall run` muestran cada dataset con su archivo, cantidad de filas y `pick`.
 
 ### Errores
 
-`lt validate` (con proyecto), `lt check`, `lt approve` y `lt run` leen los archivos y reportan:
+`crabfall validate` (con proyecto), `crabfall check`, `crabfall approve` y `crabfall run` leen los archivos y reportan:
 
 - archivo inexistente, sin filas, con una extensión que no es `.csv` ni `.json`, o que no es UTF-8;
 - columnas repetidas o con nombres inválidos, y filas con más o menos celdas (con el número de fila);
@@ -71,4 +71,4 @@ El resumen de `lt approve` y el encabezado de `lt run` muestran cada dataset con
 ## Consecuencias
 
 - **A favor:** escenarios con usuarios e IDs reales sin lógica en el YAML. La firma cubre los datos. Los errores nombran la columna y la fila.
-- **En contra:** el archivo entero se carga en memoria (está bien hasta decenas de MB). Los datos de prueba suelen tener credenciales de usuarios de prueba: si no se quieren versionar, hay que agregar el archivo al `.gitignore` del proyecto. `lt` no lo decide.
+- **En contra:** el archivo entero se carga en memoria (está bien hasta decenas de MB). Los datos de prueba suelen tener credenciales de usuarios de prueba: si no se quieren versionar, hay que agregar el archivo al `.gitignore` del proyecto. `crabfall` no lo decide.
