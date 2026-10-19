@@ -139,6 +139,21 @@ pub async fn check(plan: &Plan) -> Result<CheckResult, String> {
         }
     }
 
+    // vu_refresh: una vez, después de los flows, con las variables del VU.
+    let mut refresh_failed = vu_failed;
+    for step in plan.refresh_steps() {
+        if refresh_failed || steps.len() >= MAX_REQUESTS {
+            skipped.push(step.name.clone());
+            continue;
+        }
+        let (mut result, extracted) = check_step(&client, plan, step, &setup_vars, &vu_vars).await;
+        // Sin pasos propios repite los de `vu_setup`: que se vea que es la renovación.
+        result.flow = "vu_refresh".into();
+        refresh_failed = !result.ok;
+        vu_vars.extend(extracted);
+        steps.push(result);
+    }
+
     Ok(CheckResult {
         ok: steps.iter().all(|s| s.ok),
         steps,

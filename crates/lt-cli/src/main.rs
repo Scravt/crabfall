@@ -92,6 +92,9 @@ pub struct Tweaks {
     /// Pausa después de cada paso de los flows, fija (2s) o al azar (1s-3s); 0s la quita. Pisa a la del escenario.
     #[arg(long, value_name = "1s-3s")]
     think: Option<lt_core::units::Think>,
+    /// Cada cuánto renueva la sesión cada VU (4m), para tokens que vencen durante la carga. Sin vu_refresh en el escenario, repite el vu_setup (login de nuevo).
+    #[arg(long, value_name = "4m")]
+    refresh_every: Option<lt_core::units::HumanDuration>,
     /// Otro archivo para un dataset, relativo a .loadtest/. Se puede repetir.
     #[arg(long = "data", value_name = "DATASET=ARCHIVO", value_parser = lt_core::overrides::parse_pair::<String>)]
     data: Vec<(String, String)>,
@@ -115,6 +118,7 @@ impl Tweaks {
             stages: self.stages.clone(),
             graceful_stop: self.graceful_stop,
             think: self.think,
+            refresh_every: self.refresh_every,
             data: self.data.clone(),
             pick: self.pick.clone(),
             thresholds: self.thresholds.clone(),

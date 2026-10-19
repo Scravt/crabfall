@@ -596,6 +596,7 @@ mod tests {
             aborted: None,
             setup: vec![],
             vu_setup: None,
+            vu_refresh: None,
             totals: Totals::default(),
             thresholds: vec![],
             scheduler_lag_ms: Some(lag),

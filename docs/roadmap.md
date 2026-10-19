@@ -141,9 +141,17 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente. Al cerrar
 - [x] Tests: un login por VU con `constant_vus` y con el modelo abierto, el token correcto en cada iteración, falla total, validación y firma
 - Listo: en `shop-api`, `orders-per-user` (3 VUs, uno por usuario de `data/users.csv`) hizo 3 logins antes de la carga (p50 34 ms) y después 22 iteraciones de compra con pausas de 1-2 s: 44 requests, 88 checks pasados y 0 fallidos, así que cada pedido quedó a nombre del usuario de su VU (18 oct 2026).
 
+**11. Renovación de sesión**
+- [x] `vu_refresh:` en la raíz (`every` y `steps` opcionales): renueva la sesión de cada VU antes de que venza el token; sin `steps`, repite `vu_setup` (ADR-011)
+- [x] En segundo plano, esté el VU libre o en una iteración: la iteración en curso sigue con el token anterior y la siguiente toma el nuevo, así renovar no le saca capacidad a la carga
+- [x] Un VU que no puede renovar deja de iterar, con aviso; `lt check` corre la renovación una vez
+- [x] `--refresh-every` por flag; firma solo si existe; `results.json`, `approve`, el resumen de `run` y el reporte lo muestran aparte
+- [x] Tests: renovación en los dos modelos (también los VUs libres del pool), el token nuevo en las iteraciones siguientes, falla de la renovación, validación, firma y flag
+- Listo cuando: en `market-api`, con tokens de 60 s, `shop-per-user --duration 2m` empieza a recibir 401 a mitad de la corrida, y `session-refresh` (lo mismo con `vu_refresh` cada 45 s) termina los 2 minutos con 0 checks fallidos. **Pendiente:** las dos corridas (las aprueba y ejecuta una persona).
+
 ## Backlog (sin orden)
 
-Requests multipart (subir archivos; `market-api` tiene `POST /files`), más reglas de diagnóstico, corrida base fija para CI (`lt compare --baseline`), servidor MCP, importadores (OpenAPI, curl, Postman), GUI con Tauri, HTTP/2, `pick: unique` para datasets, renovar tokens que vencen durante la carga, leer `Retry-After` en los 429 para que el hallazgo diga la ventana del límite, GitHub Action, correlación con métricas del servidor (OTLP, Prometheus), WebSockets, gRPC, Kafka.
+Requests multipart (subir archivos; `market-api` tiene `POST /files`), más reglas de diagnóstico, corrida base fija para CI (`lt compare --baseline`), servidor MCP, importadores (OpenAPI, curl, Postman), GUI con Tauri, HTTP/2, `pick: unique` para datasets, leer `expires_in` para elegir solo cuándo renovar, leer `Retry-After` en los 429 para que el hallazgo diga la ventana del límite, GitHub Action, correlación con métricas del servidor (OTLP, Prometheus), WebSockets, gRPC, Kafka.
 
 ## Decisiones abiertas
 
@@ -178,3 +186,4 @@ Requests multipart (subir archivos; `market-api` tiene `POST /files`), más regl
 | 17 oct 2026 | Think time después de cada paso; todo ajuste de una corrida entra por flag y se firma | ADR-008 |
 | 17 oct 2026 | Reporte HTML autocontenido por corrida, generado por `lt run` | ADR-009 |
 | 17 oct 2026 | `vu_setup`: cada VU hace su login antes de la carga; el modelo abierto reparte VUs desde un pool | ADR-010 |
+| 18 oct 2026 | `vu_refresh`: renovación en segundo plano, sin sacar al VU del pool; si falla, el VU deja de iterar | ADR-011 |

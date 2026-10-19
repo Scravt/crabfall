@@ -7,7 +7,7 @@
 use std::str::FromStr;
 
 use crate::{
-    scenario::{Executor, Pick, Scenario, Stage, Threshold},
+    scenario::{Executor, Pick, Scenario, Stage, Threshold, VuRefresh},
     threshold::to_flag,
     units::{HumanDuration, Rate, Think},
     validate::{Issue, check_scenario, load_fields},
@@ -25,6 +25,8 @@ pub struct Overrides {
     pub graceful_stop: Option<HumanDuration>,
     /// Pausa para todos los pasos de los flows; reemplaza la de cada paso y la de `defaults`.
     pub think: Option<Think>,
+    /// Cada cuánto renueva la sesión cada VU. Sin `vu_refresh` en el escenario, crea uno que repite `vu_setup`.
+    pub refresh_every: Option<HumanDuration>,
     /// Otro archivo para un dataset: (nombre, archivo).
     pub data: Vec<(String, String)>,
     /// Otro `pick` para un dataset.
@@ -81,6 +83,18 @@ impl Overrides {
             }
         }
 
+        if let Some(every) = self.refresh_every {
+            match &mut s.vu_refresh {
+                Some(r) => r.every = every,
+                None => {
+                    s.vu_refresh = Some(VuRefresh {
+                        every,
+                        steps: vec![],
+                    })
+                }
+            }
+        }
+
         let available = s.data.keys().cloned().collect::<Vec<_>>().join(", ");
         for (name, file) in &self.data {
             match s.data.get_mut(name) {
@@ -133,6 +147,7 @@ impl Overrides {
         push("max-vus", self.max_vus.map(|v| v.to_string()));
         push("graceful-stop", self.graceful_stop.map(|d| d.to_string()));
         push("think", self.think.map(|t| t.to_string()));
+        push("refresh-every", self.refresh_every.map(|d| d.to_string()));
         for (name, file) in &self.data {
             push("data", Some(format!("{name}={file}")));
         }
@@ -166,7 +181,7 @@ fn no_dataset(flag: &str, name: &str, available: &str) -> Issue {
     }
 }
 
-/// Qué flag corrige un campo de `load`.
+/// Qué flag corrige un campo.
 fn flag_for(path: &str) -> Option<&'static str> {
     Some(match path {
         "load.rate" => "--rate",
@@ -177,6 +192,7 @@ fn flag_for(path: &str) -> Option<&'static str> {
         "load.vus" => "--vus",
         "load.graceful_stop" => "--graceful-stop",
         "load.executor" => "--executor",
+        "vu_refresh" | "vu_refresh.every" => "--refresh-every",
         _ => return None,
     })
 }
@@ -313,6 +329,32 @@ load:
                 "--pick users=random",
                 "--threshold http.latency.p95<300ms"
             ]
+        );
+    }
+
+    #[test]
+    fn refresh_every_creates_or_changes_vu_refresh() {
+        let with_setup = YAML.replacen(
+            "flows:",
+            "vu_setup:\n  - name: login\n    request: { method: POST, url: /login }\nflows:",
+            1,
+        );
+        let o = Overrides {
+            refresh_every: Some("4m".parse().unwrap()),
+            ..Default::default()
+        };
+        let mut s = parse_scenario(&with_setup).unwrap();
+        assert!(o.apply(&mut s).is_empty());
+        let r = s.vu_refresh.unwrap();
+        assert_eq!((r.every.to_string(), r.steps.len()), ("4m".into(), 0));
+        assert_eq!(o.describe(), ["--refresh-every 4m"]);
+
+        // Sin vu_setup no hay sesión que renovar: el error dice qué flag sacar.
+        let mut s = scenario();
+        let issues = o.apply(&mut s);
+        assert!(
+            issues[0].message.ends_with("(sacá --refresh-every)"),
+            "{issues:?}"
         );
     }
 

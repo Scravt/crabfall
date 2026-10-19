@@ -3,7 +3,7 @@
 Herramienta de pruebas de carga en Rust, pensada para usarse junto a Claude Code:
 Claude diseña el escenario y analiza los resultados; una persona aprueba y ejecuta la carga.
 
-Estado: **rebanadas 1 a 10 cerradas** (la última: setup por VU). Ya funcionan: diseño con Claude, aprobación firmada, escenarios con `setup`, `extract`, checks y thresholds, tres executors, diagnóstico, comparación de corridas, datasets, pausas entre pasos, ajustes de la corrida por flag, un reporte HTML por corrida y login por usuario virtual (`vu_setup`). Ver el [roadmap](docs/roadmap.md).
+Estado: **rebanada 11** (renovación de sesión). Ya funcionan: diseño con Claude, aprobación firmada, escenarios con `setup`, `extract`, checks y thresholds, tres executors, diagnóstico, comparación de corridas, datasets, pausas entre pasos, ajustes de la corrida por flag, un reporte HTML por corrida, login por usuario virtual (`vu_setup`) y renovación de tokens durante la carga (`vu_refresh`). Ver el [roadmap](docs/roadmap.md).
 
 ## Uso
 
@@ -80,6 +80,19 @@ defaults:
 
 Se prepara un VU por cada `vus` (o `max_vus`); el resumen de `lt approve` muestra cuántos logins son ([ADR-010](docs/adr/ADR-010-setup-por-vu.md)).
 
+Si el token vence durante la carga, `vu_refresh` lo renueva en segundo plano, sin cortar iteraciones ni sumarse a sus métricas. Con un refresh token:
+
+```yaml
+vu_refresh:
+  every: 4m             # menos que la vida del token
+  steps:
+    - name: refresh
+      request: { method: POST, url: /auth/refresh, json: { refresh_token: "{{refresh_token}}" } }
+      extract: { token: { json: $.access_token }, refresh_token: { json: $.refresh_token } }
+```
+
+Sin `steps`, repite `vu_setup` (login de nuevo). `--refresh-every 4m` lo ajusta por flag. Un VU que no puede renovar deja de iterar ([ADR-011](docs/adr/ADR-011-renovacion-de-sesion.md)).
+
 ### Ajustes sin editar el YAML
 
 `validate`, `check`, `approve` y `run` aceptan flags que pisan al escenario para esa corrida. Son lo que tendría un panel de personalización:
@@ -89,6 +102,7 @@ lt run checkout --env local --rate 100/s --duration 2m --think 1s-3s
 lt run checkout --executor constant_vus --vus 20 --duration 5m
 lt run checkout --executor ramping_rate --stages 50/s:1m,200/s:3m,0/s:30s
 lt run login-users --data users=data/otros.csv --pick users=random
+lt run shop-per-user --duration 10m --refresh-every 4m
 lt run checkout --threshold "http.latency.p95<300ms" --threshold "http.error_rate<1%"
 ```
 

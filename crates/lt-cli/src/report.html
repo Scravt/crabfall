@@ -566,14 +566,27 @@ function vuSetupSection() {
   const v = run.vu_setup;
   if (!v) return null;
   const state = v.failed ? pill("serious", `${v.failed} de ${v.vus} VUs quedaron afuera`) : pill("good", `${v.vus} VUs listos`);
+  const took = v.duration_ms < 1000 ? `${num(v.duration_ms)} ms` : `${num(v.duration_ms / 1000)} s`;
+  return sessionSection("Setup por VU", state, `antes de la carga, en ${took}; no entra en las métricas de los pasos`, v.steps);
+}
+
+function vuRefreshSection() {
+  const v = run.vu_refresh;
+  if (!v) return null;
+  const state = v.failed_vus ? pill("serious", `${v.failed_vus} VUs dejaron de iterar`) : pill("good", `${num(v.refreshes)} renovaciones`);
+  return sessionSection("Renovación de sesión", state, `cada ${num(v.every_s)} s por VU, entre iteraciones; no entra en las métricas de los pasos`, v.steps);
+}
+
+/** Tabla de pasos de vu_setup o vu_refresh, con su estado arriba. */
+function sessionSection(title, state, note, steps) {
   const cols = ["paso", "requests", "fallidos", "p50", "p95", "max", ""];
-  return el("section", {}, el("h2", {}, "Setup por VU"),
+  return el("section", {}, el("h2", {}, title),
     el("div", { class: "card" },
       el("div", { style: "display:flex;gap:8px;align-items:center;flex-wrap:wrap" }, state,
-        el("span", { class: "muted" }, `antes de la carga, en ${num(v.duration_ms / 1000)} s; no entra en las métricas de los pasos`)),
+        el("span", { class: "muted" }, note)),
       el("div", { class: "scroll", style: "margin-top:8px" }, el("table", {},
         el("thead", {}, el("tr", {}, cols.map((h, i) => el("th", { class: i === 6 ? "l" : null }, h)))),
-        el("tbody", {}, v.steps.map((s) => {
+        el("tbody", {}, steps.map((s) => {
           const l = s.latency_ms || {};
           return el("tr", {},
             el("td", {}, s.name), el("td", {}, num(s.requests)), el("td", {}, num(s.failed)),
@@ -629,7 +642,7 @@ function warningsSection() {
   return el("section", {}, el("h2", {}, "Avisos"), el("div", { class: "card" }, el("ul", { class: "plain" }, list.map((w) => el("li", {}, w)))));
 }
 
-app.append(header(), tiles(), ...[warningsSection(), findings(), comparison(), chartsSection(), stepsTable(), vuSetupSection(), checksSection(), thresholdsSection()].filter(Boolean),
+app.append(header(), tiles(), ...[warningsSection(), findings(), comparison(), chartsSection(), stepsTable(), vuSetupSection(), vuRefreshSection(), checksSection(), thresholdsSection()].filter(Boolean),
   el("footer", {}, `Generado por lt ${DATA.lt_version} desde ${DATA.results_file}. Los datos están dentro de este archivo: se abre sin conexión.`));
 charts.forEach((d) => d());
 let resizeTimer;

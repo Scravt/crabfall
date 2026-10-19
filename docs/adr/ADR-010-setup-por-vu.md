@@ -68,4 +68,4 @@ En el modelo abierto, el semáforo de concurrencia pasa a ser un **pool de VUs**
 ## Consecuencias
 
 - **A favor:** sesiones reales por usuario, sin ensuciar las métricas de carga. Los checks pueden verificar que cada respuesta sea del usuario correcto.
-- **En contra:** un `max_vus` generoso multiplica los logins previos. Además, un token que vence durante la carga no se renueva: si hace falta, va a requerir re-ejecutar `vu_setup`, que hoy no existe.
+- **En contra:** un `max_vus` generoso multiplica los logins previos. Un token que vence durante la carga se renueva con `vu_refresh` (ADR-011).
