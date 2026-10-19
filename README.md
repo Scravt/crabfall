@@ -169,7 +169,7 @@ cargo test --workspace
 cargo run --release -p lab-server -- --port 3999   # servidor de laboratorio
 ```
 
-El CI (`.github/workflows/ci.yml`) corre `cargo fmt --check` y `clippy` en Linux, y los tests en Linux y Windows, en cada push a `main` o `dev` y en cada pull request. Los warnings cuentan como errores.
+El CI (`.github/workflows/ci.yml`) corre `cargo fmt --check` y `clippy` en Linux, y los tests en Linux y Windows, en cada push a `main` o `dev` y en cada pull request. Los warnings cuentan como errores. En Windows se saltean las patologías del diagnóstico (`CRABFALL_SKIP_TIMING_TESTS=1`): miden tiempos reales y ese runner, de 2 núcleos, no sostiene el calendario de la carga.
 
 Para probar contra APIs más realistas: [shop-api](../shop-api) (local, con problemas de performance plantados) y [market-api](../market-api) (Postgres, JWT, rate limit y uploads), repos aparte con escenarios en su `.crabfall/`.
 
