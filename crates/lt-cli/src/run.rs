@@ -62,6 +62,9 @@ pub fn cmd_run(target: &crate::Target, as_json: bool) -> u8 {
     if !tweaks.is_empty() {
         eprintln!("  ajustes: {}", tweaks.join(" "));
     }
+    for u in plan.uploads_summary() {
+        eprintln!("  archivo: {u}");
+    }
     for d in &plan.data {
         eprintln!("  datos: {}", d.dataset.describe());
     }

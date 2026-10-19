@@ -3,7 +3,7 @@
 Herramienta de pruebas de carga en Rust, pensada para usarse junto a Claude Code:
 Claude diseña el escenario y analiza los resultados; una persona aprueba y ejecuta la carga.
 
-Estado: **rebanadas 1 a 11 cerradas** (la última: renovación de sesión). Ya funcionan: diseño con Claude, aprobación firmada, escenarios con `setup`, `extract`, checks y thresholds, tres executors, diagnóstico, comparación de corridas, datasets, pausas entre pasos, ajustes de la corrida por flag, un reporte HTML por corrida, login por usuario virtual (`vu_setup`) y renovación de tokens durante la carga (`vu_refresh`). Ver el [roadmap](docs/roadmap.md).
+Estado: **rebanada 12** (subir archivos). Ya funcionan: diseño con Claude, aprobación firmada, escenarios con `setup`, `extract`, checks y thresholds, tres executors, diagnóstico, comparación de corridas, datasets, pausas entre pasos, ajustes de la corrida por flag, un reporte HTML por corrida, login por usuario virtual (`vu_setup`), renovación de tokens durante la carga (`vu_refresh`) y subida de archivos (`multipart`). Ver el [roadmap](docs/roadmap.md).
 
 ## Uso
 
@@ -92,6 +92,19 @@ vu_refresh:
 ```
 
 Sin `steps`, repite `vu_setup` (login de nuevo). `--refresh-every 4m` lo ajusta por flag. Un VU que no puede renovar deja de iterar ([ADR-011](docs/adr/ADR-011-renovacion-de-sesion.md)).
+
+Para subir archivos, `multipart` arma un body `multipart/form-data` con archivos de `.loadtest/` y campos de texto:
+
+```yaml
+request:
+  method: POST
+  url: /files
+  multipart:
+    file: { file: files/adjunto.bin, filename: "adjunto-{{$uuid}}.bin" }
+    description: "subido por {{users.email}}"
+```
+
+El archivo se lee una vez y va entero en cada request (hasta 100 MB). El tipo sale de la extensión, o de `content_type`. La aprobación firma su contenido ([ADR-012](docs/adr/ADR-012-multipart.md)).
 
 ### Ajustes sin editar el YAML
 

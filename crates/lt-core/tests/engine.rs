@@ -1023,3 +1023,104 @@ async fn a_failed_refresh_retires_the_vu_and_check_runs_it_once() {
         .sum();
     assert_eq!(late, 0, "{:?}", r.series.points);
 }
+
+/// Servidor que parsea el multipart como un framework real y devuelve lo que recibió.
+async fn upload_server() -> String {
+    async fn upload(mut form: axum::extract::Multipart) -> Json<Value> {
+        let mut fields = Vec::new();
+        while let Some(field) = form.next_field().await.unwrap() {
+            let name = field.name().unwrap_or_default().to_string();
+            let filename = field.file_name().map(str::to_string);
+            let content_type = field.content_type().map(str::to_string);
+            let bytes = field.bytes().await.unwrap();
+            fields.push(json!({
+                "name": name,
+                "filename": filename,
+                "content_type": content_type,
+                "size": bytes.len(),
+                "text": String::from_utf8_lossy(&bytes),
+            }));
+        }
+        Json(json!({ "fields": fields }))
+    }
+    let app = Router::new().route("/upload", axum::routing::post(upload));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    format!("http://127.0.0.1:{}", addr.port())
+}
+
+fn upload_scenario(extra_part: &str) -> (lt_core::scenario::Scenario, Inputs) {
+    let yaml = format!(
+        "version: 1\nname: up\nvars: {{ who: ana }}\nflows:
+  main:
+    steps:
+      - name: upload
+        request:
+          method: POST
+          url: /upload
+          multipart:
+            file: {{ file: files/datos.csv, filename: \"datos-{{{{who}}}}.csv\" }}
+            note: \"subido por {{{{who}}}}\"
+{extra_part}        checks:
+          - json: $.fields[0].filename
+            equals: datos-ana.csv
+load:\n  executor: constant_rate\n  rate: 5/s\n  duration: 1s\n  max_vus: 2\n"
+    );
+    let s = parse_scenario(&yaml).unwrap_or_else(|r| panic!("{r:?}"));
+    // El contenido tiene un CRLF y algo que parece un boundary: tiene que llegar intacto.
+    let content = b"id,nombre\r\n1,ana\r\n--no-es-el-boundary\r\n".to_vec();
+    let upload = lt_core::upload::Upload::new("files/datos.csv", content).unwrap();
+    let inputs = Inputs {
+        files: [("files/datos.csv".to_string(), upload)].into(),
+        ..Default::default()
+    };
+    (s, inputs)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn multipart_uploads_a_file_and_text_fields() {
+    let base = upload_server().await;
+    let (s, inputs) = upload_scenario("");
+    let plan = Plan::build(&s, &environment(&base), &inputs).unwrap();
+    assert_eq!(plan.uploads_summary(), ["files/datos.csv (39 B) en upload"]);
+
+    let checked = lt_core::check::check(&plan).await.unwrap();
+    assert!(checked.ok, "{checked:?}");
+    let got: Value = serde_json::from_str(checked.steps[0].body.as_deref().unwrap()).unwrap();
+    let fields = got["fields"].as_array().unwrap();
+    assert_eq!(fields[0]["name"], "file");
+    assert_eq!(fields[0]["content_type"], "text/csv");
+    assert_eq!(
+        fields[0]["text"],
+        "id,nombre\r\n1,ana\r\n--no-es-el-boundary\r\n"
+    );
+    assert_eq!(fields[1]["name"], "note");
+    assert_eq!(fields[1]["filename"], Value::Null);
+    assert_eq!(fields[1]["text"], "subido por ana");
+
+    let r = engine::run(Arc::new(plan), Arc::new(Progress::default())).await;
+    assert_eq!(r.totals.failed, 0, "{:?}", r.steps[0]);
+    assert_eq!(r.totals.checks_failed, 0);
+}
+
+#[test]
+fn multipart_signs_file_content_not_the_boundary() {
+    let env = environment("http://127.0.0.1:1");
+    let (s, inputs) = upload_scenario("");
+    let a = Plan::build(&s, &env, &inputs).unwrap().canonical(&env);
+    let b = Plan::build(&s, &env, &inputs).unwrap().canonical(&env);
+    // El boundary es aleatorio por plan: no puede entrar en la firma.
+    assert_eq!(a, b);
+    let part = &a["flows"][0]["steps"][0]["body"]["multipart"][0];
+    assert_eq!(part[0], "file");
+    assert_eq!(part[1]["sha256"].as_str().unwrap().len(), 64);
+    assert_eq!(part[1]["filename"], "datos-{{who}}.csv");
+
+    let mut other = inputs.clone();
+    other.files.insert(
+        "files/datos.csv".into(),
+        lt_core::upload::Upload::new("files/datos.csv", b"otro".to_vec()).unwrap(),
+    );
+    assert_ne!(a, Plan::build(&s, &env, &other).unwrap().canonical(&env));
+}

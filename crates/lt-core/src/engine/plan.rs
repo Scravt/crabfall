@@ -26,10 +26,11 @@ use crate::{
     data::Dataset,
     extract::Extractor,
     load::LoadPlan,
-    scenario::{Defaults, Pick, Scenario, Source, Step},
+    scenario::{Defaults, MultipartPart, Pick, Scenario, Source, Step},
     template::{Scope, Template, ValueTemplate, to_text},
     threshold::{Filter, ThresholdPlan},
     units::{HumanDuration, Think},
+    upload::{self, Upload},
 };
 
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -50,6 +51,8 @@ pub struct Inputs {
     pub secrets: BTreeMap<String, Option<String>>,
     /// Datasets de `data`, ya leídos.
     pub data: BTreeMap<String, Dataset>,
+    /// Archivos de los bodies multipart, ya leídos, por su ruta en el escenario.
+    pub files: BTreeMap<String, Upload>,
 }
 
 pub struct Plan {
@@ -118,6 +121,20 @@ pub enum BodyPlan {
         source: Value,
     },
     Text(Template),
+    /// `multipart/form-data`. El boundary es fijo por paso y no se firma: no está en el escenario.
+    Multipart {
+        boundary: String,
+        parts: Vec<(String, PartPlan)>,
+    },
+}
+
+pub enum PartPlan {
+    Text(Template),
+    File {
+        upload: Upload,
+        filename: Template,
+        content_type: String,
+    },
 }
 
 enum QueryPart {
@@ -177,6 +194,7 @@ impl StepPlan {
                 serde_json::to_vec(&template.render(scope)?).expect("JSON siempre serializa"),
             ),
             BodyPlan::Text(t) => Bytes::from(t.render(scope)?),
+            BodyPlan::Multipart { boundary, parts } => multipart(boundary, parts, scope)?,
         };
         let mut request = Request::builder()
             .method(self.method.clone())
@@ -187,6 +205,13 @@ impl StepPlan {
             let value = HeaderValue::from_str(&value.render(scope)?)
                 .map_err(|e| format!("header `{name}` inválido: {e}"))?;
             request.headers_mut().insert(name.clone(), value);
+        }
+        if let BodyPlan::Multipart { boundary, .. } = &self.body {
+            let value = format!("multipart/form-data; boundary={boundary}");
+            request.headers_mut().insert(
+                CONTENT_TYPE,
+                HeaderValue::from_str(&value).expect("el boundary es ASCII"),
+            );
         }
         Ok(request)
     }
@@ -236,6 +261,10 @@ impl StepPlan {
             BodyPlan::None => {}
             BodyPlan::Json { template, .. } => all.extend(template.templates()),
             BodyPlan::Text(t) => all.push(t),
+            BodyPlan::Multipart { parts, .. } => all.extend(parts.iter().map(|(_, p)| match p {
+                PartPlan::Text(t) => t,
+                PartPlan::File { filename, .. } => filename,
+            })),
         }
         all
     }
@@ -288,7 +317,7 @@ impl Plan {
                                id: &mut usize| {
             let mut out = Vec::new();
             for step in steps {
-                match build_step(*id, flow, step, defaults, &base, &allowed) {
+                match build_step(*id, flow, step, defaults, &base, &allowed, &inputs.files) {
                     Ok(plan) => {
                         let problems = check_references(&plan, known, &inputs.secrets, &columns);
                         errors.extend(problems.into_iter().map(|p| format!("{}: {p}", step.name)));
@@ -448,6 +477,18 @@ impl Plan {
                 BodyPlan::None => Value::Null,
                 BodyPlan::Json { source, .. } => json!({ "json": source }),
                 BodyPlan::Text(t) => json!({ "text": t.source() }),
+                // Se firma el contenido de cada archivo, no solo su ruta (ADR-012).
+                BodyPlan::Multipart { parts, .. } => json!({
+                    "multipart": parts.iter().map(|(name, p)| match p {
+                        PartPlan::Text(t) => json!([name, { "text": t.source() }]),
+                        PartPlan::File { upload, filename, content_type } => json!([name, {
+                            "file": upload.file,
+                            "sha256": upload.sha256,
+                            "filename": filename.source(),
+                            "content_type": content_type,
+                        }]),
+                    }).collect::<Vec<_>>()
+                }),
             };
             let extract: Vec<Value> = s
                 .extract
@@ -521,6 +562,24 @@ impl Plan {
     /// Variables de las filas que toma una iteración de `flow`: `dataset.columna` → valor.
     pub fn row_vars(&self, flow: &FlowPlan) -> HashMap<String, Value> {
         self.rows(&flow.data)
+    }
+
+    /// Archivos que sube cada paso con multipart: `files/foto.jpg (120 KB) en upload`.
+    pub fn uploads_summary(&self) -> Vec<String> {
+        self.all_steps()
+            .flat_map(|s| match &s.body {
+                BodyPlan::Multipart { parts, .. } => parts
+                    .iter()
+                    .filter_map(|(_, p)| match p {
+                        PartPlan::File { upload, .. } => {
+                            Some(format!("{} en {}", upload.describe(), s.name))
+                        }
+                        PartPlan::Text(_) => None,
+                    })
+                    .collect(),
+                _ => vec![],
+            })
+            .collect()
     }
 
     /// Pasos que renuevan la sesión de un VU: los de `vu_refresh` o, si no tiene, `vu_setup`.
@@ -712,6 +771,109 @@ fn check_references(
     problems.into_iter().collect()
 }
 
+/// Arma las partes de un body multipart con los archivos ya leídos.
+fn multipart_plan(
+    spec: &indexmap::IndexMap<String, MultipartPart>,
+    files: &BTreeMap<String, Upload>,
+) -> Result<BodyPlan, String> {
+    let mut parts = Vec::new();
+    for (name, part) in spec {
+        let plan = match part {
+            MultipartPart::Text(t) => {
+                PartPlan::Text(Template::parse(t).map_err(|e| format!("multipart.{name}: {e}"))?)
+            }
+            MultipartPart::File(f) => {
+                let upload = files.get(&f.file).ok_or_else(|| {
+                    format!("multipart.{name}: el archivo {} no se cargó", f.file)
+                })?;
+                let default_name = std::path::Path::new(&f.file)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("archivo");
+                PartPlan::File {
+                    upload: upload.clone(),
+                    filename: Template::parse(f.filename.as_deref().unwrap_or(default_name))
+                        .map_err(|e| format!("multipart.{name}.filename: {e}"))?,
+                    content_type: f
+                        .content_type
+                        .clone()
+                        .unwrap_or_else(|| upload::content_type(&f.file).to_string()),
+                }
+            }
+        };
+        parts.push((name.clone(), plan));
+    }
+    // Un boundary que no aparezca en ningún archivo; los textos son cortos y lo hace improbable.
+    let boundary = loop {
+        let b = format!("lt-{:016x}{:016x}", fastrand::u64(..), fastrand::u64(..));
+        let appears = parts.iter().any(|(_, p)| match p {
+            PartPlan::File { upload, .. } => {
+                upload.bytes.windows(b.len()).any(|w| w == b.as_bytes())
+            }
+            PartPlan::Text(_) => false,
+        });
+        if !appears {
+            break b;
+        }
+    };
+    Ok(BodyPlan::Multipart { boundary, parts })
+}
+
+/// Body `multipart/form-data` (RFC 7578). En los nombres, comillas y saltos de línea se
+/// codifican como en los navegadores, para que no rompan el header de la parte.
+fn multipart(
+    boundary: &str,
+    parts: &[(String, PartPlan)],
+    scope: &dyn Scope,
+) -> Result<Bytes, String> {
+    let quote = |s: &str| {
+        s.replace('"', "%22")
+            .replace('\r', "%0D")
+            .replace('\n', "%0A")
+    };
+    let size: usize = parts
+        .iter()
+        .map(|(_, p)| match p {
+            PartPlan::File { upload, .. } => upload.bytes.len() + 200,
+            PartPlan::Text(_) => 200,
+        })
+        .sum();
+    let mut body = Vec::with_capacity(size + 64);
+    for (name, part) in parts {
+        body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
+        match part {
+            PartPlan::Text(t) => {
+                body.extend_from_slice(
+                    format!(
+                        "Content-Disposition: form-data; name=\"{}\"\r\n\r\n",
+                        quote(name)
+                    )
+                    .as_bytes(),
+                );
+                body.extend_from_slice(t.render(scope)?.as_bytes());
+            }
+            PartPlan::File {
+                upload,
+                filename,
+                content_type,
+            } => {
+                body.extend_from_slice(
+                    format!(
+                        "Content-Disposition: form-data; name=\"{}\"; filename=\"{}\"\r\nContent-Type: {content_type}\r\n\r\n",
+                        quote(name),
+                        quote(&filename.render(scope)?)
+                    )
+                    .as_bytes(),
+                );
+                body.extend_from_slice(&upload.bytes);
+            }
+        }
+        body.extend_from_slice(b"\r\n");
+    }
+    body.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
+    Ok(Bytes::from(body))
+}
+
 /// Índices de los datasets que usan estos pasos.
 fn datasets_used<'a>(
     data: &[DataPlan],
@@ -759,6 +921,7 @@ fn build_step(
     defaults: Option<&Defaults>,
     base: &Url,
     allowed: &BTreeSet<String>,
+    files: &BTreeMap<String, Upload>,
 ) -> Result<StepPlan, String> {
     let r = &step.request;
     let checks = step
@@ -835,6 +998,7 @@ fn build_step(
             }
         }
         (None, Some(text)) => BodyPlan::Text(Template::parse(text)?),
+        (None, None) if !r.multipart.is_empty() => multipart_plan(&r.multipart, files)?,
         (None, None) => BodyPlan::None,
     };
     for (name, value) in defaults.map(|d| &d.headers).into_iter().flatten() {
