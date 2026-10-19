@@ -204,7 +204,14 @@ impl Collector {
 
     /// `latency` se mide desde el instante planificado (primer paso) o desde el fin del paso anterior.
     /// `at` es cuándo terminó el request.
-    pub fn record(&mut self, step: usize, at: Instant, latency: Duration, outcome: Outcome) {
+    /// Devuelve si el request ya cuenta como error (status >= 400 o sin respuesta).
+    pub fn record(
+        &mut self,
+        step: usize,
+        at: Instant,
+        latency: Duration,
+        outcome: Outcome,
+    ) -> bool {
         let is_error = match &outcome {
             Outcome::Response { status, .. } => *status >= 400,
             Outcome::Failure { .. } => true,
@@ -244,13 +251,24 @@ impl Collector {
                 s.sample(message);
             }
         }
+        is_error
     }
 
     /// La respuesta ya se registró con `record`; esto suma la falla del `extract`.
-    pub fn record_extract_failure(&mut self, step: usize, at: Instant, message: String) {
-        let w = self.window(at);
-        w.errors += 1;
-        w.steps[step].errors += 1;
+    /// Un `extract` que falló. En la serie cuenta como error solo si el request no lo era ya
+    /// (un 401 sin el campo esperado es un error, no dos).
+    pub fn record_extract_failure(
+        &mut self,
+        step: usize,
+        at: Instant,
+        message: String,
+        counted: bool,
+    ) {
+        if !counted {
+            let w = self.window(at);
+            w.errors += 1;
+            w.steps[step].errors += 1;
+        }
         let s = &mut self.steps[step];
         *s.failures.entry(FailureKind::Extract).or_default() += 1;
         s.sample(message);

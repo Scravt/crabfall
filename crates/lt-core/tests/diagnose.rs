@@ -263,3 +263,94 @@ async fn slow_server_with_keep_alive_has_no_new_connections() {
 
     assert!(!ids(&r).contains(&"new_connections"), "{:#?}", r.findings);
 }
+
+/// API con tokens que vencen a los 2 s: `/login` emite uno y `/me` responde 401 si venció.
+async fn expiring_tokens() -> String {
+    let started = Instant::now();
+    let app = Router::new()
+        .route(
+            "/login",
+            axum::routing::post(move || async move {
+                let issued = started.elapsed().as_millis();
+                axum::Json(serde_json::json!({ "token": issued.to_string() }))
+            }),
+        )
+        .route(
+            "/me",
+            get(move |headers: axum::http::HeaderMap| async move {
+                let issued: u128 = headers
+                    .get(header::AUTHORIZATION)
+                    .and_then(|v| v.to_str().ok()?.parse().ok())
+                    .unwrap_or(0);
+                if started.elapsed().as_millis() - issued > 2000 {
+                    (
+                        StatusCode::UNAUTHORIZED,
+                        axum::Json(serde_json::json!({ "error": "token vencido" })),
+                    )
+                } else {
+                    (StatusCode::OK, axum::Json(serde_json::json!({ "id": 1 })))
+                }
+            }),
+        );
+    serve(app).await
+}
+
+async fn run_session(base: &str, refresh: &str) -> RunResult {
+    lt_core::timer::high_resolution();
+    // Con pausas, pocas requests por segundo: como un usuario real.
+    let yaml = format!(
+        "version: 1\nname: lab\nvu_setup:
+  - name: login
+    request: {{ method: POST, url: /login }}
+    extract: {{ token: {{ json: $.token }} }}
+{refresh}flows:
+  main:
+    steps:
+      - name: me
+        request: {{ method: GET, url: /me, headers: {{ Authorization: \"{{{{token}}}}\" }} }}
+        extract: {{ id: {{ json: $.id }} }}
+        think: 300ms-500ms
+load:\n  executor: constant_vus\n  vus: 2\n  duration: 4s\n"
+    );
+    let env: Environment =
+        serde_saphyr::from_str(&format!("base_url: {base}\nallowed_hosts: [127.0.0.1]\n")).unwrap();
+    let plan = Plan::build(&parse_scenario(&yaml).unwrap(), &env, &Default::default()).unwrap();
+    engine::run(Arc::new(plan), Arc::new(Progress::default())).await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn expired_session_says_so_and_suggests_vu_refresh() {
+    let base = expiring_tokens().await;
+    let r = run_session(&base, "").await;
+
+    let f = find(&r, "error_threshold");
+    // Empieza a mitad de corrida, no desde el inicio, aunque haya pocas requests por segundo.
+    assert!(
+        f.title.contains("recibe 401 desde el segundo 2"),
+        "{}",
+        f.title
+    );
+    assert!(f.title.contains("venció la sesión"), "{}", f.title);
+    assert!(
+        f.causes[0].contains("agregá `vu_refresh`"),
+        "{:?}",
+        f.causes
+    );
+    // Un 401 sin el campo del `extract` es un error, no dos.
+    let rate = f.evidence["error_rate_in_window"].as_f64().unwrap();
+    assert!(rate <= 1.0, "{rate}");
+    for p in &r.series.steps[0].points {
+        assert!(p.errors <= p.requests, "{p:?}");
+    }
+
+    // Con la renovación antes de que venza, no hay 401.
+    let r = run_session(&base, "vu_refresh: { every: 1s }\n").await;
+    assert!(!ids(&r).contains(&"error_threshold"), "{:#?}", r.findings);
+    assert_eq!(
+        r.steps[0].status_codes.get("401"),
+        None,
+        "{:?}",
+        r.steps[0].status_codes
+    );
+    assert!(r.vu_refresh.unwrap().refreshes >= 4);
+}

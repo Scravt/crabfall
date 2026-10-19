@@ -501,10 +501,10 @@ pub async fn run(plan: Arc<Plan>, progress: Arc<Progress>) -> RunResult {
                 Event::Started(at) => c.record_started(at),
                 Event::Dropped(at) => c.record_dropped(at),
                 Event::Sample(s) => {
-                    c.record(s.step, s.done, s.latency, s.outcome);
+                    let counted = c.record(s.step, s.done, s.latency, s.outcome);
                     c.record_checks(s.step, &s.checks);
                     if let Some(e) = s.extract_error {
-                        c.record_extract_failure(s.step, s.done, e);
+                        c.record_extract_failure(s.step, s.done, e, counted);
                     }
                 }
             }

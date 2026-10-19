@@ -91,6 +91,7 @@ pub fn diagnose(load: &LoadPlan, r: &RunResult) -> Vec<Finding> {
             step,
             &series.points[..windows.min(series.points.len())],
             points,
+            Session::of(r),
         ));
         if !saturated {
             out.extend(long_tail(step));
@@ -403,7 +404,51 @@ fn degradation_over_time(r: &RunResult, points: &[Point]) -> Option<Finding> {
     })
 }
 
-fn error_threshold(step: &StepResult, series: &[StepPoint], global: &[Point]) -> Option<Finding> {
+/// Cómo obtiene su token el escenario: decide qué decir de un 401 que aparece a mitad de corrida.
+#[derive(Clone, Copy)]
+enum Session {
+    None,
+    /// `setup`: un token para todos.
+    Shared,
+    /// `vu_setup` sin `vu_refresh`.
+    PerVu,
+    /// `vu_setup` con `vu_refresh`.
+    Renewed,
+}
+
+impl Session {
+    fn of(r: &RunResult) -> Self {
+        match (&r.vu_setup, &r.vu_refresh) {
+            (_, Some(_)) => Self::Renewed,
+            (Some(_), None) => Self::PerVu,
+            (None, None) if !r.setup.is_empty() => Self::Shared,
+            _ => Self::None,
+        }
+    }
+
+    /// Por qué vence la sesión y qué hacer, según cómo se obtuvo el token.
+    fn expired(self, at: u32) -> Option<String> {
+        Some(match self {
+            Self::None => return None,
+            Self::Shared => format!(
+                "El token de `setup` venció a los ~{at} s, y es uno solo para todos: pasá el login a `vu_setup` y agregá `vu_refresh` (ADR-011)."
+            ),
+            Self::PerVu => format!(
+                "El token de cada VU venció a los ~{at} s: agregá `vu_refresh` (o `--refresh-every`) con `every` menor que su vida menos lo que dura una iteración (ADR-011)."
+            ),
+            Self::Renewed => format!(
+                "Los tokens vencen antes de que `vu_refresh` los renueve (a los ~{at} s): bajá `every` por debajo de su vida menos lo que dura una iteración, o revisá que la renovación devuelva un token nuevo."
+            ),
+        })
+    }
+}
+
+fn error_threshold(
+    step: &StepResult,
+    series: &[StepPoint],
+    global: &[Point],
+    session: Session,
+) -> Option<Finding> {
     let rate = |p: &StepPoint| {
         if p.requests > 0 {
             p.errors as f64 / p.requests as f64
@@ -415,7 +460,20 @@ fn error_threshold(step: &StepResult, series: &[StepPoint], global: &[Point]) ->
         .iter()
         .map(|p| p.requests >= 5 && rate(p) >= ERROR_RATE_HIGH)
         .collect();
-    let t = first_sustained(&flags)?;
+    let sustained = first_sustained(&flags)?;
+    // Con pocas requests por segundo (pausas largas), los errores empiezan antes del primer
+    // segundo que alcanza el mínimo: la ventana arranca en el primero que ya fallaba.
+    let mut t = sustained;
+    for i in (0..sustained).rev() {
+        let p = &series[i];
+        if p.requests == 0 {
+            continue;
+        }
+        if rate(p) < ERROR_RATE_HIGH {
+            break;
+        }
+        t = i;
+    }
     let before: u64 = series[..t].iter().map(|p| p.requests).sum();
     let errors_before: u64 = series[..t].iter().map(|p| p.errors).sum();
     let from_start = before == 0 || errors_before as f64 / before as f64 >= ERROR_RATE_LOW;
@@ -435,7 +493,14 @@ fn error_threshold(step: &StepResult, series: &[StepPoint], global: &[Point]) ->
         .max_by_key(|(_, n)| **n)
         .map(|(k, _)| *k);
     let offered_at = global.get(t).map_or(0, offered);
-    let rate_at = rate(&series[t]);
+    // La tasa en toda la ventana: con pocas requests, la de un solo segundo es ruido.
+    let (window_requests, window_errors) = series[t..]
+        .iter()
+        .fold((0, 0), |(r, e), p| (r + p.requests, e + p.errors));
+    let rate_at = window_errors as f64 / window_requests.max(1) as f64;
+    let expired = (dominant_code == Some("401") && !from_start)
+        .then(|| session.expired(series[t].t))
+        .flatten();
 
     let what = match (dominant_code, dominant_failure) {
         (Some(code), _) => format!("respuestas {code}"),
@@ -445,7 +510,14 @@ fn error_threshold(step: &StepResult, series: &[StepPoint], global: &[Point]) ->
         ),
         _ => "errores".into(),
     };
-    let title = if from_start {
+    let title = if expired.is_some() {
+        format!(
+            "`{}` recibe 401 desde el segundo {} ({:.0}%): venció la sesión",
+            step.name,
+            series[t].t,
+            rate_at * 100.0
+        )
+    } else if from_start {
         format!(
             "`{}` falla desde el inicio ({what}, {:.0}%): no parece un efecto de la carga",
             step.name,
@@ -477,6 +549,9 @@ fn error_threshold(step: &StepResult, series: &[StepPoint], global: &[Point]) ->
         (None, Some(FailureKind::Extract)) => vec!["La respuesta cambia bajo carga y el `extract` no encuentra el valor (¿una respuesta de error?).".into()],
         _ => vec![],
     };
+    if let Some(why) = expired {
+        causes.insert(0, why);
+    }
     if from_start {
         causes.insert(0, "Un error funcional del escenario o de la API (URL, datos, auth): revisalo con `lt check`.".into());
     }
@@ -492,7 +567,7 @@ fn error_threshold(step: &StepResult, series: &[StepPoint], global: &[Point]) ->
         }),
         evidence: json!({
             "offered_iterations_per_s": offered_at,
-            "error_rate_at_start_of_window": (rate_at * 1000.0).round() / 1000.0,
+            "error_rate_in_window": (rate_at * 1000.0).round() / 1000.0,
             "error_rate_before": if before > 0 { (errors_before as f64 / before as f64 * 1000.0).round() / 1000.0 } else { 0.0 },
             "status_codes": step.status_codes,
             "failures": step.failures,

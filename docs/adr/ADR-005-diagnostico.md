@@ -21,7 +21,7 @@ Dos capas, siempre separadas:
 | `breaking_point` | `ramping_rate` | primera ventana sostenida (2 de 3) con descartes, p95 ≥ max(3× base, base + 50 ms) o errores ≥ 5% |
 | `capacity_exceeded` | tasa constante | > 1% de iteraciones descartadas |
 | `degradation_over_time` | tasa constante | recta de mínimos cuadrados del p95: final ≥ 2× inicio, +20 ms, R² ≥ 0,6 |
-| `error_threshold` | por paso | pasa de < 1% a ≥ 5% de errores, sostenido; si es desde el inicio, se marca como probable error funcional |
+| `error_threshold` | por paso | pasa de < 1% a ≥ 5% de errores, sostenido. La ventana arranca en el primer segundo que ya fallaba, aunque tuviera pocas requests. Si es desde el inicio, se marca como probable error funcional; si son 401 a mitad de corrida, como sesión vencida, con la salida según cómo se obtiene el token (ADR-011) |
 | `long_tail` | por paso, sin saturación | p99 ≥ 10× p50 y +50 ms, con ≥ 200 requests |
 | `new_connections` | por paso | conexiones nuevas por encima de `max_vus` (o `vus`) > 10% de las requests: el pool crece hasta la concurrencia, así que una conexión por VU es normal |
 
