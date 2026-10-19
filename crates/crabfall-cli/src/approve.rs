@@ -255,6 +255,7 @@ fn print_summary(
         let label = if i == 0 { "Archivos" } else { "" };
         eprintln!("{label:<11} {u}  (multipart, en cada request)");
     }
+    eprintln!("HTTP        {}", plan.http_summary());
     for (i, d) in plan.data.iter().enumerate() {
         let label = if i == 0 { "Datos" } else { "" };
         eprintln!("{label:<11} {}", d.dataset.describe());

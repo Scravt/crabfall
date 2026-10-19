@@ -144,6 +144,8 @@ fn find_todos(value: &Value, path: &mut String, todos: &mut Vec<Issue>) {
 }
 
 const METHODS: &[&str] = &["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
+/// Más que esto es casi seguro un loop de redirects.
+const MAX_REDIRECTS: u32 = 30;
 
 fn valid_name(name: &str) -> bool {
     !name.is_empty()
@@ -190,6 +192,16 @@ fn check_rules(s: &Scenario, errors: &mut Vec<Issue>) {
                 "`vu_setup` corre antes de la carga: no lleva pausas",
             ));
         }
+    }
+    if s.defaults
+        .as_ref()
+        .and_then(|d| d.redirects)
+        .is_some_and(|n| n > MAX_REDIRECTS)
+    {
+        errors.push(Issue::at(
+            "defaults.redirects",
+            format!("a lo sumo {MAX_REDIRECTS}"),
+        ));
     }
     if let Some(refresh) = &s.vu_refresh {
         if s.vu_setup.is_empty() {
@@ -294,11 +306,34 @@ fn check_step<'a>(
             "tiene que empezar con `/` (relativa a base_url) o con http:// o https://",
         ));
     }
-    let bodies = [r.json.is_some(), r.body.is_some(), !r.multipart.is_empty()];
+    let bodies = [
+        r.json.is_some(),
+        r.body.is_some(),
+        !r.multipart.is_empty(),
+        !r.form.is_empty(),
+    ];
     if bodies.iter().filter(|b| **b).count() > 1 {
         errors.push(Issue::at(
             format!("{path}.request"),
-            "usá uno solo de `json`, `body` o `multipart`",
+            "usá uno solo de `json`, `body`, `multipart` o `form`",
+        ));
+    }
+    for (name, value) in &r.form {
+        let at = format!("{path}.request.form.{name}");
+        if name.is_empty() {
+            errors.push(Issue::at(&at, "el campo necesita un nombre"));
+        }
+        if !matches!(value, Value::String(_) | Value::Number(_) | Value::Bool(_)) {
+            errors.push(Issue::at(
+                &at,
+                "un campo de formulario es texto, número o booleano (para listas u objetos, usá `json`)",
+            ));
+        }
+    }
+    if r.redirects.is_some_and(|n| n > MAX_REDIRECTS) {
+        errors.push(Issue::at(
+            format!("{path}.request.redirects"),
+            format!("a lo sumo {MAX_REDIRECTS}"),
         ));
     }
     if !r.multipart.is_empty() {
@@ -597,6 +632,30 @@ flows:",
                 "flows.main.steps[0].request",
                 "flows.main.steps[0].request.headers",
                 "flows.main.steps[0].request.multipart.file.file"
+            ]
+        );
+    }
+
+    #[test]
+    fn form_excludes_other_bodies_and_takes_scalars_and_redirects_are_capped() {
+        let yaml = OK
+            .replacen(
+                "url: /products",
+                "url: /products
+          body: hola
+          redirects: 31
+          form: { user: ana, tags: [a, b] }",
+                1,
+            )
+            .replacen("flows:", "defaults: { redirects: 99 }\nflows:", 1);
+        let paths: Vec<_> = errors(&yaml).into_iter().map(|e| e.path).collect();
+        assert_eq!(
+            paths,
+            [
+                "defaults.redirects",
+                "flows.main.steps[0].request",
+                "flows.main.steps[0].request.form.tags",
+                "flows.main.steps[0].request.redirects"
             ]
         );
     }

@@ -165,6 +165,18 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente. Al cerrar
 - [x] Tests: un upload de 300 KB y una descarga de 256 KB medidos por paso (body más unos cientos de bytes de headers), la serie suma igual que los totales, y los bytes de un request que vence por timeout cuentan
 - Listo: en `market-api`, `upload` (10 VUs durante 1 minuto, ya como `crabfall`) movió 137,1 MB enviados y 137,2 MB recibidos, 2,1 MB/s en cada dirección. Por request, `upload_file` mandó el archivo más 559 bytes de headers y multipart, y `download_file` recibió el archivo más 487. El pico, 10 MB/s (84 Mbit/s), fue el segundo 0, con los 10 VUs subiendo a la vez. 685 de 685 checks pasados (19 oct 2026).
 
+**14. Cliente HTTP real**
+- [x] Cookies: un jar por VU (RFC 6265, con `cookie_store`) desde `vu_setup` hasta la última iteración, también en `vu_refresh`; `setup` con el suyo; un header `cookie` propio se suma; `cookies: false` las apaga (ADR-014)
+- [x] Redirects: hasta 10 por paso (`redirects` en el request o en `defaults`), solo hacia `allowed_hosts`; 303 y POST con 301/302 pasan a GET; `authorization` y la cookie propia no viajan a otro host; latencia, timeout y bytes cubren la cadena
+- [x] Compresión: `accept-encoding: gzip, br` por defecto; checks y `extract` ven el body descomprimido (gzip, deflate, br; tope de 64 MB) y los bytes son los del cable
+- [x] `form:` arma bodies `application/x-www-form-urlencoded`
+- [x] `crabfall check` no sale de loopback ni por un redirect: el cliente se niega a conectarse afuera
+- [x] Cada VU tiene su propia sesión aunque no haya `vu_setup` (antes compartían una vacía)
+- [x] `approve` y `run` muestran una línea `HTTP`; `check` muestra cada salto de un redirect
+- [x] CI en GitHub Actions: fmt y clippy en Linux, tests en Linux y Windows
+- [x] Tests: contra axum con `tower-http` comprimiendo de verdad (gzip y br), sesión por VU, cookies apagadas, redirects (cadena, límite, loop, POST 302 y 307, otro host sin `authorization`), check sin salir de loopback, formularios, firma y validación
+- Listo cuando: en `market-api`, `browse` aprobado de nuevo corre igual que antes (Express no comprime: los bytes no cambian). Detrás de Caddy (perfil `tls`, `encode gzip`) los bytes recibidos de las búsquedas tienen que bajar varias veces. **Pendiente:** las corridas (las aprueba y ejecuta una persona).
+
 ## Primera versión
 
 **v0.1.0** (19 oct 2026): las rebanadas 0 a 13 con el nombre Crabfall (binario `crabfall`, carpeta `.crabfall/`), en `main` y en GitHub (privado). Lo que queda abierto de esas rebanadas: TLS contra un servidor real (1), la skill en una sesión nueva de Claude Code (2). La rebanada 13 se cerró después, con la corrida de `upload`.
@@ -175,7 +187,7 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente. Al cerrar
 
 **Al final: modelos de carga nuevos** (`ramping_vus`, iteraciones fijas, arrival por VU). Hoy alcanzan `constant_rate`, `ramping_rate` y `constant_vus`.
 
-Regla de diagnóstico para el ancho de banda (los bytes por segundo se estancan mientras la latencia sube), bytes por request en `crabfall compare` (una respuesta que creció mucho), más reglas de diagnóstico, corrida base fija para CI (`crabfall compare --baseline`), servidor MCP, importadores (OpenAPI, curl, Postman), cookies, redirects, gzip y bodies `form-urlencoded`, HTTP/2, GUI con Tauri (después de la TUI), `pick: unique` para datasets, leer `expires_in` para elegir solo cuándo renovar, leer `Retry-After` en los 429 para que el hallazgo diga la ventana del límite, GitHub Action, correlación con métricas del servidor (OTLP, Prometheus), WebSockets, gRPC, Kafka.
+Regla de diagnóstico para el ancho de banda (los bytes por segundo se estancan mientras la latencia sube), bytes por request en `crabfall compare` (una respuesta que creció mucho), más reglas de diagnóstico, corrida base fija para CI (`crabfall compare --baseline`), servidor MCP, importadores (OpenAPI, curl, Postman), HTTP/2, GUI con Tauri (después de la TUI), `pick: unique` para datasets, leer `expires_in` para elegir solo cuándo renovar, leer `Retry-After` en los 429 para que el hallazgo diga la ventana del límite, GitHub Action, correlación con métricas del servidor (OTLP, Prometheus), WebSockets, gRPC, Kafka.
 
 ## Decisiones abiertas
 
@@ -215,3 +227,4 @@ Regla de diagnóstico para el ancho de banda (los bytes por segundo se estancan 
 | 19 oct 2026 | Nombre: Crabfall; binario `crabfall`, carpeta `.crabfall/`, crates `crabfall-core` y `crabfall-cli` (D2) | — |
 | 19 oct 2026 | TUI en la terminal en lugar de la GUI con Tauri, por ahora; los modelos de carga nuevos van al final | Este documento |
 | 19 oct 2026 | Primera versión v0.1.0: `dev` se mergea a `main`; repo privado en GitHub | — |
+| 19 oct 2026 | Cliente HTTP real por defecto: cookies por VU, redirects hacia `allowed_hosts`, gzip y br; `check` nunca sale de loopback | ADR-014 |

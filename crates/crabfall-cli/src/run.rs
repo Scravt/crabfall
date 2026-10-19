@@ -65,6 +65,7 @@ pub fn cmd_run(target: &crate::Target, as_json: bool) -> u8 {
     for u in plan.uploads_summary() {
         eprintln!("  archivo: {u}");
     }
+    eprintln!("  http: {}", plan.http_summary());
     for d in &plan.data {
         eprintln!("  datos: {}", d.dataset.describe());
     }
