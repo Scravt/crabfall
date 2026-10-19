@@ -163,11 +163,11 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente. Al cerrar
 - [x] `bytes_sent` y `bytes_received` por paso, por segundo en la serie y en `totals`, con `send_rate` y `receive_rate`; `crabfall findings --json` los incluye
 - [x] `crabfall run` muestra el total, el promedio y el pico por segundo (también en Mbit/s); el reporte suma un tile, un gráfico por segundo y los bytes por request de cada paso
 - [x] Tests: un upload de 300 KB y una descarga de 256 KB medidos por paso (body más unos cientos de bytes de headers), la serie suma igual que los totales, y los bytes de un request que vence por timeout cuentan
-- Listo cuando: en `market-api`, `upload` muestra alrededor de 1 MB enviado y 1 MB recibido por iteración (sube y baja el mismo archivo). **Pendiente:** la corrida (la aprueba y ejecuta una persona).
+- Listo: en `market-api`, `upload` (10 VUs durante 1 minuto, ya como `crabfall`) movió 137,1 MB enviados y 137,2 MB recibidos, 2,1 MB/s en cada dirección. Por request, `upload_file` mandó el archivo más 559 bytes de headers y multipart, y `download_file` recibió el archivo más 487. El pico, 10 MB/s (84 Mbit/s), fue el segundo 0, con los 10 VUs subiendo a la vez. 685 de 685 checks pasados (19 oct 2026).
 
 ## Primera versión
 
-**v0.1.0** (19 oct 2026): las rebanadas 0 a 13 con el nombre Crabfall (binario `crabfall`, carpeta `.crabfall/`), en `main` y en GitHub (privado). Lo que queda abierto de esas rebanadas: TLS contra un servidor real (1), la skill en una sesión nueva de Claude Code (2) y la corrida de `upload` con bytes (13).
+**v0.1.0** (19 oct 2026): las rebanadas 0 a 13 con el nombre Crabfall (binario `crabfall`, carpeta `.crabfall/`), en `main` y en GitHub (privado). Lo que queda abierto de esas rebanadas: TLS contra un servidor real (1), la skill en una sesión nueva de Claude Code (2). La rebanada 13 se cerró después, con la corrida de `upload`.
 
 ## Backlog (sin orden)
 
