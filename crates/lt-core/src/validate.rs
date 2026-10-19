@@ -206,7 +206,7 @@ fn check_rules(s: &Scenario, errors: &mut Vec<Issue>) {
             if step.think.is_some() {
                 errors.push(Issue::at(
                     format!("vu_refresh.steps[{i}].think"),
-                    "la renovación corre entre iteraciones: no lleva pausas",
+                    "la renovación corre en segundo plano: no lleva pausas",
                 ));
             }
         }

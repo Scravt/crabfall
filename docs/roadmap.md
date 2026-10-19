@@ -149,7 +149,7 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente. Al cerrar
 - [x] Tests: renovación en los dos modelos (también los VUs libres del pool), el token nuevo en las iteraciones siguientes, falla de la renovación, validación, firma y flag
 - [x] Diagnóstico: 401 a mitad de corrida se marcan como sesión vencida, con la salida según el escenario; arreglados el doble conteo de errores con `extract` y el "desde el inicio" falso con pocas requests por segundo
 - [x] `approve` sugiere el `lt run` con los mismos ajustes
-- Listo cuando: en `market-api`, con tokens de 60 s, `shop-per-user --duration 2m` empieza a recibir 401 a mitad de la corrida (hecho el 18 oct 2026: 401 desde el segundo 59), y `session-refresh` (lo mismo con `vu_refresh` cada 45 s) termina los 2 minutos con 0 checks fallidos. **Pendiente:** repetir la primera con el diagnóstico corregido y correr `session-refresh`.
+- Listo: en `market-api`, con tokens de 60 s y 20 VUs durante 2 minutos, `shop-per-user` recibió 608 401 desde el segundo 59 y el hallazgo dijo "venció la sesión" con la sugerencia de `vu_refresh`. `session-refresh`, lo mismo con renovación por `/auth/refresh` cada 45 s, hizo 40 renovaciones (p50 5,5 ms), 0 401 y 1.860 de 1.860 checks pasados (18 oct 2026).
 
 ## Backlog (sin orden)
 
