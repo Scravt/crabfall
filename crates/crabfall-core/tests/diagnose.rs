@@ -24,6 +24,16 @@ use crabfall_core::{
 };
 use tokio::{net::TcpListener, sync::Semaphore};
 
+/// Las patologías miden tiempos: si varias generan carga a la vez, se pisan, el generador
+/// llega tarde y el diagnóstico (con razón) da `invalid_result`. Pasa en máquinas chicas,
+/// como los runners de CI. Una corrida a la vez, como en la realidad.
+static LOAD: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+async fn run_alone(plan: Plan) -> RunResult {
+    let _one_at_a_time = LOAD.lock().await;
+    engine::run(Arc::new(plan), Arc::new(Progress::default())).await
+}
+
 async fn serve(app: Router) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -40,7 +50,7 @@ async fn run(base: &str, path: &str, load: &str) -> RunResult {
     let env: Environment =
         serde_saphyr::from_str(&format!("base_url: {base}\nallowed_hosts: [127.0.0.1]\n")).unwrap();
     let plan = Plan::build(&parse_scenario(&yaml).unwrap(), &env, &Default::default()).unwrap();
-    engine::run(Arc::new(plan), Arc::new(Progress::default())).await
+    run_alone(plan).await
 }
 
 fn find<'a>(r: &'a RunResult, id: &str) -> &'a Finding {
@@ -332,7 +342,7 @@ load:\n  executor: constant_vus\n  vus: 2\n  duration: 4s\n"
     let env: Environment =
         serde_saphyr::from_str(&format!("base_url: {base}\nallowed_hosts: [127.0.0.1]\n")).unwrap();
     let plan = Plan::build(&parse_scenario(&yaml).unwrap(), &env, &Default::default()).unwrap();
-    engine::run(Arc::new(plan), Arc::new(Progress::default())).await
+    run_alone(plan).await
 }
 
 #[tokio::test(flavor = "multi_thread")]
