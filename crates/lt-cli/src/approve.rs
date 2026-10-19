@@ -249,7 +249,7 @@ fn print_summary(
         // Cota: cada VU renueva a lo sumo una vez por período mientras dura la carga.
         let rounds = (plan.load.duration().as_secs_f64() / r.every.as_secs_f64()).floor() as usize;
         let requests = rounds * plan.load.concurrency() as usize * plan.refresh_steps().len();
-        eprintln!("Renovación  {refresh} por VU, entre iteraciones: hasta {requests} requests");
+        eprintln!("Renovación  {refresh} por VU, en segundo plano: hasta {requests} requests");
     }
     for (i, d) in plan.data.iter().enumerate() {
         let label = if i == 0 { "Datos" } else { "" };

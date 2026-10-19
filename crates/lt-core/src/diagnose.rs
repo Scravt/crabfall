@@ -550,7 +550,8 @@ fn error_threshold(
         _ => vec![],
     };
     if let Some(why) = expired {
-        causes.insert(0, why);
+        // Reemplaza a la causa genérica de los 4xx, que ya mencionaba los tokens.
+        causes = vec![why];
     }
     if from_start {
         causes.insert(0, "Un error funcional del escenario o de la API (URL, datos, auth): revisalo con `lt check`.".into());

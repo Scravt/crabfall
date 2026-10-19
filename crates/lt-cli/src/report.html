@@ -575,7 +575,7 @@ function vuRefreshSection() {
   const v = run.vu_refresh;
   if (!v) return null;
   const state = v.failed_vus ? pill("serious", `${v.failed_vus} VUs dejaron de iterar`) : pill("good", `${num(v.refreshes)} renovaciones`);
-  return sessionSection("Renovación de sesión", state, `cada ${num(v.every_s)} s por VU, entre iteraciones; no entra en las métricas de los pasos`, v.steps);
+  return sessionSection("Renovación de sesión", state, `cada ${num(v.every_s)} s por VU, en segundo plano; no entra en las métricas de los pasos`, v.steps);
 }
 
 /** Tabla de pasos de vu_setup o vu_refresh, con su estado arriba. */

@@ -57,7 +57,7 @@ pub fn cmd_run(target: &crate::Target, as_json: bool) -> u8 {
         );
     }
     if let Some(refresh) = plan.refresh_summary() {
-        eprintln!("  renovación: {refresh} por VU, entre iteraciones");
+        eprintln!("  renovación: {refresh} por VU, en segundo plano");
     }
     if !tweaks.is_empty() {
         eprintln!("  ajustes: {}", tweaks.join(" "));

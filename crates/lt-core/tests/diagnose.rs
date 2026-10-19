@@ -325,8 +325,12 @@ async fn expired_session_says_so_and_suggests_vu_refresh() {
 
     let f = find(&r, "error_threshold");
     // Empieza a mitad de corrida, no desde el inicio, aunque haya pocas requests por segundo.
+    // El token vence a los 2 s del login, que es ~50 ms antes de que empiece la carga.
+    let from = f.window.as_ref().unwrap().from_s;
+    assert!((1..=2).contains(&from), "{}", f.title);
     assert!(
-        f.title.contains("recibe 401 desde el segundo 2"),
+        f.title
+            .contains(&format!("recibe 401 desde el segundo {from}")),
         "{}",
         f.title
     );

@@ -47,7 +47,7 @@ pub struct Scenario {
     /// Pasos que cada VU corre una vez, antes de la carga (por ejemplo, el login de cada usuario). Sus `extract` quedan como variables de ese VU en todas sus iteraciones. Ven `setup` y los datasets (una fila por VU). Corren para `vus` (constant_vus) o `max_vus` (executors de tasa). Si fallan en un VU, ese VU queda afuera; si fallan en todos, la corrida se aborta.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub vu_setup: Vec<Step>,
-    /// Renovación de la sesión de cada VU, para tokens que vencen durante la carga. Requiere `vu_setup`. Corre entre iteraciones, nunca en medio de una, y no entra en las métricas de carga.
+    /// Renovación de la sesión de cada VU, para tokens que vencen durante la carga. Requiere `vu_setup`. Corre en segundo plano: la iteración en curso sigue con el token anterior y la siguiente toma el nuevo. No entra en las métricas de carga.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vu_refresh: Option<VuRefresh>,
     /// Flujos de usuario. Cada iteración elige uno según su `weight` y ejecuta sus pasos en orden.
@@ -92,7 +92,7 @@ fn default_weight() -> u32 {
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct VuRefresh {
-    /// Cada cuánto renueva cada VU, contado desde su `vu_setup` o su última renovación. Tiene que ser menor que la vida del token menos lo que dura una iteración: la renovación espera a que termine la iteración en curso.
+    /// Cada cuánto renueva cada VU, contado desde su `vu_setup` o su última renovación. Tiene que ser menor que la vida del token menos lo que dura una iteración, porque cada iteración usa el token que tenía al empezar.
     pub every: HumanDuration,
     /// Pasos de la renovación, en orden (por ejemplo, `POST /auth/refresh`). Ven las variables del VU y lo que extraen las pisa. Sin pasos, se repite `vu_setup` (login de nuevo). Si fallan, ese VU deja de iterar.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
