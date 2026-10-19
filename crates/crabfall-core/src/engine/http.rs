@@ -53,6 +53,8 @@ pub struct Response {
     pub content_type: Option<String>,
     pub body: Bytes,
     pub timings: Timings,
+    /// URLs a las que redirigió, en orden; vacío si no hubo redirects.
+    pub redirects: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
@@ -68,6 +70,8 @@ pub enum FailureKind {
     Template,
     /// La respuesta llegó, pero un `extract` no encontró su valor.
     Extract,
+    /// Un redirect hacia un host fuera de `allowed_hosts`, o con una URL inválida.
+    Redirect,
 }
 
 #[derive(Debug)]
@@ -88,6 +92,9 @@ impl Failure {
 pub struct Client {
     pools: Mutex<HashMap<Origin, Vec<Conn>>>,
     tls: TlsConnector,
+    /// Solo se conecta a direcciones de loopback (`crabfall check`, ADR-004): ni un redirect
+    /// lo saca de la máquina.
+    loopback_only: bool,
 }
 
 impl Default for Client {
@@ -101,6 +108,15 @@ impl Client {
         Self {
             pools: Mutex::default(),
             tls: tls_connector(),
+            loopback_only: false,
+        }
+    }
+
+    /// Un cliente que se niega a conectarse fuera de loopback.
+    pub fn loopback_only() -> Self {
+        Self {
+            loopback_only: true,
+            ..Self::new()
         }
     }
 
@@ -198,6 +214,7 @@ impl Client {
             content_type,
             body,
             timings,
+            redirects: Vec::new(),
         })
     }
 
@@ -220,6 +237,15 @@ impl Client {
                 )
             })?;
         timings.dns = Some(t.elapsed());
+        if self.loopback_only && !addr.ip().is_loopback() {
+            return Err(Failure::new(
+                FailureKind::Connect,
+                format!(
+                    "`{host}` resuelve a {}, fuera de loopback: el smoke check solo corre contra la máquina local",
+                    addr.ip()
+                ),
+            ));
+        }
 
         let t = Instant::now();
         let tcp = TcpStream::connect(addr)
@@ -420,4 +446,50 @@ pub fn duplicate(request: &Request<Body>) -> Request<Body> {
         .expect("copia de un request válido");
     *copy.headers_mut() = request.headers().clone();
     copy
+}
+
+/// Tope del body descomprimido: protege contra respuestas que se inflan sin límite.
+pub const MAX_DECODED_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Descomprime el body según `content-encoding` (gzip, deflate o br), para que checks y
+/// `extract` vean el contenido. Los bytes medidos siguen siendo los del cable. Una
+/// codificación desconocida deja el body como llegó.
+pub fn decode(response: &mut Response) -> Result<(), Failure> {
+    use std::io::Read;
+    let encoding = response
+        .headers
+        .get(hyper::header::CONTENT_ENCODING)
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.trim().to_ascii_lowercase());
+    let Some(encoding) = encoding else {
+        return Ok(());
+    };
+    if response.body.is_empty() {
+        return Ok(());
+    }
+    let body = &response.body[..];
+    let reader: Box<dyn Read + '_> = match encoding.as_str() {
+        "gzip" | "x-gzip" => Box::new(flate2::read::MultiGzDecoder::new(body)),
+        "deflate" => Box::new(flate2::read::ZlibDecoder::new(body)),
+        "br" => Box::new(brotli_decompressor::Decompressor::new(body, 4096)),
+        _ => return Ok(()),
+    };
+    let mut out = Vec::new();
+    reader
+        .take(MAX_DECODED_BYTES + 1)
+        .read_to_end(&mut out)
+        .map_err(|e| {
+            Failure::new(
+                FailureKind::Protocol,
+                format!("no se pudo descomprimir el body ({encoding}): {e}"),
+            )
+        })?;
+    if out.len() as u64 > MAX_DECODED_BYTES {
+        return Err(Failure::new(
+            FailureKind::Protocol,
+            format!("el body descomprimido ({encoding}) supera 64 MB"),
+        ));
+    }
+    response.body = Bytes::from(out);
+    Ok(())
 }

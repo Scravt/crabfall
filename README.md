@@ -3,7 +3,7 @@
 Herramienta de pruebas de carga en Rust, pensada para usarse junto a Claude Code:
 Claude diseña el escenario y analiza los resultados; una persona aprueba y ejecuta la carga.
 
-Estado: **v0.1.0**, rebanada 13 cerrada (bytes por segundo). Ya funcionan: diseño con Claude, aprobación firmada, escenarios con `setup`, `extract`, checks y thresholds, tres executors, diagnóstico, comparación de corridas, datasets, pausas entre pasos, ajustes de la corrida por flag, un reporte HTML por corrida, login por usuario virtual (`vu_setup`), renovación de tokens durante la carga (`vu_refresh`), subida de archivos (`multipart`) y bytes enviados y recibidos por segundo. Ver el [roadmap](docs/roadmap.md).
+Estado: **rebanada 14** (cookies, redirects, compresión y formularios), después de la v0.1.0. Ya funcionan: diseño con Claude, aprobación firmada, escenarios con `setup`, `extract`, checks y thresholds, tres executors, diagnóstico, comparación de corridas, datasets, pausas entre pasos, ajustes de la corrida por flag, un reporte HTML por corrida, login por usuario virtual (`vu_setup`), renovación de tokens durante la carga (`vu_refresh`), subida de archivos (`multipart`), bytes enviados y recibidos por segundo, y un cliente HTTP con cookies, redirects, compresión y formularios. Ver el [roadmap](docs/roadmap.md).
 
 ## Uso
 
@@ -112,6 +112,25 @@ Con archivos grandes conviene mirar el tráfico: `crabfall run` muestra los byte
 tráfico      enviados 137.4 MB (2.1 MB/s, pico 4.3 MB/s = 36 Mbit/s)  recibidos 137.6 MB (2.1 MB/s, pico 4.1 MB/s = 34 Mbit/s)
 ```
 
+### Cookies, redirects y compresión
+
+Crabfall se comporta como un cliente real ([ADR-014](docs/adr/ADR-014-cliente-http-real.md)):
+
+- **Cookies:** cada VU guarda las cookies que le manda el servidor y las reenvía, desde su `vu_setup` hasta su última iteración. Una API con sesión por cookie funciona sin `extract`. `cookies: false` en la raíz las apaga.
+- **Redirects:** cada paso sigue hasta 10, solo hacia hosts de `allowed_hosts`; la latencia incluye todos los saltos. `redirects: 0` en el request (o en `defaults`) no sigue ninguno.
+- **Compresión:** cada request pide `gzip, br`; checks y `extract` ven el body descomprimido y los bytes cuentan lo comprimido. `accept-encoding: identity` en los headers pide sin comprimir.
+
+Para un formulario clásico, `form` arma el body `application/x-www-form-urlencoded`:
+
+```yaml
+request:
+  method: POST
+  url: /login
+  form: { username: "{{users.email}}", password: "{{users.password}}", remember: true }
+```
+
+`crabfall approve` muestra cómo se va a comportar el cliente en una línea `HTTP`.
+
 ### Ajustes sin editar el YAML
 
 `validate`, `check`, `approve` y `run` aceptan flags que pisan al escenario para esa corrida. Son lo que tendría un panel de personalización:
@@ -167,3 +186,7 @@ Para probar contra APIs más realistas: [shop-api](../shop-api) (local, con prob
 - [ADR-008 — Think time y ajustes por flag](docs/adr/ADR-008-think-time-y-ajustes.md)
 - [ADR-009 — Reporte HTML](docs/adr/ADR-009-reporte-html.md)
 - [ADR-010 — Setup por VU](docs/adr/ADR-010-setup-por-vu.md)
+- [ADR-011 — Renovación de sesión](docs/adr/ADR-011-renovacion-de-sesion.md)
+- [ADR-012 — Subir archivos (multipart)](docs/adr/ADR-012-multipart.md)
+- [ADR-013 — Bytes enviados y recibidos](docs/adr/ADR-013-trafico.md)
+- [ADR-014 — Cookies, redirects, compresión y formularios](docs/adr/ADR-014-cliente-http-real.md)

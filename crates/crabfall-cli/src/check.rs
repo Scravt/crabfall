@@ -62,6 +62,9 @@ pub fn cmd_check(target: &crate::Target, as_json: bool) -> u8 {
                 "{mark} {label:<width$}  {} {}  {outcome}  {} ms",
                 s.method, s.url, s.duration_ms
             );
+            for to in &s.redirects {
+                println!("    → {to}");
+            }
             for (name, value) in &s.extracted {
                 println!("    {name} = {value}");
             }

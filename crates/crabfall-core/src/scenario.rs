@@ -38,6 +38,9 @@ pub struct Scenario {
     /// Datasets: archivos CSV o JSON, relativos a `.crabfall/`. Cada iteración toma una fila de cada dataset que usa su flow, y los pasos la ven como `{{nombre.columna}}`. No se pueden usar en `setup`.
     #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
     pub data: IndexMap<String, DataSpec>,
+    /// Cookies: cada VU guarda las que le manda el servidor (`set-cookie`) y las reenvía en sus requests, como un navegador, desde su `vu_setup` hasta su última iteración. `setup` usa las suyas, aparte. Por defecto `true`; `false` las apaga.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cookies: Option<bool>,
     /// Headers y timeout que heredan todos los pasos de `flows` (no los de `setup`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub defaults: Option<Defaults>,
@@ -70,6 +73,9 @@ pub struct Defaults {
     /// Pausa después de cada paso de los flows, como `think` del paso. Un paso con su propio `think` (incluso `0s`) la pisa.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub think: Option<Think>,
+    /// Cuántos redirects sigue cada paso, como `redirects` del request. Por defecto 10.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub redirects: Option<u32>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
@@ -187,7 +193,7 @@ pub struct Check {
     pub matches: Option<String>,
 }
 
-/// Criterio sobre una métrica, por ejemplo `{ metric: http.latency.p95, lt: 300ms }`. Usá exactamente uno de `crabfall`, `lte`, `gt`, `gte`.
+/// Criterio sobre una métrica, por ejemplo `{ metric: http.latency.p95, lt: 300ms }`. Usá exactamente uno de `lt`, `lte`, `gt`, `gte`.
 #[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Threshold {
@@ -239,15 +245,21 @@ pub struct RequestSpec {
     /// Timeout del request. Por defecto 30s.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout: Option<HumanDuration>,
-    /// Body JSON; agrega `content-type: application/json`. Excluye a `body`.
+    /// Cuántos redirects (301, 302, 303, 307, 308) sigue, solo hacia hosts de `allowed_hosts`. Por defecto 10; `0` no sigue ninguno y el paso responde con el 3xx. La latencia incluye todos los saltos y el status es el de la última respuesta.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub redirects: Option<u32>,
+    /// Body JSON; agrega `content-type: application/json`. Excluye a `body`, `multipart` y `form`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub json: Option<Value>,
-    /// Body de texto tal cual. Excluye a `json`.
+    /// Body de texto tal cual. Excluye a `json`, `multipart` y `form`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub body: Option<String>,
-    /// Body `multipart/form-data`, por ejemplo para subir archivos: `{ file: { file: files/foto.jpg }, description: "texto" }`. Cada clave es el nombre del campo; un string es un campo de texto. Crabfall pone el `content-type` con su boundary. Excluye a `json` y `body`.
+    /// Body `multipart/form-data`, por ejemplo para subir archivos: `{ file: { file: files/foto.jpg }, description: "texto" }`. Cada clave es el nombre del campo; un string es un campo de texto. Crabfall pone el `content-type` con su boundary. Excluye a `json`, `body` y `form`.
     #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
     pub multipart: IndexMap<String, MultipartPart>,
+    /// Body de formulario (`application/x-www-form-urlencoded`), por ejemplo `{ username: "{{users.email}}", remember: true }`. Agrega el `content-type`. Excluye a `json`, `body` y `multipart`.
+    #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
+    pub form: IndexMap<String, Value>,
 }
 
 /// Un campo de un body multipart: texto (`"hola {{x}}"`) o un archivo (`{ file: files/a.pdf }`).

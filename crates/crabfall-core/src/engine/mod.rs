@@ -1,5 +1,6 @@
 //! Motor: scheduler de modelo abierto (ADR-003).
 
+pub mod cookies;
 pub mod http;
 pub mod plan;
 
@@ -27,8 +28,12 @@ use crate::{
         VuSetupResult, VuSetupStep, histogram, record,
     },
 };
-use http::{Body, Client, Failure, FailureKind, Meter, Response, Traffic};
-use hyper::Request;
+use cookies::Jar;
+use http::{Body, Client, Failure, FailureKind, Meter, Origin, Response, Traffic};
+use hyper::{
+    Method, Request,
+    header::{AUTHORIZATION, CONTENT_TYPE, COOKIE, HOST, HeaderValue, LOCATION},
+};
 use plan::{Plan, StepPlan, Vars};
 
 /// Contadores en vivo, para mostrar progreso.
@@ -89,6 +94,7 @@ pub async fn run_step(
     step: &StepPlan,
     setup: &HashMap<String, Value>,
     locals: &HashMap<String, Value>,
+    jar: &Jar,
 ) -> StepRun {
     let request = step.request(&Vars {
         plan,
@@ -96,7 +102,7 @@ pub async fn run_step(
         locals,
     });
     let meter = Arc::new(Meter::default());
-    let result = send_step(client, step, request, &meter).await;
+    let result = send_step(client, plan, step, request, &meter, jar).await;
     let mut extracted = Vec::new();
     let mut extract_error = None;
     let mut checks = Vec::new();
@@ -159,16 +165,19 @@ struct Session {
     renew_at: std::sync::Mutex<Option<Instant>>,
     /// Falló al renovar: deja de iterar.
     retired: std::sync::atomic::AtomicBool,
+    /// Sus cookies, desde `vu_setup` hasta la última iteración.
+    cookies: Jar,
 }
 
 type Vu = Arc<Session>;
 
 impl Session {
-    fn new(vars: HashMap<String, Value>, renew_at: Option<Instant>) -> Vu {
+    fn new(vars: HashMap<String, Value>, renew_at: Option<Instant>, cookies: Jar) -> Vu {
         Arc::new(Self {
             vars: std::sync::Mutex::new(Arc::new(vars)),
             renew_at: std::sync::Mutex::new(renew_at),
             retired: false.into(),
+            cookies,
         })
     }
 
@@ -228,6 +237,7 @@ async fn session_steps(
     steps: &[StepPlan],
     setup: &HashMap<String, Value>,
     mut vars: HashMap<String, Value>,
+    jar: &Jar,
 ) -> (
     Option<HashMap<String, Value>>,
     Vec<(usize, Duration, Option<String>)>,
@@ -235,7 +245,7 @@ async fn session_steps(
     let mut samples = Vec::new();
     for (i, step) in steps.iter().enumerate() {
         let t = Instant::now();
-        let run = run_step(client, plan, step, setup, &vars).await;
+        let run = run_step(client, plan, step, setup, &vars, jar).await;
         let problem = step_problem(step, &run);
         samples.push((i, t.elapsed(), problem.clone()));
         if problem.is_some() {
@@ -285,13 +295,21 @@ async fn prepare_vus(
             if let Some(p) = &pacer {
                 p.wait(never).await;
             }
-            let (vars, samples) =
-                session_steps(&client, &plan, &plan.vu_setup, &setup, plan.vu_row_vars()).await;
+            let jar = Jar::new(plan.cookies);
+            let (vars, samples) = session_steps(
+                &client,
+                &plan,
+                &plan.vu_setup,
+                &setup,
+                plan.vu_row_vars(),
+                &jar,
+            )
+            .await;
             if vars.is_some() {
                 progress.vus_ready.fetch_add(1, Relaxed);
             }
             // El token se emitió recién: la cuenta para renovarlo arranca ahora.
-            let vu = vars.map(|vars| Session::new(vars, every.map(|e| Instant::now() + e)));
+            let vu = vars.map(|vars| Session::new(vars, every.map(|e| Instant::now() + e), jar));
             (vu, samples)
         });
     }
@@ -343,6 +361,7 @@ async fn renew(shared: &Shared, refresh: &Refresh, vu: &Session) {
         shared.plan.refresh_steps(),
         &shared.setup,
         (*vu.vars()).clone(),
+        &vu.cookies,
     )
     .await;
     {
@@ -409,9 +428,11 @@ pub async fn run_setup(
 ) -> (HashMap<String, Value>, Vec<SetupStep>, Option<String>) {
     let mut vars = HashMap::new();
     let mut steps = Vec::new();
+    // `setup` corre una vez, con sus propias cookies: no son de ningún VU.
+    let jar = Jar::new(plan.cookies);
     for step in &plan.setup {
         let start = Instant::now();
-        let run = run_step(client, plan, step, &vars, &HashMap::new()).await;
+        let run = run_step(client, plan, step, &vars, &HashMap::new(), &jar).await;
         let status = run.result.as_ref().ok().map(|r| r.status);
         let problem = step_problem(step, &run);
         steps.push(SetupStep {
@@ -444,8 +465,8 @@ struct Shared {
 }
 
 impl Shared {
-    async fn iteration(&self, flow: usize, intended: Instant, vu: &HashMap<String, Value>) {
-        iteration(self, flow, vu, intended).await;
+    async fn iteration(&self, flow: usize, intended: Instant, vu: &Session) {
+        iteration(self, flow, &vu.vars(), &vu.cookies, intended).await;
     }
 }
 
@@ -473,9 +494,11 @@ pub async fn run(plan: Arc<Plan>, progress: Arc<Progress>) -> RunResult {
     // Un VU por cada lugar de concurrencia; con `vu_setup`, cada uno se prepara antes de la carga.
     let concurrency = plan.load.concurrency();
     let (vus, vu_setup) = if plan.vu_setup.is_empty() {
-        // Sin variables ni renovación, todos pueden compartir la misma sesión vacía.
-        let empty = Session::new(HashMap::new(), None);
-        (vec![empty; concurrency as usize], None)
+        // Sin variables ni renovación, pero cada VU con sus cookies.
+        let vus = (0..concurrency)
+            .map(|_| Session::new(HashMap::new(), None, Jar::new(plan.cookies)))
+            .collect();
+        (vus, None)
     } else {
         let (ready, result) =
             prepare_vus(&client, &plan, &setup_vars, concurrency, &progress).await;
@@ -660,7 +683,7 @@ async fn open_model(shared: Shared, start: Instant, vus: Vec<Vu>) -> Dispatch {
         let _ = shared.tx.send(Event::Started(intended));
         let (shared, free) = (shared.clone(), free.clone());
         tasks.spawn(async move {
-            shared.iteration(flow, intended, &vu.vars()).await;
+            shared.iteration(flow, intended, &vu).await;
             free.lock().unwrap().push(vu);
         });
     }
@@ -723,7 +746,7 @@ async fn closed_model(
                 let flow = picker.lock().unwrap().next();
                 shared.progress.started.fetch_add(1, Relaxed);
                 let _ = shared.tx.send(Event::Started(Instant::now()));
-                shared.iteration(flow, Instant::now(), &vu.vars()).await;
+                shared.iteration(flow, Instant::now(), &vu).await;
             }
         });
     }
@@ -789,7 +812,13 @@ impl Pacer {
 
 /// Ejecuta los pasos de un flow en orden. Si un paso falla sin respuesta o un `extract`
 /// no encuentra su valor, la iteración se corta: los pasos siguientes dependen de él.
-async fn iteration(shared: &Shared, flow: usize, vu: &HashMap<String, Value>, intended: Instant) {
+async fn iteration(
+    shared: &Shared,
+    flow: usize,
+    vu: &HashMap<String, Value>,
+    jar: &Jar,
+    intended: Instant,
+) {
     let Shared {
         plan,
         client,
@@ -802,7 +831,7 @@ async fn iteration(shared: &Shared, flow: usize, vu: &HashMap<String, Value>, in
     let mut locals = vu.clone();
     locals.extend(plan.row_vars(&plan.flows[flow]));
     for step in &plan.flows[flow].steps {
-        let run = run_step(client, plan, step, setup, &locals).await;
+        let run = run_step(client, plan, step, setup, &locals, jar).await;
         let done = Instant::now();
         let broken = run.broken();
         let outcome = match run.result {
@@ -904,18 +933,154 @@ impl WeightedPicker {
     }
 }
 
+/// Manda el request con las cookies del VU y sigue los redirects del paso, solo hacia
+/// `allowed_hosts` (ADR-014). Devuelve la última respuesta, ya descomprimida.
+async fn follow(
+    client: &Client,
+    plan: &Plan,
+    step: &StepPlan,
+    mut request: Request<Body>,
+    meter: &Arc<Meter>,
+    jar: &Jar,
+) -> Result<Response, Failure> {
+    let mut origin = step.origin.clone();
+    // La cookie que puso el escenario, para sumarle las del jar sin perderla.
+    let mut own_cookie = request.headers().get(COOKIE).cloned();
+    let mut redirects = Vec::new();
+    loop {
+        let url = url_of(&origin, request.uri())?;
+        let cookie = match (&own_cookie, jar.header(&url)) {
+            (Some(own), Some(jar)) => Some(format!("{}; {jar}", own.to_str().unwrap_or_default())),
+            (Some(own), None) => own.to_str().ok().map(String::from),
+            (None, jar) => jar,
+        };
+        request.headers_mut().remove(COOKIE);
+        if let Some(c) = cookie.and_then(|c| HeaderValue::from_str(&c).ok()) {
+            request.headers_mut().insert(COOKIE, c);
+        }
+
+        let mut response = client
+            .send(&origin, || http::duplicate(&request), meter)
+            .await?;
+        jar.store(&url, &response.headers);
+        let location = match response.status {
+            301 | 302 | 303 | 307 | 308 if redirects.len() < step.redirects as usize => response
+                .headers
+                .get(LOCATION)
+                .and_then(|v| v.to_str().ok())
+                .map(String::from),
+            _ => None,
+        };
+        let Some(location) = location else {
+            response.redirects = redirects;
+            http::decode(&mut response)?;
+            return Ok(response);
+        };
+
+        let next = url.join(&location).map_err(|e| {
+            Failure::new(
+                FailureKind::Redirect,
+                format!("redirect a `{location}`: URL inválida ({e})"),
+            )
+        })?;
+        let https = match next.scheme() {
+            "http" => false,
+            "https" => true,
+            other => {
+                return Err(Failure::new(
+                    FailureKind::Redirect,
+                    format!("redirect a `{next}`: esquema `{other}` no soportado"),
+                ));
+            }
+        };
+        let host = next.host_str().unwrap_or_default().to_ascii_lowercase();
+        if !plan.allowed_hosts.contains(&host) {
+            return Err(Failure::new(
+                FailureKind::Redirect,
+                format!("redirect a `{host}`, que no está en allowed_hosts del entorno"),
+            ));
+        }
+        let next_origin = Origin {
+            https,
+            port: next
+                .port_or_known_default()
+                .unwrap_or(if https { 443 } else { 80 }),
+            host,
+        };
+        // Como un navegador: las credenciales propias no viajan a otro host.
+        let same_host = next_origin.host == origin.host;
+        if !same_host {
+            own_cookie = None;
+        }
+        request = redirected(&request, response.status, &next, same_host)?;
+        origin = next_origin;
+        redirects.push(next.to_string());
+    }
+}
+
+/// URL completa de un request, para el jar y para resolver un `location` relativo.
+fn url_of(origin: &Origin, uri: &hyper::Uri) -> Result<url::Url, Failure> {
+    let scheme = if origin.https { "https" } else { "http" };
+    let target = uri.path_and_query().map_or("/", |p| p.as_str());
+    url::Url::parse(&format!(
+        "{scheme}://{}:{}{target}",
+        origin.host, origin.port
+    ))
+    .map_err(|e| Failure::new(FailureKind::Protocol, format!("URL inválida: {e}")))
+}
+
+/// El request que sigue a un redirect. 303, y 301 o 302 después de un POST, pasan a GET
+/// sin body (como los navegadores); 307 y 308 repiten método y body.
+fn redirected(
+    previous: &Request<Body>,
+    status: u16,
+    next: &url::Url,
+    same_host: bool,
+) -> Result<Request<Body>, Failure> {
+    let method = previous.method();
+    let to_get = status == 303 && method != Method::HEAD
+        || matches!(status, 301 | 302) && method == Method::POST;
+    let mut request = http::duplicate(previous);
+    if to_get {
+        *request.method_mut() = Method::GET;
+        *request.body_mut() = Body::default();
+        request.headers_mut().remove(CONTENT_TYPE);
+    }
+    *request.uri_mut() = next[url::Position::BeforePath..]
+        .parse()
+        .map_err(|e| Failure::new(FailureKind::Redirect, format!("redirect a `{next}`: {e}")))?;
+    let host = next.host_str().unwrap_or_default();
+    let authority = match next.port() {
+        Some(port) => format!("{host}:{port}"),
+        None => host.to_string(),
+    };
+    let headers = request.headers_mut();
+    headers.insert(
+        HOST,
+        HeaderValue::from_str(&authority)
+            .map_err(|e| Failure::new(FailureKind::Redirect, e.to_string()))?,
+    );
+    if !same_host {
+        headers.remove(AUTHORIZATION);
+    }
+    Ok(request)
+}
+
 /// Envía el request ya armado de un paso, con su timeout. Si armarlo falló, devuelve
 /// una falla de tipo `template`.
 pub async fn send_step(
     client: &Client,
+    plan: &Plan,
     step: &StepPlan,
     request: Result<Request<Body>, String>,
     meter: &Arc<Meter>,
+    jar: &Jar,
 ) -> Result<Response, Failure> {
     let request = request.map_err(|e| Failure::new(FailureKind::Template, e))?;
+    // El timeout cubre todos los saltos: es lo que espera un cliente real.
     match timeout(
         step.timeout,
-        client.send(&step.origin, || http::duplicate(&request), meter),
+        follow(client, plan, step, request, meter, jar),
     )
     .await
     {

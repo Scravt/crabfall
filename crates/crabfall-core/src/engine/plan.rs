@@ -13,7 +13,7 @@ use bytes::Bytes;
 use http_body_util::Full;
 use hyper::{
     Method, Request,
-    header::{CONTENT_TYPE, HOST, HeaderName, HeaderValue, USER_AGENT},
+    header::{ACCEPT_ENCODING, CONTENT_TYPE, HOST, HeaderName, HeaderValue, USER_AGENT},
 };
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 use serde_json::{Value, json};
@@ -34,6 +34,12 @@ use crate::{
 };
 
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Redirects que sigue un paso si el escenario no dice otra cosa.
+pub const DEFAULT_REDIRECTS: u32 = 10;
+
+/// Lo que piden los clientes reales; un header `accept-encoding` del escenario lo pisa.
+pub const DEFAULT_ACCEPT_ENCODING: &str = "gzip, br";
 
 /// Lo que se codifica de un valor interpolado en el path: todo menos lo no reservado.
 const PATH_VALUE: &AsciiSet = &NON_ALPHANUMERIC
@@ -69,6 +75,10 @@ pub struct Plan {
     pub load: LoadPlan,
     /// Hosts a los que se va a conectar.
     pub hosts: BTreeSet<String>,
+    /// `allowed_hosts` del entorno, en minúsculas: un redirect solo se sigue hacia uno de estos.
+    pub allowed_hosts: BTreeSet<String>,
+    /// Cada VU guarda y reenvía sus cookies (`cookies`, por defecto `true`).
+    pub cookies: bool,
     /// Cota de requests/s; `None` con `constant_vus`.
     pub max_request_rate: Option<f64>,
     /// `limits.max_rps` del entorno: el motor no lo supera aunque la tasa no esté acotada.
@@ -121,6 +131,8 @@ pub enum BodyPlan {
         source: Value,
     },
     Text(Template),
+    /// `application/x-www-form-urlencoded`: campo y valor, en el orden del escenario.
+    Form(Vec<(String, Template)>),
     /// `multipart/form-data`. El boundary es fijo por paso y no se firma: no está en el escenario.
     Multipart {
         boundary: String,
@@ -157,6 +169,8 @@ pub struct StepPlan {
     headers: Vec<(HeaderName, Template)>,
     pub body: BodyPlan,
     pub timeout: Duration,
+    /// Cuántos redirects sigue (`0`: ninguno).
+    pub redirects: u32,
     /// Pausa después del paso; `None` si no hay.
     pub think: Option<Think>,
     /// Variables que salen de la respuesta.
@@ -194,6 +208,13 @@ impl StepPlan {
                 serde_json::to_vec(&template.render(scope)?).expect("JSON siempre serializa"),
             ),
             BodyPlan::Text(t) => Bytes::from(t.render(scope)?),
+            BodyPlan::Form(fields) => {
+                let mut form = form_urlencoded::Serializer::new(String::new());
+                for (name, value) in fields {
+                    form.append_pair(name, &value.render(scope)?);
+                }
+                Bytes::from(form.finish())
+            }
             BodyPlan::Multipart { boundary, parts } => multipart(boundary, parts, scope)?,
         };
         let mut request = Request::builder()
@@ -261,6 +282,7 @@ impl StepPlan {
             BodyPlan::None => {}
             BodyPlan::Json { template, .. } => all.extend(template.templates()),
             BodyPlan::Text(t) => all.push(t),
+            BodyPlan::Form(fields) => all.extend(fields.iter().map(|(_, t)| t)),
             BodyPlan::Multipart { parts, .. } => all.extend(parts.iter().map(|(_, p)| match p {
                 PartPlan::Text(t) => t,
                 PartPlan::File { filename, .. } => filename,
@@ -421,6 +443,8 @@ impl Plan {
             flows,
             load: scenario.load.plan(),
             hosts,
+            allowed_hosts: allowed.clone(),
+            cookies: scenario.cookies.unwrap_or(true),
             max_request_rate: scenario.max_request_rate(),
             request_cap: env.limits.max_rps,
             vars,
@@ -477,6 +501,9 @@ impl Plan {
                 BodyPlan::None => Value::Null,
                 BodyPlan::Json { source, .. } => json!({ "json": source }),
                 BodyPlan::Text(t) => json!({ "text": t.source() }),
+                BodyPlan::Form(fields) => json!({
+                    "form": fields.iter().map(|(n, v)| json!([n, v.source()])).collect::<Vec<_>>()
+                }),
                 // Se firma el contenido de cada archivo, no solo su ruta (ADR-012).
                 BodyPlan::Multipart { parts, .. } => json!({
                     "multipart": parts.iter().map(|(name, p)| match p {
@@ -505,6 +532,10 @@ impl Plan {
                 "tags": s.tags,
                 "extract": extract,
             });
+            // Solo si no es el de siempre (ADR-014).
+            if s.redirects != DEFAULT_REDIRECTS {
+                step["redirects"] = json!(s.redirects);
+            }
             // Solo si hay pausa, para no invalidar las aprobaciones de antes (ADR-008).
             if let Some(think) = s.think {
                 step["think"] = json!(think.to_string());
@@ -533,6 +564,10 @@ impl Plan {
             "setup": setup,
             "flows": flows,
         });
+        // Solo si se apagaron (ADR-014).
+        if !self.cookies {
+            canonical["cookies"] = json!(false);
+        }
         // Solo si hay `vu_setup`, para no invalidar las aprobaciones de antes (ADR-010).
         if !self.vu_setup.is_empty() {
             canonical["vu_setup"] = self.vu_setup.iter().map(step).collect();
@@ -580,6 +615,40 @@ impl Plan {
                 _ => vec![],
             })
             .collect()
+    }
+
+    /// Cómo se comporta el cliente, para quien aprueba: `cookies por VU · sigue hasta 10
+    /// redirects (solo a allowed_hosts) · acepta gzip, br`.
+    pub fn http_summary(&self) -> String {
+        let cookies = if self.cookies {
+            "cookies por VU"
+        } else {
+            "sin cookies"
+        };
+        let mut limits: Vec<u32> = self.all_steps().map(|s| s.redirects).collect();
+        limits.sort_unstable();
+        limits.dedup();
+        let redirects = match limits.as_slice() {
+            [0] => "no sigue redirects".to_string(),
+            [n] => format!("sigue hasta {n} redirects (solo a allowed_hosts)"),
+            _ => "sigue redirects según el paso (solo a allowed_hosts)".to_string(),
+        };
+        let mut encodings: Vec<String> = self
+            .all_steps()
+            .filter_map(|s| {
+                s.headers
+                    .iter()
+                    .find(|(n, _)| *n == ACCEPT_ENCODING)
+                    .map(|(_, v)| v.source().to_string())
+            })
+            .collect();
+        encodings.sort();
+        encodings.dedup();
+        let compression = match encodings.as_slice() {
+            [e] => format!("acepta {e}"),
+            _ => "acepta compresión según el paso".to_string(),
+        };
+        format!("{cookies} · {redirects} · {compression}")
     }
 
     /// Pasos que renuevan la sesión de un VU: los de `vu_refresh` o, si no tiene, `vu_setup`.
@@ -981,6 +1050,7 @@ fn build_step(
             USER_AGENT,
             Template::literal(concat!("crabfall/", env!("CARGO_PKG_VERSION"))),
         ),
+        (ACCEPT_ENCODING, Template::literal(DEFAULT_ACCEPT_ENCODING)),
     ];
     let mut set_header = |name: &str, value: &str| -> Result<(), String> {
         let name = HeaderName::try_from(name).map_err(|e| format!("header `{name}`: {e}"))?;
@@ -998,6 +1068,21 @@ fn build_step(
             }
         }
         (None, Some(text)) => BodyPlan::Text(Template::parse(text)?),
+        (None, None) if !r.form.is_empty() => {
+            set_header(CONTENT_TYPE.as_str(), "application/x-www-form-urlencoded")?;
+            let fields = r
+                .form
+                .iter()
+                .map(|(name, value)| {
+                    let template = match value {
+                        Value::String(s) => Template::parse(s)?,
+                        other => Template::literal(to_text(other)),
+                    };
+                    Ok((name.clone(), template))
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            BodyPlan::Form(fields)
+        }
         (None, None) if !r.multipart.is_empty() => multipart_plan(&r.multipart, files)?,
         (None, None) => BodyPlan::None,
     };
@@ -1026,6 +1111,10 @@ fn build_step(
             .timeout
             .or(defaults.and_then(|d| d.timeout))
             .map_or(DEFAULT_TIMEOUT, |t| t.0),
+        redirects: r
+            .redirects
+            .or(defaults.and_then(|d| d.redirects))
+            .unwrap_or(DEFAULT_REDIRECTS),
         think: step
             .think
             .or(defaults.and_then(|d| d.think))
@@ -1115,6 +1204,7 @@ mod tests {
             extract: vec![],
             checks: vec![],
             timeout: DEFAULT_TIMEOUT,
+            redirects: DEFAULT_REDIRECTS,
             think: None,
         };
         assert_eq!(step.target(&NoVars).unwrap(), "/a%20b/1?q=x+y%26z");
