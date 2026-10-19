@@ -3,7 +3,7 @@
 Herramienta de pruebas de carga en Rust, pensada para usarse junto a Claude Code:
 Claude diseña el escenario y analiza los resultados; una persona aprueba y ejecuta la carga.
 
-Estado: **rebanada 12** (subir archivos). Ya funcionan: diseño con Claude, aprobación firmada, escenarios con `setup`, `extract`, checks y thresholds, tres executors, diagnóstico, comparación de corridas, datasets, pausas entre pasos, ajustes de la corrida por flag, un reporte HTML por corrida, login por usuario virtual (`vu_setup`), renovación de tokens durante la carga (`vu_refresh`) y subida de archivos (`multipart`). Ver el [roadmap](docs/roadmap.md).
+Estado: **rebanada 12 cerrada** (subir archivos). Ya funcionan: diseño con Claude, aprobación firmada, escenarios con `setup`, `extract`, checks y thresholds, tres executors, diagnóstico, comparación de corridas, datasets, pausas entre pasos, ajustes de la corrida por flag, un reporte HTML por corrida, login por usuario virtual (`vu_setup`), renovación de tokens durante la carga (`vu_refresh`) y subida de archivos (`multipart`). Ver el [roadmap](docs/roadmap.md).
 
 ## Uso
 
