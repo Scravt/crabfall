@@ -71,3 +71,12 @@ La regla para elegir `every`: menos que la vida del token, menos lo que dura una
 
 - **A favor:** corridas largas contra APIs con tokens cortos, sin 401 del cliente y con las métricas limpias. Con refresh token o con login de nuevo.
 - **En contra:** la vida del token no se lee de la respuesta (`expires_in`), hay que ponerla a mano en `every`. Si el servidor acorta el TTL, aparecen 401 de nuevo, aunque es justo lo que el reporte tiene que mostrar.
+
+## Diagnóstico de sesiones vencidas
+
+La primera corrida en `market-api` sin `vu_refresh`, con tokens de 60 s, mostró que el diagnóstico de los 401 estaba mal. Decía "falla desde el inicio (200%)" de un paso que había respondido bien durante un minuto. Había dos errores en `error_threshold`:
+
+- **Errores contados dos veces:** un 401 sin el campo que buscaba el `extract` se contaba dos veces en la serie por segundo. Ahora es un error.
+- **"Desde el inicio" por error:** con pausas, el paso tenía 2 o 3 requests por segundo y la regla esperaba al primer segundo con 5 o más. Los 401 de los segundos anteriores quedaban como "errores de antes" y parecía que fallaba desde el inicio. Ahora la ventana arranca en el primer segundo que ya fallaba, y la tasa es la de toda la ventana.
+
+Además, si dominan los 401 y empiezan a mitad de corrida, el hallazgo dice "venció la sesión". La primera causa depende de cómo se obtiene el token: con `setup`, pasar el login a `vu_setup`; con `vu_setup`, agregar `vu_refresh`; con `vu_refresh`, bajar `every`.

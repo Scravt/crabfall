@@ -102,7 +102,11 @@ pub fn cmd_approve(target: &crate::Target) -> u8 {
     match saved {
         Ok(()) => {
             eprintln!("✓ aprobado: {}", display(&file));
-            eprintln!("  Ejecutalo con: lt run {} --env {env_name}", plan.scenario);
+            // Con los mismos ajustes: la aprobación los firma y `run` sin ellos la rechaza.
+            eprintln!(
+                "  Ejecutalo con: {}",
+                command("run", &plan.scenario, &env_name, &tweaks)
+            );
             exit::OK
         }
         Err(e) => {
@@ -120,14 +124,7 @@ pub fn verify_for_run(
     env_name: &str,
     flags: &[String],
 ) -> Result<Approval, ()> {
-    let command = |verb: &str, flags: &[String]| {
-        let mut c = format!("lt {verb} {} --env {env_name}", plan.scenario);
-        for f in flags {
-            c.push(' ');
-            c.push_str(f);
-        }
-        c
-    };
+    let command = |verb: &str, flags: &[String]| command(verb, &plan.scenario, env_name, flags);
     let fail = |msg: String| {
         eprintln!("✗ {} en `{env_name}`: {msg}", plan.scenario);
         eprintln!(
@@ -174,6 +171,16 @@ pub fn verify_for_run(
             Err(())
         }
     }
+}
+
+/// `lt <verb> <escenario> --env <entorno> <flags>`, para copiar y pegar.
+fn command(verb: &str, scenario: &str, env_name: &str, flags: &[String]) -> String {
+    let mut c = format!("lt {verb} {scenario} --env {env_name}");
+    for f in flags {
+        c.push(' ');
+        c.push_str(f);
+    }
+    c
 }
 
 fn load(project: &Project, scenario: &str, env_name: &str) -> Result<Option<Approval>, String> {
