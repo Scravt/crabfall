@@ -69,8 +69,16 @@ fn round(x: f64) -> f64 {
 
 /// Lo que produce cada request.
 pub enum Outcome {
-    Response { status: u16, timings: Timings },
-    Failure { kind: FailureKind, message: String },
+    Response {
+        status: u16,
+        timings: Timings,
+        /// Lo que dijo del rate limit, si fue un 429.
+        limit: Option<Box<crate::ratelimit::Sample>>,
+    },
+    Failure {
+        kind: FailureKind,
+        message: String,
+    },
 }
 
 struct CheckCount {
@@ -82,6 +90,7 @@ struct CheckCount {
 
 struct StepStats {
     requests: u64,
+    rate_limit: Option<crate::ratelimit::Summary>,
     traffic: Traffic,
     statuses: BTreeMap<u16, u64>,
     failures: BTreeMap<FailureKind, u64>,
@@ -99,6 +108,7 @@ impl StepStats {
         Self {
             requests: 0,
             traffic: Traffic::default(),
+            rate_limit: None,
             statuses: BTreeMap::new(),
             failures: BTreeMap::new(),
             error_samples: Vec::new(),
@@ -244,8 +254,15 @@ impl Collector {
         s.requests += 1;
         add(&mut s.traffic, traffic);
         match outcome {
-            Outcome::Response { status, timings } => {
+            Outcome::Response {
+                status,
+                timings,
+                limit,
+            } => {
                 *s.statuses.entry(status).or_default() += 1;
+                if let Some(l) = limit {
+                    s.rate_limit.get_or_insert_default().add(&l);
+                }
                 record(&mut s.latency, latency);
                 record(&mut s.ttfb, timings.ttfb);
                 for (h, d) in [
@@ -432,6 +449,7 @@ impl Collector {
                     connect_ms: Percentiles::from(&s.connect),
                     tls_ms: Percentiles::from(&s.tls),
                     dns_ms: Percentiles::from(&s.dns),
+                    rate_limit: s.rate_limit,
                 }
             })
             .collect()
@@ -509,6 +527,9 @@ pub struct StepResult {
     pub connect_ms: Option<Percentiles>,
     pub tls_ms: Option<Percentiles>,
     pub dns_ms: Option<Percentiles>,
+    /// Lo que dijeron sus respuestas 429 del rate limit (`Retry-After` y la política).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rate_limit: Option<crate::ratelimit::Summary>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]

@@ -177,6 +177,12 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente. Al cerrar
 - [x] Tests: contra axum con `tower-http` comprimiendo de verdad (gzip y br), sesión por VU, cookies apagadas, redirects (cadena, límite, loop, POST 302 y 307, otro host sin `authorization`), check sin salir de loopback, formularios, firma y validación
 - Listo cuando: en `market-api`, `browse` aprobado de nuevo corre igual que antes (Express no comprime: los bytes no cambian). Detrás de Caddy (perfil `tls`, `encode gzip`) los bytes recibidos de las búsquedas tienen que bajar varias veces. **Pendiente:** las corridas (las aprueba y ejecuta una persona).
 
+**15. Lo que dice el servidor**
+- [x] De cada 429 se guardan `Retry-After` y la política declarada (`RateLimit-Policy` draft-8 y drafts 6-7, `X-RateLimit-Limit`) en `steps[].rate_limit`; `error_threshold` dice el límite con números; `crabfall run` lo muestra en una línea `límite` (ADR-005)
+- [x] `crabfall compare` compara bytes por request y avisa si la respuesta o el request cambió mucho de tamaño (ADR-006)
+- [x] Tests: el parser con los headers reales de express-rate-limit y los formatos viejos, la patología de rate limit con headers, y el aviso de tamaño (también con corridas sin bytes)
+- Listo cuando: en `market-api`, el hallazgo de `rate-limit` (20 it/s contra `/me`, que corta a los ~30 s) dice "declara 600 requests cada 60 s" (el límite por usuario de `userLimit`). **Pendiente:** la corrida.
+
 ## Primera versión
 
 **v0.1.0** (19 oct 2026): las rebanadas 0 a 13 con el nombre Crabfall (binario `crabfall`, carpeta `.crabfall/`), en `main` y en GitHub (privado). Lo que queda abierto de esas rebanadas: TLS contra un servidor real (1), la skill en una sesión nueva de Claude Code (2). La rebanada 13 se cerró después, con la corrida de `upload`.
@@ -187,7 +193,7 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente. Al cerrar
 
 **Al final: modelos de carga nuevos** (`ramping_vus`, iteraciones fijas, arrival por VU). Hoy alcanzan `constant_rate`, `ramping_rate` y `constant_vus`.
 
-Regla de diagnóstico para el ancho de banda (los bytes por segundo se estancan mientras la latencia sube), bytes por request en `crabfall compare` (una respuesta que creció mucho), más reglas de diagnóstico, corrida base fija para CI (`crabfall compare --baseline`), servidor MCP, importadores (OpenAPI, curl, Postman), HTTP/2, GUI con Tauri (después de la TUI), `pick: unique` para datasets, leer `expires_in` para elegir solo cuándo renovar, leer `Retry-After` en los 429 para que el hallazgo diga la ventana del límite, GitHub Action, correlación con métricas del servidor (OTLP, Prometheus), WebSockets, gRPC, Kafka.
+Regla de diagnóstico para el ancho de banda (los bytes por segundo se estancan mientras la latencia sube), más reglas de diagnóstico, corrida base fija para CI (`crabfall compare --baseline`), servidor MCP, importadores (OpenAPI, curl, Postman), HTTP/2, GUI con Tauri (después de la TUI), `pick: unique` para datasets, leer `expires_in` para elegir solo cuándo renovar, GitHub Action, correlación con métricas del servidor (OTLP, Prometheus), WebSockets, gRPC, Kafka.
 
 ## Decisiones abiertas
 

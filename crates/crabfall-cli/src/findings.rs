@@ -64,6 +64,7 @@ fn summary(doc: &Value, file: &std::path::Path) -> Value {
                 "non_2xx": s["non_2xx"],
                 "bytes_sent": s["bytes_sent"],
                 "bytes_received": s["bytes_received"],
+                "rate_limit": s["rate_limit"],
                 "status_codes": s["status_codes"],
                 "failures": s["failures"],
                 "latency_ms": pick(&s["latency_ms"], &["p50", "p95", "p99", "max"]),

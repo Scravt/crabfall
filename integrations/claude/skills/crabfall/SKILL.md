@@ -121,7 +121,7 @@ Empezá siempre por `crabfall findings --json` (la corrida más reciente; `crabf
 2. **Hallazgos (`findings[]`)**, de más a menos grave. Cada uno trae `title`, `step`, `source`, `window`, `evidence` (los números) y `causes` (causas probables, no conclusiones):
    - `breaking_point`: con `ramping_rate`, desde qué tasa se degrada y qué paso empeora más.
    - `capacity_exceeded`: la tasa pedida supera lo que el sistema sostiene.
-   - `error_threshold`: un paso empieza a fallar desde cierta tasa (o desde el inicio: probablemente un error funcional).
+   - `error_threshold`: un paso empieza a fallar desde cierta tasa (o desde el inicio: probablemente un error funcional). Con 429, si el servidor declaró su límite, la causa y `evidence.rate_limit` traen la cuota, la ventana y el `Retry-After`: buscá en el código dónde se configura ese número y si es por IP, por usuario o por token.
    - `degradation_over_time`: con carga constante, la latencia sube sostenidamente.
    - `long_tail`: p99 muy lejos del p50 con carga estable.
    - `new_connections`: no se reutilizan conexiones.
@@ -140,6 +140,7 @@ Cuando la persona cambió algo (código, configuración, infraestructura) y volv
 1. `crabfall compare --json` compara la corrida más reciente con la anterior del mismo escenario y entorno (`crabfall compare <base> <nueva> --json` para elegirlas).
 2. **Leé `warnings` primero.** Si la carga es distinta (`same_load: false`) o el escenario cambió, decilo: las diferencias pueden venir de ahí y no del cambio.
 3. **Veredicto por paso (`steps[].change`)**, sobre el p95: `better` y `worse` son cambios grandes y consistentes segundo a segundo (`sign_test`: en cuántos segundos se movió en esa dirección y el p-valor). `uncertain` es un cambio grande pero no consistente: decí que puede ser ruido y sugerí repetir la corrida, no lo presentes como mejora ni como regresión. `same` es un cambio chico.
+   Si `warnings` dice que la respuesta o el request de un paso cambió de tamaño, mencionalo al lado del cambio de latencia de ese paso: puede ser la explicación (más datos, otra paginación, un archivo más grande) y no un servidor más lento.
 4. **Reportá** `regressions` e `improvements` con sus números, y los hallazgos `resolved` y `new`. Si se movió un `breaking_point`, ese es el titular ("el quiebre pasó de ~36 a ~140 it/s").
 5. Si un hallazgo figura como `resolved` pero la regla de diagnóstico cambió entre versiones de `crabfall`, aclaralo: no es mérito del cambio.
 

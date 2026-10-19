@@ -50,3 +50,4 @@ Se emparejan por `id` y paso: `new`, `resolved` o `persists`. Si persiste un `br
 - Sin histogramas guardados, el test trabaja sobre el p95 por segundo. Con muy pocas requests por segundo, el p95 de cada ventana es ruidoso y el test tiende a `uncertain`: es el error del lado seguro.
 - Los umbrales (10%, 2 ms, 1 pp, p < 0,05) son constantes al principio del módulo, como en el diagnóstico.
 - Comparar contra una "corrida base" fija (guardada aparte, para CI) queda para después: hoy la base es cualquier corrida en `.crabfall/runs/`.
+- Cada paso compara también los bytes por request (ADR-013), enviados y recibidos. Un cambio de al menos ×1,5 (o a la mitad) y 1 KB sale como aviso, no como regresión ni mejora: una respuesta que creció puede explicar un cambio de latencia sin que el servidor haya empeorado. Las corridas sin bytes no se comparan.
