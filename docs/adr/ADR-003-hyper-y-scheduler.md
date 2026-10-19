@@ -50,3 +50,8 @@ En Windows, el timer tiene ~15,6 ms de resolución por defecto y todo `sleep` se
 - Hay más código propio que con `reqwest`: el pool de conexiones, el manejo de keep-alive y, más adelante, TLS y las redirecciones.
 - La latencia "desde planificado" incluye ~1 ms de jitter del scheduler. Si hace falta más precisión, se puede esperar con *spin* el último milisegundo.
 - Pendiente: medir TLS con `tokio-rustls` y probar HTTP/1.1 contra servidores reales (cierres de conexión, `Connection: close`).
+
+## Ampliación (12 oct 2026): `ramping_rate` y `constant_vus`
+
+- **`ramping_rate`** usa el mismo modelo abierto con un calendario exacto: la iteración *i* arranca cuando la integral de la tasa llega a *i*. En un tramo lineal eso es resolver `from·t + (to−from)/(2d)·t² = k`, sin acumular error de redondeo (`crates/crabfall-core/src/load.rs`). `constant_rate` es un solo tramo plano.
+- **`constant_vus`** es modelo cerrado: N tareas en loop hasta `duration`. No tiene lag de scheduler ni iteraciones descartadas, y su latencia **sí** sufre coordinated omission: se reporta, pero para medir latencia se prefieren los executors de tasa. Si el entorno define `limits.max_rps`, un pacer espacia los inicios para no superarlo y se avisa cuando tuvo que frenar.

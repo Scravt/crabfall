@@ -1,4 +1,4 @@
 /target/
-.loadtest/runs/
-.loadtest/approvals/
+.crabfall/runs/
+.crabfall/approvals/
 .env

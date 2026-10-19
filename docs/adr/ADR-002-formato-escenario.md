@@ -29,7 +29,7 @@ El costo de lo declarativo es que no hay lógica arbitraria (ifs, loops, cálcul
 
 ### 2. La aprobación no vive en el archivo
 
-El escenario **no tiene un campo `status`**. Un escenario está aprobado si y solo si existe en `.loadtest/approvals/` una firma válida para su hash actual. Cualquier edición cambia el hash y el escenario vuelve a ser borrador automáticamente, sin que nadie tenga que acordarse de marcarlo.
+El escenario **no tiene un campo `status`**. Un escenario está aprobado si y solo si existe en `.crabfall/approvals/` una firma válida para su hash actual. Cualquier edición cambia el hash y el escenario vuelve a ser borrador automáticamente, sin que nadie tenga que acordarse de marcarlo.
 
 **Qué se firma** (detalle en ADR-004): el hash del escenario **junto con el entorno resuelto** contra el que va a correr (base URL, hosts permitidos, variables y límites). Si no se incluye el entorno, un agente podría dejar intacto un escenario aprobado y cambiar la `base_url` de `local` para que apunte a producción.
 
@@ -50,7 +50,7 @@ Como un flow puede tener varios pasos, la tasa de requests no es igual a la de i
 
 ### 5. `source` conecta el paso con el código
 
-Es un campo opcional y libre: `file`, `symbol` y `operation_id`. El motor no lo usa; solo lo copia en los hallazgos. Lo completa Claude cuando diseña desde el código (o desde un OpenAPI, con `operation_id`). Es lo que permite que `/loadtest:diagnose` vaya del hallazgo directo al handler responsable.
+Es un campo opcional y libre: `file`, `symbol` y `operation_id`. El motor no lo usa; solo lo copia en los hallazgos. Lo completa Claude cuando diseña desde el código (o desde un OpenAPI, con `operation_id`). Es lo que permite que `/crabfall:diagnose` vaya del hallazgo directo al handler responsable.
 
 ### 6. Interpolación y tipos
 
@@ -65,11 +65,11 @@ Un campo desconocido es un **error**, no un aviso, porque atrapa errores de tipe
 
 ### 8. `todo` explícito para lo que falta
 
-Claude (y los futuros importadores) marcan los valores que no conocen con `{ todo: "qué hace falta" }`. `lt validate` falla mientras quede alguno y lista cada uno con su ruta. Así se ve exactamente qué tiene que completar la persona, en lugar de que la prueba falle con un 404 en plena carga.
+Claude (y los futuros importadores) marcan los valores que no conocen con `{ todo: "qué hace falta" }`. `crabfall validate` falla mientras quede alguno y lista cada uno con su ruta. Así se ve exactamente qué tiene que completar la persona, en lugar de que la prueba falle con un 404 en plena carga.
 
 ### 9. Versionado del formato
 
-`version: 1` es obligatorio. Agregar campos opcionales no sube la versión; un cambio incompatible sí, y viene con `lt migrate`. La herramienta rechaza versiones que no conoce, con un mensaje que dice qué versión de `lt` hace falta.
+`version: 1` es obligatorio. Agregar campos opcionales no sube la versión; un cambio incompatible sí, y viene con `crabfall migrate`. La herramienta rechaza versiones que no conoce, con un mensaje que dice qué versión de `crabfall` hace falta.
 
 ### 10. Parser: `serde-saphyr` + `serde_path_to_error`
 
@@ -87,7 +87,7 @@ Además está escrito en Rust puro, se mantiene activamente y ofrece `Spanned<T>
 
 ## Ejemplos
 
-### Configuración del proyecto: `.loadtest/config.yaml`
+### Configuración del proyecto: `.crabfall/config.yaml`
 
 ```yaml
 version: 1
@@ -112,7 +112,7 @@ secrets:                    # solo nombres; los valores vienen del entorno o de 
   - LT_PASSWORD
 ```
 
-### Escenario escrito a mano o por el agente: `.loadtest/scenarios/checkout.yaml`
+### Escenario escrito a mano o por el agente: `.crabfall/scenarios/checkout.yaml`
 
 ```yaml
 version: 1
@@ -230,7 +230,7 @@ meta:
   created_by: agent
   generated_from: openapi.yaml
   skipped:
-    - { operation_id: uploadImage, reason: "multipart/form-data todavía no soportado" }
+    - { operation_id: liveFeed, reason: "WebSocket todavía no soportado" }
     - { operation_id: streamEvents, reason: "text/event-stream no soportado" }
 
 vars:
@@ -268,7 +268,7 @@ load:
   duration: 30s
 ```
 
-`lt validate` responde:
+`crabfall validate` responde:
 
 ```
 ✗ vars.petId: valor pendiente (todo) — "ID de un pet existente en el entorno"
@@ -279,21 +279,23 @@ load:
 
 | Bloque | Campos | Notas |
 | --- | --- | --- |
-| raíz | `version`, `name`, `description`, `meta`, `vars`, `setup`, `defaults`, `flows`, `load`, `thresholds` | Obligatorios: `version`, `name`, `flows`, `load` |
+| raíz | `version`, `name`, `description`, `meta`, `vars`, `data`, `setup`, `vu_setup`, `vu_refresh`, `defaults`, `flows`, `load`, `thresholds` | Obligatorios: `version`, `name`, `flows`, `load` |
+| vu_refresh | `every`, `steps` | `steps` opcional: sin pasos, repite `vu_setup` |
 | flow | `weight`, `steps` | `weight` opcional, por defecto `1` |
-| defaults | `headers`, `timeout` | Solo para pasos de `flows`, no de `setup` |
-| paso | `name`, `request`, `checks`, `extract`, `tags`, `source` | `name` único en todo el escenario |
-| request | `method`, `url`, `headers`, `query`, `timeout` + uno de `json` / `form` / `body` | `timeout` por defecto 30s. `url` relativa a `base_url` o absoluta; los hosts se validan contra `allowed_hosts` |
-| check | `status`, `status_in`, `json` + (`exists` / `equals` / `matches`), `header` + (`equals` / `contains` / `matches`), `body` + `matches` | No bloqueantes: cuentan para `checks.pass_rate` |
+| defaults | `headers`, `timeout`, `think` | Solo para pasos de `flows`, no de `setup` |
+| paso | `name`, `request`, `checks`, `extract`, `tags`, `source`, `think` | `name` único en todo el escenario. `think`: pausa después del paso (`2s` o `1s-3s`), no en `setup` |
+| request | `method`, `url`, `headers`, `query`, `timeout` + uno de `json` / `body` / `multipart` | `timeout` por defecto 30s. `url` relativa a `base_url` o absoluta; los hosts se validan contra `allowed_hosts` |
+| multipart | por campo: un string (texto) o `{ file, filename, content_type }` | `file` relativo a `.crabfall/`; el `content-type` del request lo pone Crabfall (ADR-012) |
+| check | `status`, `status_in`, `json` + (`exists` / `equals` / `matches`), `header` + (`exists` / `equals` / `contains` / `matches`), `body_contains`, `body_matches` | No bloqueantes: cuentan para `checks.pass_rate`. `equals` admite `{{variables}}`. El body usa claves propias (`body_contains`, `body_matches`) porque no tiene selector |
 | extract | `{ json: <path> }`, `{ header: <nombre> }`, `{ regex: <patrón> }` | En `setup`: global de solo lectura. En flows: por iteración |
-| load | `executor` + los campos de ese executor: `constant_rate` (`rate`, `duration`, `max_vus`); más adelante `constant_vus` (`vus`, `duration`), `ramping_rate` (`start_rate`, `stages`, `max_vus`), `breakpoint` | Todos aceptan `graceful_stop` (por defecto 30s). Es un bloque plano: qué campos aplican a cada executor lo valida `lt validate` |
-| threshold | `metric`, `step` o `tag` opcional, uno de `lt` / `lte` / `gt` / `gte` | Métricas: `http.latency.pXX`, `http.error_rate`, `http.rps`, `checks.pass_rate` |
+| load | `executor` + sus campos: `constant_rate` (`rate`, `duration`, `max_vus`); `ramping_rate` (`start_rate` opcional, por defecto `0/s`; `stages` con `target` y `duration`; `max_vus`); `constant_vus` (`vus`, `duration`); más adelante `breakpoint` | Todos aceptan `graceful_stop` (por defecto 30s). Es un bloque plano: `crabfall validate` rechaza los campos que no aplican al executor. Con `constant_vus`, la tasa no está acotada de antemano: si el entorno define `limits.max_rps`, el motor espacia las iteraciones para no superarlo |
+| threshold | `metric`, `step` o `tag` opcional, uno de `crabfall` / `lte` / `gt` / `gte` | Métricas: `http.latency.p50`…`p99.9`, `avg`, `max` (duración); `http.error_rate` (sin respuesta o status >= 400) y `checks.pass_rate` (porcentaje); `http.rps` (número). Sin datos, el threshold falla |
 
 Unidades: duraciones `500ms`, `30s`, `2m`; tasas `50/s`, `3000/m`; porcentajes `1%`.
 
 ## Smoke check
 
-Cualquier escenario se puede verificar con `lt check <escenario>`. Corre el `setup` y cada flow **una sola vez**, en serie y con 1 VU, e **ignora el bloque `load`**. Por eso no es un executor: es un modo de ejecución. Las reglas que lo hacen seguro para un agente están en ADR-004.
+Cualquier escenario se puede verificar con `crabfall check <escenario>`. Corre el `setup` y cada flow **una sola vez**, en serie y con 1 VU, e **ignora el bloque `load`**. Por eso no es un executor: es un modo de ejecución. Las reglas que lo hacen seguro para un agente están en ADR-004.
 
 ## Consecuencias
 
@@ -302,6 +304,7 @@ Cualquier escenario se puede verificar con `lt check <escenario>`. Corre el `set
 
 ## Puntos abiertos
 
-- **Setup por VU** (cada usuario virtual con su propio login): se deja para más adelante, salvo que un caso real lo necesite antes.
-- **Datasets** (CSV/JSON): el formato reserva el campo `data` en la raíz.
-- **Think time** entre pasos: queda en el backlog; reservar `think` en el paso.
+- **Setup por VU** (cada usuario virtual con su propio login): resuelto en ADR-010, con `vu_setup` en la raíz.
+- **Tokens que vencen durante la carga:** resuelto en ADR-011, con `vu_refresh` en la raíz.
+- **Datasets** (CSV/JSON): resuelto en ADR-007, con el campo `data` en la raíz.
+- **Think time** entre pasos: resuelto en ADR-008, con `think` en el paso y en `defaults`.
