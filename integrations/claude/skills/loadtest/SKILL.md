@@ -127,6 +127,8 @@ Empezá siempre por `lt findings --json` (la corrida más reciente; `lt findings
    - **Hipótesis**: tu explicación desde el código, con archivo y línea, marcada como hipótesis, y cómo confirmarla (por ejemplo, "si es el pool, subirlo de 5 a 20 debería mover el quiebre de ~170 a ~650 it/s; correlo de nuevo con el mismo escenario").
 5. Si no hay hallazgos, mirá los thresholds y los p95/p99 por paso, y decí que no se detectó ningún patrón conocido; no inventes problemas.
 
+**Bytes.** Cada paso trae `bytes_sent` y `bytes_received` (bytes del socket: headers, body y TLS), y `totals` trae `send_rate` y `receive_rate` en bytes por segundo; la serie los tiene por segundo. Con archivos o respuestas grandes, si la latencia sube mientras los bytes por segundo dejan de crecer aunque la carga sí crezca, el límite puede ser el ancho de banda y no el servidor: decilo como hipótesis (multiplicá por 8 para comparar con un enlace en Mbit/s) y sugerí confirmarlo corriendo el generador más cerca del servidor o con archivos más chicos.
+
 ## Comparar corridas
 
 Cuando la persona cambió algo (código, configuración, infraestructura) y volvió a correr el mismo escenario, o pregunta "¿mejoró?":

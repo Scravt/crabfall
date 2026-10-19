@@ -251,6 +251,15 @@ fn print_summary(r: &RunResult) {
         "requests     {}  fallidos {}  no-2xx {}  ({}/s)  duración {}s",
         t.requests, t.failed, t.non_2xx, t.request_rate, r.duration_s
     );
+    if t.bytes_sent + t.bytes_received > 0 {
+        let points = &r.series.points;
+        let peak = |f: fn(&lt_core::metrics::Point) -> u64| points.iter().map(f).max().unwrap_or(0);
+        println!(
+            "tráfico      enviados {}  recibidos {}",
+            traffic(t.bytes_sent, t.send_rate, peak(|p| p.bytes_sent)),
+            traffic(t.bytes_received, t.receive_rate, peak(|p| p.bytes_received))
+        );
+    }
     let checks: Vec<(&str, &CheckResult)> = r
         .steps
         .iter()
@@ -395,6 +404,24 @@ fn session_steps(steps: &[lt_core::metrics::VuSetupStep], indent: &str) {
 }
 
 /// `35 ms` o `2.4 s`.
+/// `137.0 MB (2.1 MB/s, pico 4.3 MB/s = 34 Mbit/s)`. El pico va también en bits porque así
+/// se miden los enlaces.
+fn traffic(total: u64, rate: f64, peak: u64) -> String {
+    use lt_core::upload::size;
+    let mbit = peak as f64 * 8.0 / 1_000_000.0;
+    let mbit = if mbit < 10.0 {
+        format!("{mbit:.1}")
+    } else {
+        format!("{mbit:.0}")
+    };
+    format!(
+        "{} ({}/s, pico {}/s = {mbit} Mbit/s)",
+        size(total as usize),
+        size(rate as usize),
+        size(peak as usize)
+    )
+}
+
 fn elapsed(ms: f64) -> String {
     if ms < 1000.0 {
         format!("{ms:.0} ms")

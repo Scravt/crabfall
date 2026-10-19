@@ -1124,3 +1124,107 @@ fn multipart_signs_file_content_not_the_boundary() {
     );
     assert_ne!(a, Plan::build(&s, &env, &other).unwrap().canonical(&env));
 }
+
+/// `/download` devuelve 256 KB; `/sink` lee el body y responde 204; `/hang` lo lee y no
+/// responde a tiempo.
+async fn traffic_server() -> String {
+    let app = Router::new()
+        .route("/download", get(|| async { vec![b'x'; 256 * 1024] }))
+        .route(
+            "/sink",
+            axum::routing::post(|_: axum::body::Bytes| async {
+                axum::http::StatusCode::NO_CONTENT
+            }),
+        )
+        .route(
+            "/hang",
+            axum::routing::post(|_: axum::body::Bytes| async {
+                tokio::time::sleep(Duration::from_secs(5)).await;
+                axum::http::StatusCode::NO_CONTENT
+            }),
+        );
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    format!("http://127.0.0.1:{}", addr.port())
+}
+
+fn traffic_plan(base: &str, steps: &str) -> Plan {
+    let yaml = format!(
+        "version: 1\nname: traffic\nflows:\n  main:\n    steps:\n{steps}load:\n  executor: constant_rate\n  rate: 5/s\n  duration: 1s\n  max_vus: 2\n"
+    );
+    let s = parse_scenario(&yaml).unwrap_or_else(|r| panic!("{r:?}"));
+    let upload = lt_core::upload::Upload::new("files/blob.bin", vec![7; 300 * 1024]).unwrap();
+    let inputs = Inputs {
+        files: [("files/blob.bin".to_string(), upload)].into(),
+        ..Default::default()
+    };
+    Plan::build(&s, &environment(base), &inputs).unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn counts_bytes_on_the_wire_per_step_and_per_second() {
+    let base = traffic_server().await;
+    let plan = traffic_plan(
+        &base,
+        "      - name: upload
+        request: { method: POST, url: /sink, multipart: { file: { file: files/blob.bin } } }
+      - name: download
+        request: { method: GET, url: /download }
+",
+    );
+    let r = engine::run(Arc::new(plan), Arc::new(Progress::default())).await;
+    assert_eq!(r.totals.failed + r.totals.non_2xx, 0, "{:?}", r.steps);
+    let (up, down) = (&r.steps[0], &r.steps[1]);
+    let per = |total: u64, n: u64| total / n;
+    // Body más headers y el envoltorio multipart: unos cientos de bytes, no kilobytes.
+    let sent = per(up.bytes_sent, up.requests);
+    assert!(
+        (300 * 1024..301 * 1024).contains(&sent),
+        "upload envió {sent}"
+    );
+    assert!(per(up.bytes_received, up.requests) < 1024);
+    let received = per(down.bytes_received, down.requests);
+    assert!(
+        (256 * 1024..257 * 1024).contains(&received),
+        "download recibió {received}"
+    );
+    assert!(per(down.bytes_sent, down.requests) < 1024);
+
+    let t = &r.totals;
+    assert_eq!(t.bytes_sent, up.bytes_sent + down.bytes_sent);
+    assert_eq!(t.bytes_received, up.bytes_received + down.bytes_received);
+    assert!(t.send_rate > 0.0 && t.receive_rate > 0.0);
+    let points = &r.series.points;
+    assert_eq!(
+        points.iter().map(|p| p.bytes_sent).sum::<u64>(),
+        t.bytes_sent
+    );
+    assert_eq!(
+        points.iter().map(|p| p.bytes_received).sum::<u64>(),
+        t.bytes_received
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn bytes_sent_before_a_timeout_still_count() {
+    let base = traffic_server().await;
+    let plan = traffic_plan(
+        &base,
+        "      - name: hang
+        request: { method: POST, url: /hang, timeout: 300ms, multipart: { file: { file: files/blob.bin } } }
+",
+    );
+    let r = engine::run(Arc::new(plan), Arc::new(Progress::default())).await;
+    let hang = &r.steps[0];
+    assert_eq!(
+        hang.failures.get(&FailureKind::Timeout),
+        Some(&hang.requests)
+    );
+    assert!(
+        hang.bytes_sent >= hang.requests * 300 * 1024,
+        "{} bytes en {} requests",
+        hang.bytes_sent,
+        hang.requests
+    );
+}

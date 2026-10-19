@@ -158,9 +158,16 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente. Al cerrar
 - [x] Tests: un servidor con el parser multipart de axum recibe el archivo intacto (con CRLF y algo que parece un boundary) y los campos de texto; firma estable y sensible al contenido; validación
 - Listo: en `market-api`, `upload` (10 VUs durante 1 minuto, cada uno sube un adjunto de 1 MB, verifica el `sha256` que devuelve el servidor, lo baja y lo borra) hizo 137 iteraciones y 411 requests sin fallas, con 685 de 685 checks pasados: los 137 archivos llegaron intactos. La subida tuvo p50 9 ms y p95 134 ms; bajar, p50 5 ms (19 oct 2026).
 
+**13. Bytes por segundo**
+- [x] Bytes del socket por request (headers, body y TLS), con un medidor por request enganchado a la conexión; cuentan aunque el request venza por timeout (ADR-013)
+- [x] `bytes_sent` y `bytes_received` por paso, por segundo en la serie y en `totals`, con `send_rate` y `receive_rate`; `lt findings --json` los incluye
+- [x] `lt run` muestra el total, el promedio y el pico por segundo (también en Mbit/s); el reporte suma un tile, un gráfico por segundo y los bytes por request de cada paso
+- [x] Tests: un upload de 300 KB y una descarga de 256 KB medidos por paso (body más unos cientos de bytes de headers), la serie suma igual que los totales, y los bytes de un request que vence por timeout cuentan
+- Listo cuando: en `market-api`, `upload` muestra alrededor de 1 MB enviado y 1 MB recibido por iteración (sube y baja el mismo archivo). **Pendiente:** la corrida (la aprueba y ejecuta una persona).
+
 ## Backlog (sin orden)
 
-Bytes enviados y recibidos por segundo en los resultados (con archivos grandes, el ancho de banda puede ser el límite), más reglas de diagnóstico, corrida base fija para CI (`lt compare --baseline`), servidor MCP, importadores (OpenAPI, curl, Postman), GUI con Tauri, HTTP/2, `pick: unique` para datasets, leer `expires_in` para elegir solo cuándo renovar, leer `Retry-After` en los 429 para que el hallazgo diga la ventana del límite, GitHub Action, correlación con métricas del servidor (OTLP, Prometheus), WebSockets, gRPC, Kafka.
+Regla de diagnóstico para el ancho de banda (los bytes por segundo se estancan mientras la latencia sube), bytes por request en `lt compare` (una respuesta que creció mucho), más reglas de diagnóstico, corrida base fija para CI (`lt compare --baseline`), servidor MCP, importadores (OpenAPI, curl, Postman), GUI con Tauri, HTTP/2, `pick: unique` para datasets, leer `expires_in` para elegir solo cuándo renovar, leer `Retry-After` en los 429 para que el hallazgo diga la ventana del límite, GitHub Action, correlación con métricas del servidor (OTLP, Prometheus), WebSockets, gRPC, Kafka.
 
 ## Decisiones abiertas
 
@@ -197,3 +204,4 @@ Bytes enviados y recibidos por segundo en los resultados (con archivos grandes, 
 | 17 oct 2026 | `vu_setup`: cada VU hace su login antes de la carga; el modelo abierto reparte VUs desde un pool | ADR-010 |
 | 18 oct 2026 | `vu_refresh`: renovación en segundo plano, sin sacar al VU del pool; si falla, el VU deja de iterar | ADR-011 |
 | 18 oct 2026 | `multipart`: archivos leídos una vez y firmados por contenido; sin streaming ni rutas con variables | ADR-012 |
+| 19 oct 2026 | Bytes medidos en el socket por request (headers, body y TLS), no en el body; solo la carga | ADR-013 |
