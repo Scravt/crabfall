@@ -415,22 +415,29 @@ fn session_steps(steps: &[crabfall_core::metrics::VuSetupStep], indent: &str) {
 }
 
 /// `35 ms` o `2.4 s`.
-/// `137.0 MB (2.1 MB/s, pico 4.3 MB/s = 34 Mbit/s)`. El pico va también en bits porque así
+/// `137.0 MB (2.1 MB/s, pico 4.3 MB/s = 36 Mbit/s)`. El pico va también en bits porque así
 /// se miden los enlaces.
 fn traffic(total: u64, rate: f64, peak: u64) -> String {
     use crabfall_core::upload::size;
-    let mbit = peak as f64 * 8.0 / 1_000_000.0;
-    let mbit = if mbit < 10.0 {
-        format!("{mbit:.1}")
-    } else {
-        format!("{mbit:.0}")
-    };
     format!(
-        "{} ({}/s, pico {}/s = {mbit} Mbit/s)",
+        "{} ({}/s, pico {}/s = {})",
         size(total as usize),
         size(rate as usize),
-        size(peak as usize)
+        size(peak as usize),
+        bits(peak)
     )
+}
+
+/// Bytes por segundo en bits, como se miden los enlaces: `84 Mbit/s`, `1.0 Mbit/s`, `40 kbit/s`.
+fn bits(bytes_per_s: u64) -> String {
+    let bits = bytes_per_s as f64 * 8.0;
+    if bits >= 10_000_000.0 {
+        format!("{:.0} Mbit/s", bits / 1_000_000.0)
+    } else if bits >= 1_000_000.0 {
+        format!("{:.1} Mbit/s", bits / 1_000_000.0)
+    } else {
+        format!("{:.0} kbit/s", bits / 1_000.0)
+    }
 }
 
 fn elapsed(ms: f64) -> String {
@@ -454,6 +461,13 @@ fn percent(part: u64, total: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn link_rates_use_the_unit_that_reads_best() {
+        assert_eq!(bits(10_485_760), "84 Mbit/s");
+        assert_eq!(bits(125_000), "1.0 Mbit/s");
+        assert_eq!(bits(5 * 1024), "41 kbit/s");
+    }
 
     fn check(name: &str, passed: u64, failed: u64, samples: &[&str]) -> CheckResult {
         CheckResult {
