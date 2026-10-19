@@ -156,7 +156,7 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente. Al cerrar
 - [x] Los archivos se leen una vez y van enteros en cada request (hasta 100 MB); boundary aleatorio por paso que no aparece en ningún archivo; `content-type` con el boundary lo pone lt
 - [x] Firma el SHA-256 de cada archivo, no el boundary; `approve` y `run` muestran cada archivo con su tamaño y el paso que lo sube
 - [x] Tests: un servidor con el parser multipart de axum recibe el archivo intacto (con CRLF y algo que parece un boundary) y los campos de texto; firma estable y sensible al contenido; validación
-- Listo cuando: en `market-api`, `upload` (10 VUs, cada uno sube un adjunto de 1 MB, verifica el `sha256` que devuelve el servidor, lo baja y lo borra) termina con 0 checks fallidos. `check` pasa (18 oct 2026). **Pendiente:** la corrida (la aprueba y ejecuta una persona).
+- Listo: en `market-api`, `upload` (10 VUs durante 1 minuto, cada uno sube un adjunto de 1 MB, verifica el `sha256` que devuelve el servidor, lo baja y lo borra) hizo 137 iteraciones y 411 requests sin fallas, con 685 de 685 checks pasados: los 137 archivos llegaron intactos. La subida tuvo p50 9 ms y p95 134 ms; bajar, p50 5 ms (19 oct 2026).
 
 ## Backlog (sin orden)
 
