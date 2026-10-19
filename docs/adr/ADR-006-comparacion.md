@@ -4,11 +4,11 @@ Estado: **aceptado** · 15 oct 2026
 
 ## Contexto
 
-El ciclo de uso termina en "arreglé `scryptSync`, ¿mejoró?". Hoy eso se responde mirando dos tablas a ojo. Hace falta que `lt` diga qué mejoró, qué empeoró y si el cambio es real o ruido, con los mismos criterios siempre, para que Claude no tenga que adivinar.
+El ciclo de uso termina en "arreglé `scryptSync`, ¿mejoró?". Hoy eso se responde mirando dos tablas a ojo. Hace falta que `crabfall` diga qué mejoró, qué empeoró y si el cambio es real o ruido, con los mismos criterios siempre, para que Claude no tenga que adivinar.
 
 ## Decisión
 
-`lt compare [base] [nueva] [--json]`. Sin argumentos compara la corrida más reciente con la anterior del mismo escenario y entorno. `nueva` es por defecto `latest`. La lógica está en `lt-core` (`compare.rs`) y lee `results.json`; no hace falta volver a correr nada.
+`crabfall compare [base] [nueva] [--json]`. Sin argumentos compara la corrida más reciente con la anterior del mismo escenario y entorno. `nueva` es por defecto `latest`. La lógica está en `crabfall-core` (`compare.rs`) y lee `results.json`; no hace falta volver a correr nada.
 
 ### ¿Son comparables?
 
@@ -49,4 +49,4 @@ Se emparejan por `id` y paso: `new`, `resolved` o `persists`. Si persiste un `br
 
 - Sin histogramas guardados, el test trabaja sobre el p95 por segundo. Con muy pocas requests por segundo, el p95 de cada ventana es ruidoso y el test tiende a `uncertain`: es el error del lado seguro.
 - Los umbrales (10%, 2 ms, 1 pp, p < 0,05) son constantes al principio del módulo, como en el diagnóstico.
-- Comparar contra una "corrida base" fija (guardada aparte, para CI) queda para después: hoy la base es cualquier corrida en `.loadtest/runs/`.
+- Comparar contra una "corrida base" fija (guardada aparte, para CI) queda para después: hoy la base es cualquier corrida en `.crabfall/runs/`.

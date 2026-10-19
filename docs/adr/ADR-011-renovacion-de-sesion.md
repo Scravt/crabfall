@@ -56,7 +56,7 @@ La regla para elegir `every`: menos que la vida del token, menos lo que dura una
 
 - **Si una renovación falla** (sin respuesta, status ≥ 400, `extract` o check fallido), ese VU deja de iterar. En el modelo abierto sale del pool. Seguir con un token vencido solo agregaría 401 que no son del sistema.
 - **Aviso:** al final, un aviso dice cuántos VUs se perdieron.
-- **`lt check`:** corre la renovación una vez, después de los flows.
+- **`crabfall check`:** corre la renovación una vez, después de los flows.
 
 ### Firma y resultados
 

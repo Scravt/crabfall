@@ -1,4 +1,4 @@
-# lt — load tester (nombre provisorio)
+# Crabfall
 
 Herramienta de pruebas de carga en Rust, pensada para usarse junto a Claude Code:
 Claude diseña el escenario y analiza los resultados; una persona aprueba y ejecuta la carga.
@@ -8,10 +8,10 @@ Estado: **rebanada 13** (bytes por segundo). Ya funcionan: diseño con Claude, a
 ## Uso
 
 ```bash
-cargo install --path crates/lt-cli    # instala `lt` en ~/.cargo/bin
+cargo install --path crates/crabfall-cli    # instala `crabfall` en ~/.cargo/bin
 ```
 
-En el repo a probar, creá `.loadtest/config.yaml`:
+En el repo a probar, creá `.crabfall/config.yaml`:
 
 ```yaml
 version: 1
@@ -23,7 +23,7 @@ environments:
     limits: { max_rps: 200 }      # opcional: requests/s, max_vus, max_duration
 ```
 
-y un escenario en `.loadtest/scenarios/smoke.yaml`:
+y un escenario en `.crabfall/scenarios/smoke.yaml`:
 
 ```yaml
 version: 1
@@ -41,19 +41,19 @@ load:
 ```
 
 ```bash
-lt validate smoke              # --json para agentes
-lt check smoke                 # cada flow una vez, solo contra loopback
-lt approve smoke --env local   # resumen de riesgo; pide tipear el host
-lt run smoke --env local       # resultados en .loadtest/runs/<id>/results.json
+crabfall validate smoke              # --json para agentes
+crabfall check smoke                 # cada flow una vez, solo contra loopback
+crabfall approve smoke --env local   # resumen de riesgo; pide tipear el host
+crabfall run smoke --env local       # resultados en .crabfall/runs/<id>/results.json
 ```
 
-`lt run` solo ejecuta escenarios aprobados. La aprobación firma el escenario junto con el entorno resuelto: cualquier cambio en el tráfico la invalida y `lt run` muestra qué cambió. Se aprueba en una terminal interactiva; la clave de firma vive en el keyring del sistema ([ADR-004](docs/adr/ADR-004-aprobacion.md)).
+`crabfall run` solo ejecuta escenarios aprobados. La aprobación firma el escenario junto con el entorno resuelto: cualquier cambio en el tráfico la invalida y `crabfall run` muestra qué cambió. Se aprueba en una terminal interactiva; la clave de firma vive en el keyring del sistema ([ADR-004](docs/adr/ADR-004-aprobacion.md)).
 
 Para que cada iteración use datos distintos (usuarios, IDs), declarás archivos CSV o JSON en `data:` y los usás como `{{dataset.columna}}`:
 
 ```yaml
 data:
-  users: { file: data/users.csv }    # .loadtest/data/users.csv, con encabezado user,password
+  users: { file: data/users.csv }    # .crabfall/data/users.csv, con encabezado user,password
 flows:
   main:
     steps:
@@ -65,7 +65,7 @@ flows:
         think: 1s-3s                  # pausa después del paso, como una persona
 ```
 
-Cada iteración toma una fila, en orden o al azar (`pick: random`). Editar el archivo invalida la aprobación ([ADR-007](docs/adr/ADR-007-datasets.md)). `think` también va en `defaults` para todos los pasos; no cuenta en la latencia y `lt check` lo ignora.
+Cada iteración toma una fila, en orden o al azar (`pick: random`). Editar el archivo invalida la aprobación ([ADR-007](docs/adr/ADR-007-datasets.md)). `think` también va en `defaults` para todos los pasos; no cuenta en la latencia y `crabfall check` lo ignora.
 
 Para APIs con sesión, `vu_setup` corre una vez por usuario virtual, antes de la carga: cada VU hace su login con su fila del dataset y usa su token en todas sus iteraciones, sin medir el login en cada una:
 
@@ -78,7 +78,7 @@ defaults:
   headers: { Authorization: "Bearer {{token}}" }
 ```
 
-Se prepara un VU por cada `vus` (o `max_vus`); el resumen de `lt approve` muestra cuántos logins son ([ADR-010](docs/adr/ADR-010-setup-por-vu.md)).
+Se prepara un VU por cada `vus` (o `max_vus`); el resumen de `crabfall approve` muestra cuántos logins son ([ADR-010](docs/adr/ADR-010-setup-por-vu.md)).
 
 Si el token vence durante la carga, `vu_refresh` lo renueva en segundo plano, sin cortar iteraciones ni sumarse a sus métricas. Con un refresh token:
 
@@ -93,7 +93,7 @@ vu_refresh:
 
 Sin `steps`, repite `vu_setup` (login de nuevo). `--refresh-every 4m` lo ajusta por flag. Un VU que no puede renovar deja de iterar ([ADR-011](docs/adr/ADR-011-renovacion-de-sesion.md)).
 
-Para subir archivos, `multipart` arma un body `multipart/form-data` con archivos de `.loadtest/` y campos de texto:
+Para subir archivos, `multipart` arma un body `multipart/form-data` con archivos de `.crabfall/` y campos de texto:
 
 ```yaml
 request:
@@ -106,7 +106,7 @@ request:
 
 El archivo se lee una vez y va entero en cada request (hasta 100 MB). El tipo sale de la extensión, o de `content_type`. La aprobación firma su contenido ([ADR-012](docs/adr/ADR-012-multipart.md)).
 
-Con archivos grandes conviene mirar el tráfico: `lt run` muestra los bytes enviados y recibidos por el socket (headers, body y TLS), con el promedio y el pico por segundo, y el reporte los grafica ([ADR-013](docs/adr/ADR-013-trafico.md)):
+Con archivos grandes conviene mirar el tráfico: `crabfall run` muestra los bytes enviados y recibidos por el socket (headers, body y TLS), con el promedio y el pico por segundo, y el reporte los grafica ([ADR-013](docs/adr/ADR-013-trafico.md)):
 
 ```
 tráfico      enviados 137.4 MB (2.1 MB/s, pico 4.3 MB/s = 36 Mbit/s)  recibidos 137.6 MB (2.1 MB/s, pico 4.1 MB/s = 34 Mbit/s)
@@ -117,27 +117,27 @@ tráfico      enviados 137.4 MB (2.1 MB/s, pico 4.3 MB/s = 36 Mbit/s)  recibidos
 `validate`, `check`, `approve` y `run` aceptan flags que pisan al escenario para esa corrida. Son lo que tendría un panel de personalización:
 
 ```bash
-lt run checkout --env local --rate 100/s --duration 2m --think 1s-3s
-lt run checkout --executor constant_vus --vus 20 --duration 5m
-lt run checkout --executor ramping_rate --stages 50/s:1m,200/s:3m,0/s:30s
-lt run login-users --data users=data/otros.csv --pick users=random
-lt run shop-per-user --duration 10m --refresh-every 4m
-lt run checkout --threshold "http.latency.p95<300ms" --threshold "http.error_rate<1%"
+crabfall run checkout --env local --rate 100/s --duration 2m --think 1s-3s
+crabfall run checkout --executor constant_vus --vus 20 --duration 5m
+crabfall run checkout --executor ramping_rate --stages 50/s:1m,200/s:3m,0/s:30s
+crabfall run login-users --data users=data/otros.csv --pick users=random
+crabfall run shop-per-user --duration 10m --refresh-every 4m
+crabfall run checkout --threshold "http.latency.p95<300ms" --threshold "http.error_rate<1%"
 ```
 
-Lista completa en `lt run --help`. Los que cambian el tráfico los firma la aprobación: pasá los mismos a `lt approve` y a `lt run`. `--threshold` reemplaza a los del YAML y no hace falta volver a aprobar ([ADR-008](docs/adr/ADR-008-think-time-y-ajustes.md)).
+Lista completa en `crabfall run --help`. Los que cambian el tráfico los firma la aprobación: pasá los mismos a `crabfall approve` y a `crabfall run`. `--threshold` reemplaza a los del YAML y no hace falta volver a aprobar ([ADR-008](docs/adr/ADR-008-think-time-y-ajustes.md)).
 
 ## Con Claude Code
 
 ```bash
-lt claude install              # en el repo a probar: skill, hook y permisos en .claude/
+crabfall claude install              # en el repo a probar: skill, hook y permisos en .claude/
 ```
 
-Después, en una sesión de Claude Code: *"armame una prueba de carga del flujo de compra"*. Claude lee el código, escribe el escenario, lo verifica con `lt validate` y `lt check` (solo contra loopback) y te pasa los comandos `lt approve` y `lt run` para que los ejecutes vos. No puede aprobar ni ejecutar por su cuenta (ADR-001, ADR-004).
+Después, en una sesión de Claude Code: *"armame una prueba de carga del flujo de compra"*. Claude lee el código, escribe el escenario, lo verifica con `crabfall validate` y `crabfall check` (solo contra loopback) y te pasa los comandos `crabfall approve` y `crabfall run` para que los ejecutes vos. No puede aprobar ni ejecutar por su cuenta (ADR-001, ADR-004).
 
-`lt findings [--json]` muestra los hallazgos de la última corrida (o de una por id). `lt compare [base] [nueva] [--json]` compara dos corridas (por defecto, la última con la anterior del mismo escenario): qué mejoró, qué empeoró y si el cambio es consistente o puede ser ruido ([ADR-006](docs/adr/ADR-006-comparacion.md)). `lt schema` imprime el JSON Schema del escenario.
+`crabfall findings [--json]` muestra los hallazgos de la última corrida (o de una por id). `crabfall compare [base] [nueva] [--json]` compara dos corridas (por defecto, la última con la anterior del mismo escenario): qué mejoró, qué empeoró y si el cambio es consistente o puede ser ruido ([ADR-006](docs/adr/ADR-006-comparacion.md)). `crabfall schema` imprime el JSON Schema del escenario.
 
-Cada `lt run` deja además `report.html` al lado de `results.json`: un archivo que se abre sin conexión, con gráficos por segundo (iteraciones, latencia, p95 por paso), los hallazgos con la ventana sombreada, la comparación con la corrida anterior y las tablas. `lt report [corrida] --open` lo regenera y lo abre en el navegador ([ADR-009](docs/adr/ADR-009-reporte-html.md)).
+Cada `crabfall run` deja además `report.html` al lado de `results.json`: un archivo que se abre sin conexión, con gráficos por segundo (iteraciones, latencia, p95 por paso), los hallazgos con la ventana sombreada, la comparación con la corrida anterior y las tablas. `crabfall report [corrida] --open` lo regenera y lo abre en el navegador ([ADR-009](docs/adr/ADR-009-reporte-html.md)).
 
 Códigos de salida: `0` ok · `1` `check` con pasos fallidos, thresholds no cumplidos, `setup` fallido o `compare` con regresiones · `2` escenario o configuración inválidos · `3` rechazado (sin aprobación válida, host no permitido, límites, sin terminal) · `4` error al guardar o al acceder al keyring.
 
@@ -150,7 +150,7 @@ cargo test --workspace
 cargo run --release -p lab-server -- --port 3999   # servidor de laboratorio
 ```
 
-Para probar contra una API más realista: [shop-api](../shop-api) (repo aparte), con escenarios en su `.loadtest/`.
+Para probar contra una API más realista: [shop-api](../shop-api) (repo aparte), con escenarios en su `.crabfall/`.
 
 ## Documentación
 

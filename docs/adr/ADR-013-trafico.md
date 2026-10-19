@@ -4,7 +4,7 @@ Estado: **aceptado** · 19 oct 2026
 
 ## Contexto
 
-Con `multipart` (ADR-012) lt manda archivos grandes. Si la latencia sube, puede ser el servidor o puede ser el ancho de banda entre el generador y el servidor, y hasta ahora los resultados no mostraban cuántos bytes se movían.
+Con `multipart` (ADR-012) Crabfall manda archivos grandes. Si la latencia sube, puede ser el servidor o puede ser el ancho de banda entre el generador y el servidor, y hasta ahora los resultados no mostraban cuántos bytes se movían.
 
 ## Decisión
 
@@ -18,7 +18,7 @@ Con `multipart` (ADR-012) lt manda archivos grandes. Si la latencia sube, puede 
 ### Dónde aparece
 
 - `results.json`: `bytes_sent` y `bytes_received` por paso y por segundo en la serie, y en `totals` junto con `send_rate` y `receive_rate` (bytes por segundo, promedio de la corrida). Las corridas viejas no los tienen y se leen como 0.
-- `lt run`: una línea `tráfico` con el total, el promedio y el pico por segundo, también en Mbit/s porque así se miden los enlaces.
+- `crabfall run`: una línea `tráfico` con el total, el promedio y el pico por segundo, también en Mbit/s porque así se miden los enlaces.
 - El reporte: un tile, un gráfico por segundo y los bytes por request de cada paso.
 
 ### Lo que se descartó
@@ -29,4 +29,4 @@ Con `multipart` (ADR-012) lt manda archivos grandes. Si la latencia sube, puede 
 ## Consecuencias
 
 - **A favor:** se ve si el tráfico llega a un techo mientras la latencia sube, y cuántos bytes mueve cada paso.
-- **En contra:** lt no conoce la capacidad del enlace, así que todavía no hay una regla de diagnóstico que diga "ancho de banda". `lt compare` tampoco compara bytes por request: una respuesta que creció mucho entre dos corridas no se marca. Los dos quedan en el backlog.
+- **En contra:** Crabfall no conoce la capacidad del enlace, así que todavía no hay una regla de diagnóstico que diga "ancho de banda". `crabfall compare` tampoco compara bytes por request: una respuesta que creció mucho entre dos corridas no se marca. Los dos quedan en el backlog.
