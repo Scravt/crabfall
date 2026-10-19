@@ -58,7 +58,9 @@ pub struct Plan {
     pub setup: Vec<StepPlan>,
     /// Pasos que cada VU corre una vez antes de la carga.
     pub vu_setup: Vec<StepPlan>,
-    /// Índices en `data` de los datasets que usa `vu_setup` (una fila por VU).
+    /// Renovación de la sesión de cada VU (`vu_refresh`).
+    pub vu_refresh: Option<RefreshPlan>,
+    /// Índices en `data` de los datasets que usan `vu_setup` y `vu_refresh` (una fila por VU).
     pub vu_data: Vec<usize>,
     pub flows: Vec<FlowPlan>,
     pub load: LoadPlan,
@@ -84,6 +86,12 @@ pub struct FlowPlan {
     pub steps: Vec<StepPlan>,
     /// Índices en `Plan::data` de los datasets que usan sus pasos.
     pub data: Vec<usize>,
+}
+
+/// `vu_refresh`: cada cuánto y con qué pasos. Sin pasos propios, se repite `vu_setup`.
+pub struct RefreshPlan {
+    pub every: Duration,
+    pub steps: Vec<StepPlan>,
 }
 
 /// Un dataset con su contador de filas.
@@ -327,7 +335,24 @@ impl Plan {
             &mut after_setup,
             &mut vu_ids,
         );
-        let vu_data = datasets_used(&data, &vu_setup);
+        // La renovación ve lo mismo que `vu_setup`. Lo que extrae no se suma a lo que ven los
+        // flows: una variable que solo existiera después de renovar faltaría al principio.
+        let mut refresh_ids = 0;
+        let vu_refresh = scenario.vu_refresh.as_ref().map(|r| RefreshPlan {
+            every: r.every.0,
+            steps: build_steps(
+                &r.steps,
+                "vu_refresh",
+                None,
+                &mut after_setup.clone(),
+                &mut refresh_ids,
+            ),
+        });
+        let vu_steps: Vec<&StepPlan> = vu_setup
+            .iter()
+            .chain(vu_refresh.iter().flat_map(|r| &r.steps))
+            .collect();
+        let vu_data = datasets_used(&data, vu_steps.iter().copied());
         let flows: Vec<FlowPlan> = scenario
             .flows
             .iter()
@@ -362,6 +387,7 @@ impl Plan {
             scenario: scenario.name.clone(),
             setup,
             vu_setup,
+            vu_refresh,
             vu_data,
             flows,
             load: scenario.load.plan(),
@@ -470,6 +496,13 @@ impl Plan {
         if !self.vu_setup.is_empty() {
             canonical["vu_setup"] = self.vu_setup.iter().map(step).collect();
         }
+        // Solo si hay `vu_refresh` (ADR-011).
+        if let Some(r) = &self.vu_refresh {
+            canonical["vu_refresh"] = json!({
+                "every": d(r.every),
+                "steps": r.steps.iter().map(step).collect::<Vec<_>>(),
+            });
+        }
         // Solo si hay datasets, para no invalidar las aprobaciones de antes (ADR-007).
         // Se firma el contenido del archivo, no solo su nombre.
         if !self.data.is_empty() {
@@ -488,6 +521,32 @@ impl Plan {
     /// Variables de las filas que toma una iteración de `flow`: `dataset.columna` → valor.
     pub fn row_vars(&self, flow: &FlowPlan) -> HashMap<String, Value> {
         self.rows(&flow.data)
+    }
+
+    /// Pasos que renuevan la sesión de un VU: los de `vu_refresh` o, si no tiene, `vu_setup`.
+    /// Vacío sin `vu_refresh`.
+    pub fn refresh_steps(&self) -> &[StepPlan] {
+        match &self.vu_refresh {
+            None => &[],
+            Some(r) if r.steps.is_empty() => &self.vu_setup,
+            Some(r) => &r.steps,
+        }
+    }
+
+    /// `vu_refresh` para los resúmenes: `refresh cada 4m` o `repite login cada 4m`.
+    pub fn refresh_summary(&self) -> Option<String> {
+        let r = self.vu_refresh.as_ref()?;
+        let names: Vec<&str> = self
+            .refresh_steps()
+            .iter()
+            .map(|s| s.name.as_str())
+            .collect();
+        let what = if r.steps.is_empty() {
+            format!("repite {}", names.join(", "))
+        } else {
+            names.join(", ")
+        };
+        Some(format!("{what} cada {}", HumanDuration(r.every)))
     }
 
     /// Variables de las filas que toma un VU para su `vu_setup`.
@@ -544,7 +603,11 @@ impl Plan {
 
     /// `setup` y flows: todo lo que se envía.
     pub fn all_steps(&self) -> impl Iterator<Item = &StepPlan> {
-        self.setup.iter().chain(&self.vu_setup).chain(self.steps())
+        self.setup
+            .iter()
+            .chain(&self.vu_setup)
+            .chain(self.vu_refresh.iter().flat_map(|r| &r.steps))
+            .chain(self.steps())
     }
 
     /// Límites duros del entorno (ADR-004). `run` los exige; `check` no los necesita
@@ -649,16 +712,24 @@ fn check_references(
     problems.into_iter().collect()
 }
 
-/// Por qué `dataset.columna` no se puede usar en este paso.
 /// Índices de los datasets que usan estos pasos.
-fn datasets_used(data: &[DataPlan], steps: &[StepPlan]) -> Vec<usize> {
+fn datasets_used<'a>(
+    data: &[DataPlan],
+    steps: impl IntoIterator<Item = &'a StepPlan> + Clone,
+) -> Vec<usize> {
     data.iter()
         .enumerate()
-        .filter(|(_, d)| steps.iter().any(|s| s.uses_dataset(&d.dataset.name)))
+        .filter(|(_, d)| {
+            steps
+                .clone()
+                .into_iter()
+                .any(|s| s.uses_dataset(&d.dataset.name))
+        })
         .map(|(i, _)| i)
         .collect()
 }
 
+/// Por qué `dataset.columna` no se puede usar en este paso.
 fn unknown_column(var: &str, columns: &BTreeMap<&str, &[String]>) -> String {
     let (dataset, column) = var.split_once('.').unwrap_or((var, ""));
     match columns.get(dataset) {

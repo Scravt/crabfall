@@ -191,6 +191,26 @@ fn check_rules(s: &Scenario, errors: &mut Vec<Issue>) {
             ));
         }
     }
+    if let Some(refresh) = &s.vu_refresh {
+        if s.vu_setup.is_empty() {
+            errors.push(Issue::at(
+                "vu_refresh",
+                "renueva lo que preparó `vu_setup`: sin `vu_setup` no hay sesión que renovar",
+            ));
+        }
+        if refresh.every.0.is_zero() {
+            errors.push(Issue::at("vu_refresh.every", "tiene que ser mayor que 0"));
+        }
+        for (i, step) in refresh.steps.iter().enumerate() {
+            check_step(step, &format!("vu_refresh.steps[{i}]"), &mut seen, errors);
+            if step.think.is_some() {
+                errors.push(Issue::at(
+                    format!("vu_refresh.steps[{i}].think"),
+                    "la renovación corre entre iteraciones: no lleva pausas",
+                ));
+            }
+        }
+    }
     for (flow_name, flow) in &s.flows {
         let flow_path = format!("flows.{flow_name}");
         if flow.weight == 0 {
@@ -502,6 +522,30 @@ flows:",
         );
         let paths: Vec<_> = errors(&yaml).into_iter().map(|e| e.path).collect();
         assert_eq!(paths, ["vu_setup[0].request.url", "vu_setup[0].think"]);
+    }
+
+    #[test]
+    fn vu_refresh_needs_vu_setup_and_takes_no_pauses() {
+        let yaml = OK.replacen(
+            "flows:",
+            "vu_refresh:
+  every: 0s
+  steps:
+    - name: refresh
+      request: { method: POST, url: /auth/refresh }
+      think: 1s
+flows:",
+            1,
+        );
+        let paths: Vec<_> = errors(&yaml).into_iter().map(|e| e.path).collect();
+        assert_eq!(
+            paths,
+            [
+                "vu_refresh",
+                "vu_refresh.every",
+                "vu_refresh.steps[0].think"
+            ]
+        );
     }
 
     #[test]

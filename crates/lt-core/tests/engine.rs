@@ -770,9 +770,18 @@ async fn a_high_rate_cap_that_is_never_reached_does_not_warn() {
 /// Cada VU "se loguea" con su fila de `users`: el token es el target que devuelve el eco.
 /// El flow manda ese token y verifica que sea el de su propio usuario.
 fn vu_scenario(login_url: &str, load: &str) -> (lt_core::scenario::Scenario, Inputs) {
+    vu_scenario_with(login_url, "", load)
+}
+
+/// Como `vu_scenario`, con YAML extra en la raíz (por ejemplo, `vu_refresh`).
+fn vu_scenario_with(
+    login_url: &str,
+    extra: &str,
+    load: &str,
+) -> (lt_core::scenario::Scenario, Inputs) {
     let yaml = format!(
         "version: 1\nname: vus\ndata:\n  users: {{ file: data/users.csv }}
-vu_setup:
+{extra}vu_setup:
   - name: login
     request: {{ method: POST, url: \"{login_url}\" }}
     extract:
@@ -873,4 +882,144 @@ async fn vu_setup_failing_everywhere_aborts_and_check_shows_it() {
         "{why}"
     );
     assert_eq!(r.vu_setup.unwrap().failed, 2);
+}
+
+/// `vu_refresh` que vuelve a pedir el token a `url` cada 300 ms.
+fn refresh_yaml(url: &str) -> String {
+    format!(
+        "vu_refresh:
+  every: 300ms
+  steps:
+    - name: refresh
+      request: {{ method: POST, url: \"{url}\" }}
+      extract:
+        token: {{ json: $.target }}
+"
+    )
+}
+
+#[test]
+fn vu_refresh_is_signed_and_owns_its_datasets() {
+    let env = environment("http://127.0.0.1:1");
+    let load = "  executor: constant_vus\n  vus: 2\n  duration: 1s\n";
+    let (s, inputs) = vu_scenario_with(
+        "/echo/login/1",
+        &refresh_yaml("/echo/login/{{users.id}}"),
+        load,
+    );
+    let plan = Plan::build(&s, &env, &inputs).unwrap();
+    // Solo la renovación usa `users`: igual es del VU.
+    assert_eq!(plan.vu_data, [0]);
+    let canonical = plan.canonical(&env);
+    assert_eq!(canonical["vu_refresh"]["every"], "300ms");
+    assert_eq!(canonical["vu_refresh"]["steps"][0]["name"], "refresh");
+    assert_eq!(plan.refresh_summary().unwrap(), "refresh cada 300ms");
+
+    // Sin pasos propios, repite `vu_setup`.
+    let (s, inputs) = vu_scenario_with(
+        "/echo/login/{{users.id}}",
+        "vu_refresh: { every: 1m }\n",
+        load,
+    );
+    let plan = Plan::build(&s, &env, &inputs).unwrap();
+    assert_eq!(plan.refresh_steps()[0].name, "login");
+    assert_eq!(plan.refresh_summary().unwrap(), "repite login cada 1m");
+
+    // Sin `vu_refresh`, la firma no cambia respecto de las versiones anteriores.
+    let (s, inputs) = vu_scenario("/echo/login/{{users.id}}", load);
+    let plan = Plan::build(&s, &env, &inputs).unwrap();
+    assert!(plan.canonical(&env).get("vu_refresh").is_none());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn closed_model_vus_renew_between_iterations_and_use_the_new_token() {
+    lt_core::timer::high_resolution();
+    let base = server().await;
+    // La renovación devuelve otro token: las iteraciones de después lo usan, así que el
+    // check (que espera el del login) pasa antes de renovar y falla después.
+    let (s, inputs) = vu_scenario_with(
+        "/echo/login/{{users.id}}",
+        &refresh_yaml("/echo/refreshed/{{users.id}}"),
+        "  executor: constant_vus\n  vus: 2\n  duration: 1500ms\n",
+    );
+    let plan = Plan::build(&s, &environment(&base), &inputs).unwrap();
+    let r = engine::run(Arc::new(plan), Arc::new(Progress::default())).await;
+
+    let refresh = r.vu_refresh.as_ref().unwrap();
+    assert_eq!(refresh.failed_vus, 0);
+    // ~1.5 s / 300 ms = 4 por VU; con margen por el arranque.
+    assert!((6..=10).contains(&refresh.refreshes), "{refresh:?}");
+    assert_eq!(refresh.steps[0].requests, refresh.refreshes);
+    assert!(
+        r.totals.checks_passed > 0 && r.totals.checks_failed > 0,
+        "{:?}",
+        r.totals
+    );
+    // La renovación no entra en las métricas de carga.
+    assert_eq!(r.steps.len(), 1);
+    assert_eq!(r.totals.requests, r.steps[0].requests);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn open_model_renews_idle_vus_too() {
+    lt_core::timer::high_resolution();
+    let base = server().await;
+    // 3 VUs y 4 it/s: casi siempre hay VUs esperando en el pool, y también tienen que renovar.
+    let (s, inputs) = vu_scenario_with(
+        "/echo/login/{{users.id}}",
+        &refresh_yaml("/echo/login/{{users.id}}"),
+        "  executor: constant_rate\n  rate: 4/s\n  duration: 1500ms\n  max_vus: 3\n",
+    );
+    let plan = Plan::build(&s, &environment(&base), &inputs).unwrap();
+    let r = engine::run(Arc::new(plan), Arc::new(Progress::default())).await;
+
+    let refresh = r.vu_refresh.as_ref().unwrap();
+    assert_eq!(refresh.failed_vus, 0);
+    // 3 VUs × ~4 renovaciones; sin la tarea de los libres serían muchas menos.
+    assert!(refresh.refreshes >= 9, "{refresh:?}");
+    assert_eq!(r.totals.dropped, 0);
+    assert_eq!(r.totals.checks_failed, 0, "{:?}", r.steps[0].checks);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_refresh_retires_the_vu_and_check_runs_it_once() {
+    let base = server().await;
+    let (s, inputs) = vu_scenario_with(
+        "/echo/login/{{users.id}}",
+        &refresh_yaml("/missing"),
+        "  executor: constant_vus\n  vus: 2\n  duration: 1500ms\n",
+    );
+    let plan = Plan::build(&s, &environment(&base), &inputs).unwrap();
+
+    let checked = lt_core::check::check(&plan).await.unwrap();
+    let last = checked.steps.last().unwrap();
+    assert_eq!(
+        (last.flow.as_str(), last.name.as_str()),
+        ("vu_refresh", "refresh")
+    );
+    assert!(!checked.ok);
+
+    let r = engine::run(Arc::new(plan), Arc::new(Progress::default())).await;
+    let refresh = r.vu_refresh.as_ref().unwrap();
+    assert_eq!(refresh.failed_vus, 2);
+    assert!(
+        refresh.steps[0].errors[0].contains("respondió 405"),
+        "{refresh:?}"
+    );
+    assert!(
+        r.warnings
+            .iter()
+            .any(|w| w.contains("2 VUs fallaron al renovar")),
+        "{:?}",
+        r.warnings
+    );
+    // Dejan de iterar a los ~300 ms, no siguen con el token vencido.
+    let late: u64 = r
+        .series
+        .points
+        .iter()
+        .filter(|p| p.t >= 1)
+        .map(|p| p.started)
+        .sum();
+    assert_eq!(late, 0, "{:?}", r.series.points);
 }

@@ -56,6 +56,9 @@ pub fn cmd_run(target: &crate::Target, as_json: bool) -> u8 {
             plan.load.concurrency()
         );
     }
+    if let Some(refresh) = plan.refresh_summary() {
+        eprintln!("  renovación: {refresh} por VU, entre iteraciones");
+    }
     if !tweaks.is_empty() {
         eprintln!("  ajustes: {}", tweaks.join(" "));
     }
@@ -214,23 +217,24 @@ fn print_summary(r: &RunResult) {
             format!("{} quedaron afuera", v.failed)
         };
         println!(
-            "vu_setup  {} VUs en {:.1} s: {ok}",
+            "vu_setup  {} VUs en {}: {ok}",
             v.vus,
-            v.duration_ms / 1000.0
+            elapsed(v.duration_ms)
         );
-        for s in &v.steps {
-            let p50 = s
-                .latency_ms
-                .as_ref()
-                .map_or("-".into(), |l| format!("{:.2} ms", l.p50));
-            println!(
-                "          {}  {} requests  {} fallidos  p50 {p50}",
-                s.name, s.requests, s.failed
-            );
-            for e in &s.errors {
-                println!("            {e}");
-            }
-        }
+        session_steps(&v.steps, "          ");
+    }
+    if let Some(v) = &r.vu_refresh {
+        let lost = if v.failed_vus == 0 {
+            "ningún VU perdido".to_string()
+        } else {
+            format!("{} VUs dejaron de iterar", v.failed_vus)
+        };
+        println!(
+            "vu_refresh  cada {}: {} renovaciones, {lost}",
+            lt_core::units::HumanDuration(std::time::Duration::from_secs_f64(v.every_s)),
+            v.refreshes
+        );
+        session_steps(&v.steps, "            ");
     }
     if let Some(reason) = &r.aborted {
         println!("✗ {reason}. No se generó carga.");
@@ -368,6 +372,32 @@ fn check_summary(checks: &[(&str, &CheckResult)]) -> Vec<String> {
         }
     }
     lines
+}
+
+/// Pasos de `vu_setup` o `vu_refresh`: requests, fallas, p50 y motivos.
+fn session_steps(steps: &[lt_core::metrics::VuSetupStep], indent: &str) {
+    for s in steps {
+        let p50 = s
+            .latency_ms
+            .as_ref()
+            .map_or("-".into(), |l| format!("{:.2} ms", l.p50));
+        println!(
+            "{indent}{}  {} requests  {} fallidos  p50 {p50}",
+            s.name, s.requests, s.failed
+        );
+        for e in &s.errors {
+            println!("{indent}  {e}");
+        }
+    }
+}
+
+/// `35 ms` o `2.4 s`.
+fn elapsed(ms: f64) -> String {
+    if ms < 1000.0 {
+        format!("{ms:.0} ms")
+    } else {
+        format!("{:.1} s", ms / 1000.0)
+    }
 }
 
 /// `98.5%`, sin decimales de más.

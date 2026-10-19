@@ -508,6 +508,9 @@ pub struct RunResult {
     /// La preparación de los VUs (`vu_setup`), si el escenario la tiene.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub vu_setup: Option<VuSetupResult>,
+    /// Las renovaciones de sesión (`vu_refresh`), si el escenario las tiene.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vu_refresh: Option<VuRefreshResult>,
     pub totals: Totals,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub thresholds: Vec<ThresholdResult>,
@@ -542,6 +545,18 @@ pub struct VuSetupStep {
     pub errors: Vec<String>,
 }
 
+/// Cómo les fue a los VUs con `vu_refresh`. No entra en las métricas de carga.
+#[derive(Debug, Serialize)]
+pub struct VuRefreshResult {
+    /// Cada cuánto renueva cada VU.
+    pub every_s: f64,
+    /// Renovaciones hechas o intentadas, sumando todos los VUs.
+    pub refreshes: u64,
+    /// VUs que fallaron al renovar y dejaron de iterar.
+    pub failed_vus: u64,
+    pub steps: Vec<VuSetupStep>,
+}
+
 /// Un paso de `setup`. No entra en las métricas de carga.
 #[derive(Debug, Serialize)]
 pub struct SetupStep {
@@ -564,6 +579,7 @@ impl RunResult {
             aborted: Some(reason),
             setup,
             vu_setup: None,
+            vu_refresh: None,
             totals: Totals::default(),
             thresholds: vec![],
             scheduler_lag_ms: None,

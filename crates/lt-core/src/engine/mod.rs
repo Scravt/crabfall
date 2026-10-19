@@ -23,8 +23,8 @@ use tokio::{
 use crate::{
     load::LoadPlan,
     metrics::{
-        Collector, Outcome, Percentiles, RunResult, SetupStep, Totals, VuSetupResult, VuSetupStep,
-        histogram, record,
+        Collector, Outcome, Percentiles, RunResult, SetupStep, Totals, VuRefreshResult,
+        VuSetupResult, VuSetupStep, histogram, record,
     },
 };
 use http::{Body, Client, Failure, FailureKind, Response};
@@ -142,18 +142,114 @@ fn step_problem(step: &StepPlan, run: &StepRun) -> Option<String> {
     }
 }
 
-/// VUs preparados a la vez como máximo durante `vu_setup`.
+/// VUs preparados (o renovados) a la vez como máximo.
 const VU_SETUP_CONCURRENCY: usize = 50;
 
+/// La sesión de un VU: sus variables (lo que extrajo su `vu_setup`, más su fila de cada
+/// dataset) y, con `vu_refresh`, cuándo le toca renovar. Sin `vu_setup`, sin variables.
+/// La renovación la cambia en segundo plano: cada iteración toma las variables al empezar.
+struct Session {
+    vars: std::sync::Mutex<Arc<HashMap<String, Value>>>,
+    /// `None` sin `vu_refresh` o mientras se está renovando.
+    renew_at: std::sync::Mutex<Option<Instant>>,
+    /// Falló al renovar: deja de iterar.
+    retired: std::sync::atomic::AtomicBool,
+}
+
+type Vu = Arc<Session>;
+
+impl Session {
+    fn new(vars: HashMap<String, Value>, renew_at: Option<Instant>) -> Vu {
+        Arc::new(Self {
+            vars: std::sync::Mutex::new(Arc::new(vars)),
+            renew_at: std::sync::Mutex::new(renew_at),
+            retired: false.into(),
+        })
+    }
+
+    fn vars(&self) -> Arc<HashMap<String, Value>> {
+        self.vars.lock().unwrap().clone()
+    }
+
+    fn retired(&self) -> bool {
+        self.retired.load(Relaxed)
+    }
+}
+
+/// Latencias, fallas y motivos por paso de `vu_setup` o `vu_refresh`.
+struct StepStats(Vec<(Histogram<u64>, u64, u64, Vec<String>)>);
+
+impl StepStats {
+    fn new(steps: usize) -> Self {
+        Self(
+            (0..steps)
+                .map(|_| (histogram(), 0, 0, Vec::new()))
+                .collect(),
+        )
+    }
+
+    fn record(&mut self, step: usize, latency: Duration, problem: Option<String>) {
+        let (h, requests, failed, errors) = &mut self.0[step];
+        record(h, latency);
+        *requests += 1;
+        if let Some(p) = problem {
+            *failed += 1;
+            if errors.len() < 3 && !errors.contains(&p) {
+                errors.push(p);
+            }
+        }
+    }
+
+    fn results(&self, steps: &[StepPlan]) -> Vec<VuSetupStep> {
+        steps
+            .iter()
+            .zip(&self.0)
+            .map(|(step, (h, requests, failed, errors))| VuSetupStep {
+                name: step.name.clone(),
+                requests: *requests,
+                failed: *failed,
+                latency_ms: Percentiles::from(h),
+                errors: errors.clone(),
+            })
+            .collect()
+    }
+}
+
+/// Corre `steps` en orden con las variables del VU; lo extraído las pisa. Devuelve las
+/// variables nuevas (o `None` si un paso falló) y la latencia y el problema de cada paso.
+async fn session_steps(
+    client: &Client,
+    plan: &Plan,
+    steps: &[StepPlan],
+    setup: &HashMap<String, Value>,
+    mut vars: HashMap<String, Value>,
+) -> (
+    Option<HashMap<String, Value>>,
+    Vec<(usize, Duration, Option<String>)>,
+) {
+    let mut samples = Vec::new();
+    for (i, step) in steps.iter().enumerate() {
+        let t = Instant::now();
+        let run = run_step(client, plan, step, setup, &vars).await;
+        let problem = step_problem(step, &run);
+        samples.push((i, t.elapsed(), problem.clone()));
+        if problem.is_some() {
+            return (None, samples);
+        }
+        vars.extend(run.extracted);
+    }
+    (Some(vars), samples)
+}
+
 /// Corre `vu_setup` para `count` VUs, antes de la carga: a lo sumo 50 a la vez y sin
-/// superar `limits.max_rps`. Devuelve las variables de cada VU que lo completó.
+/// superar `limits.max_rps`. Devuelve los VUs que lo completaron.
 async fn prepare_vus(
     client: &Arc<Client>,
     plan: &Arc<Plan>,
     setup: &Arc<HashMap<String, Value>>,
     count: u32,
     progress: &Arc<Progress>,
-) -> (Vec<Arc<HashMap<String, Value>>>, VuSetupResult) {
+) -> (Vec<Vu>, VuSetupResult) {
     let started = Instant::now();
     let limit = Arc::new(Semaphore::new(VU_SETUP_CONCURRENCY));
     let pacer = plan.request_cap.map(|cap| {
@@ -163,6 +259,7 @@ async fn prepare_vus(
         ))
     });
     let never = started + Duration::from_secs(10 * 365 * 24 * 3600);
+    let every = plan.vu_refresh.as_ref().map(|r| r.every);
     progress.vus_total.store(u64::from(count), Relaxed);
 
     let mut tasks = JoinSet::new();
@@ -183,64 +280,120 @@ async fn prepare_vus(
             if let Some(p) = &pacer {
                 p.wait(never).await;
             }
-            let mut vars = plan.vu_row_vars();
-            let mut samples = Vec::new();
-            for (i, step) in plan.vu_setup.iter().enumerate() {
-                let t = Instant::now();
-                let run = run_step(&client, &plan, step, &setup, &vars).await;
-                let problem = step_problem(step, &run);
-                samples.push((i, t.elapsed(), problem.clone()));
-                if problem.is_some() {
-                    return (None, samples);
-                }
-                vars.extend(run.extracted);
+            let (vars, samples) =
+                session_steps(&client, &plan, &plan.vu_setup, &setup, plan.vu_row_vars()).await;
+            if vars.is_some() {
+                progress.vus_ready.fetch_add(1, Relaxed);
             }
-            progress.vus_ready.fetch_add(1, Relaxed);
-            (Some(vars), samples)
+            // El token se emitió recién: la cuenta para renovarlo arranca ahora.
+            let vu = vars.map(|vars| Session::new(vars, every.map(|e| Instant::now() + e)));
+            (vu, samples)
         });
     }
 
     let mut ready = Vec::new();
-    let mut stats: Vec<(Histogram<u64>, u64, u64, Vec<String>)> = plan
-        .vu_setup
-        .iter()
-        .map(|_| (histogram(), 0, 0, Vec::new()))
-        .collect();
+    let mut stats = StepStats::new(plan.vu_setup.len());
     while let Some(joined) = tasks.join_next().await {
-        let (vars, samples) = joined.expect("la preparación de un VU no entra en pánico");
+        let (vu, samples) = joined.expect("la preparación de un VU no entra en pánico");
         for (i, latency, problem) in samples {
-            let (h, requests, failed, errors) = &mut stats[i];
-            record(h, latency);
-            *requests += 1;
-            if let Some(p) = problem {
-                *failed += 1;
-                if errors.len() < 3 && !errors.contains(&p) {
-                    errors.push(p);
-                }
-            }
+            stats.record(i, latency, problem);
         }
-        if let Some(vars) = vars {
-            ready.push(Arc::new(vars));
-        }
+        ready.extend(vu);
     }
     let result = VuSetupResult {
         vus: count,
         failed: count - ready.len() as u32,
         duration_ms: round3(started.elapsed().as_secs_f64() * 1000.0),
-        steps: plan
-            .vu_setup
-            .iter()
-            .zip(stats)
-            .map(|(step, (h, requests, failed, errors))| VuSetupStep {
-                name: step.name.clone(),
-                requests,
-                failed,
-                latency_ms: Percentiles::from(&h),
-                errors,
-            })
-            .collect(),
+        steps: stats.results(&plan.vu_setup),
     };
     (ready, result)
+}
+
+/// Estado de `vu_refresh` durante la corrida.
+struct Refresh {
+    every: Duration,
+    /// Después de esto la carga ya no arranca iteraciones: no tiene sentido renovar.
+    until: Instant,
+    stats: std::sync::Mutex<StepStats>,
+    refreshes: AtomicU64,
+    failed_vus: AtomicU64,
+}
+
+impl Refresh {
+    fn result(&self, plan: &Plan) -> VuRefreshResult {
+        VuRefreshResult {
+            every_s: round3(self.every.as_secs_f64()),
+            refreshes: self.refreshes.load(Relaxed),
+            failed_vus: self.failed_vus.load(Relaxed),
+            steps: self.stats.lock().unwrap().results(plan.refresh_steps()),
+        }
+    }
+}
+
+/// Renueva la sesión de un VU. Si falla, el VU queda retirado y deja de iterar.
+async fn renew(shared: &Shared, refresh: &Refresh, vu: &Session) {
+    let (vars, samples) = session_steps(
+        &shared.client,
+        &shared.plan,
+        shared.plan.refresh_steps(),
+        &shared.setup,
+        (*vu.vars()).clone(),
+    )
+    .await;
+    {
+        let mut stats = refresh.stats.lock().unwrap();
+        for (i, latency, problem) in samples {
+            stats.record(i, latency, problem);
+        }
+    }
+    refresh.refreshes.fetch_add(1, Relaxed);
+    match vars {
+        Some(vars) => {
+            *vu.vars.lock().unwrap() = Arc::new(vars);
+            *vu.renew_at.lock().unwrap() = Some(Instant::now() + refresh.every);
+        }
+        None => {
+            vu.retired.store(true, Relaxed);
+            refresh.failed_vus.fetch_add(1, Relaxed);
+        }
+    }
+}
+
+/// Renueva en segundo plano cada sesión cuando le toca, esté el VU libre o en una
+/// iteración: la iteración en curso sigue con el token anterior, que todavía vale, y la
+/// próxima ya toma el nuevo. Así renovar no le saca capacidad a la carga.
+async fn refresher(shared: Shared, refresh: Arc<Refresh>, vus: Vec<Vu>) {
+    let limit = Arc::new(Semaphore::new(VU_SETUP_CONCURRENCY));
+    let mut renewals = JoinSet::new();
+    loop {
+        let now = Instant::now();
+        if now >= refresh.until {
+            break;
+        }
+        for vu in &vus {
+            let mut at = vu.renew_at.lock().unwrap();
+            if at.is_some_and(|at| at <= now) {
+                // `None` mientras se renueva, para no renovarlo dos veces.
+                *at = None;
+                let (shared, refresh, limit, vu) =
+                    (shared.clone(), refresh.clone(), limit.clone(), vu.clone());
+                renewals.spawn(async move {
+                    let _permit = limit.acquire_owned().await.expect("no se cierra");
+                    renew(&shared, &refresh, &vu).await;
+                });
+            }
+        }
+        while renewals.try_join_next().is_some() {}
+        // Hasta el próximo vencimiento; como mucho 100 ms, por las renovaciones en curso.
+        let next = vus
+            .iter()
+            .filter_map(|vu| *vu.renew_at.lock().unwrap())
+            .min()
+            .unwrap_or(now + Duration::from_millis(100))
+            .clamp(now, now + Duration::from_millis(100));
+        sleep_until(next.into()).await;
+    }
+    while renewals.join_next().await.is_some() {}
 }
 
 /// Corre `setup` en orden. Devuelve las variables extraídas, el detalle de cada paso y,
@@ -291,9 +444,6 @@ impl Shared {
     }
 }
 
-/// Las variables de cada VU (lo que extrajo su `vu_setup`). Sin `vu_setup`, todos vacíos.
-type Vu = Arc<HashMap<String, Value>>;
-
 /// Lo que devuelve cada modelo de carga.
 struct Dispatch {
     /// Iteraciones del calendario; `None` en el modelo cerrado (se cuentan las iniciadas).
@@ -318,7 +468,8 @@ pub async fn run(plan: Arc<Plan>, progress: Arc<Progress>) -> RunResult {
     // Un VU por cada lugar de concurrencia; con `vu_setup`, cada uno se prepara antes de la carga.
     let concurrency = plan.load.concurrency();
     let (vus, vu_setup) = if plan.vu_setup.is_empty() {
-        let empty: Vu = Arc::new(HashMap::new());
+        // Sin variables ni renovación, todos pueden compartir la misma sesión vacía.
+        let empty = Session::new(HashMap::new(), None);
         (vec![empty; concurrency as usize], None)
     } else {
         let (ready, result) =
@@ -361,6 +512,15 @@ pub async fn run(plan: Arc<Plan>, progress: Arc<Progress>) -> RunResult {
         c
     });
 
+    let refresh = plan.vu_refresh.as_ref().map(|r| {
+        Arc::new(Refresh {
+            every: r.every,
+            until: start + plan.load.duration(),
+            stats: std::sync::Mutex::new(StepStats::new(plan.refresh_steps().len())),
+            refreshes: AtomicU64::new(0),
+            failed_vus: AtomicU64::new(0),
+        })
+    });
     let shared = Shared {
         plan: plan.clone(),
         client,
@@ -368,10 +528,18 @@ pub async fn run(plan: Arc<Plan>, progress: Arc<Progress>) -> RunResult {
         tx,
         progress: progress.clone(),
     };
+    let refresher = refresh
+        .clone()
+        .map(|r| tokio::spawn(refresher(shared.clone(), r, vus.clone())));
     let dispatch = match &plan.load {
         LoadPlan::Open { .. } => open_model(shared, start, vus).await,
         LoadPlan::Closed { duration, .. } => closed_model(shared, start, vus, *duration).await,
     };
+    // Tiene una copia del canal de eventos: el colector no termina mientras siga viva.
+    if let Some(r) = refresher {
+        r.abort();
+        let _ = r.await;
+    }
 
     let elapsed = start.elapsed().as_secs_f64();
     let collector = collector.await.expect("el colector no falla");
@@ -404,6 +572,13 @@ pub async fn run(plan: Arc<Plan>, progress: Arc<Progress>) -> RunResult {
             v.vus - v.failed
         ));
     }
+    let vu_refresh = refresh.map(|r| r.result(&plan));
+    if let Some(r) = vu_refresh.as_ref().filter(|r| r.failed_vus > 0) {
+        warnings.push(format!(
+            "{} VUs fallaron al renovar la sesión (vu_refresh) y dejaron de iterar.",
+            r.failed_vus
+        ));
+    }
     // Las esperas cortas al arrancar (todos los VUs a la vez) no limitan la carga: se avisa
     // solo si algún segundo llegó cerca del tope.
     let cap = plan.request_cap.unwrap_or(f64::INFINITY);
@@ -425,6 +600,7 @@ pub async fn run(plan: Arc<Plan>, progress: Arc<Progress>) -> RunResult {
         aborted: None,
         setup,
         vu_setup,
+        vu_refresh,
         totals,
         thresholds,
         scheduler_lag_ms: scheduler_lag,
@@ -458,7 +634,13 @@ async fn open_model(shared: Shared, start: Instant, vus: Vec<Vu>) -> Dispatch {
         while tasks.try_join_next().is_some() {}
 
         let flow = picker.next();
-        let Some(vu) = free.lock().unwrap().pop() else {
+        // Los que fallaron al renovar se descartan del pool.
+        let vu = {
+            let mut free = free.lock().unwrap();
+            free.retain(|vu| !vu.retired());
+            free.pop()
+        };
+        let Some(vu) = vu else {
             shared.progress.dropped.fetch_add(1, Relaxed);
             let _ = shared.tx.send(Event::Dropped(intended));
             continue;
@@ -467,7 +649,7 @@ async fn open_model(shared: Shared, start: Instant, vus: Vec<Vu>) -> Dispatch {
         let _ = shared.tx.send(Event::Started(intended));
         let (shared, free) = (shared.clone(), free.clone());
         tasks.spawn(async move {
-            shared.iteration(flow, intended, &vu).await;
+            shared.iteration(flow, intended, &vu.vars()).await;
             free.lock().unwrap().push(vu);
         });
     }
@@ -524,10 +706,13 @@ async fn closed_model(
                 if Instant::now() >= deadline {
                     break;
                 }
+                if vu.retired() {
+                    break;
+                }
                 let flow = picker.lock().unwrap().next();
                 shared.progress.started.fetch_add(1, Relaxed);
                 let _ = shared.tx.send(Event::Started(Instant::now()));
-                shared.iteration(flow, Instant::now(), &vu).await;
+                shared.iteration(flow, Instant::now(), &vu.vars()).await;
             }
         });
     }
