@@ -175,13 +175,13 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente. Al cerrar
 - [x] `approve` y `run` muestran una línea `HTTP`; `check` muestra cada salto de un redirect
 - [x] CI en GitHub Actions: fmt y clippy en Linux, tests en Linux y Windows
 - [x] Tests: contra axum con `tower-http` comprimiendo de verdad (gzip y br), sesión por VU, cookies apagadas, redirects (cadena, límite, loop, POST 302 y 307, otro host sin `authorization`), check sin salir de loopback, formularios, firma y validación
-- Listo cuando: en `market-api`, `browse` aprobado de nuevo corre igual que antes (Express no comprime: los bytes no cambian). Detrás de Caddy (perfil `tls`, `encode gzip`) los bytes recibidos de las búsquedas tienen que bajar varias veces. **Pendiente:** las corridas (las aprueba y ejecuta una persona).
+- Listo: en `market-api`, `browse` aprobado de nuevo (20 it/s durante 30 s) dio 1.800 de 1.800 checks, sin fallas, con `search` en p50 10 ms como antes. Recibió unos 2 KB por request: Express no comprime, así que pedir `gzip, br` no cambió nada, como corresponde (19 oct 2026). **Pendiente:** ver la compresión detrás de Caddy (perfil `tls`, `encode gzip`), junto con la prueba de TLS de la rebanada 1.
 
 **15. Lo que dice el servidor**
 - [x] De cada 429 se guardan `Retry-After` y la política declarada (`RateLimit-Policy` draft-8 y drafts 6-7, `X-RateLimit-Limit`) en `steps[].rate_limit`; `error_threshold` dice el límite con números; `crabfall run` lo muestra en una línea `límite` (ADR-005)
 - [x] `crabfall compare` compara bytes por request y avisa si la respuesta o el request cambió mucho de tamaño (ADR-006)
 - [x] Tests: el parser con los headers reales de express-rate-limit y los formatos viejos, la patología de rate limit con headers, y el aviso de tamaño (también con corridas sin bytes)
-- Listo cuando: en `market-api`, el hallazgo de `rate-limit` (20 it/s contra `/me`, que corta a los ~30 s) dice "declara 600 requests cada 60 s" (el límite por usuario de `userLimit`). **Pendiente:** la corrida.
+- Listo: en `market-api`, `rate-limit` (20 it/s contra `/me` durante 45 s) recibió 300 429 desde el segundo 30 (20/s × 30 s = 600). El hallazgo dice "declara 600 requests cada 60 s (`RateLimit-Policy`) y pide esperar con `Retry-After de 16 a 30 s`", y `crabfall run` lo muestra en la línea `límite` (19 oct 2026). La corrida destapó un detalle de formato, ya corregido: con poco tráfico el pico salía "0.0 Mbit/s"; ahora sale en kbit/s.
 
 ## Primera versión
 
