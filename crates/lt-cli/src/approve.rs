@@ -251,6 +251,10 @@ fn print_summary(
         let requests = rounds * plan.load.concurrency() as usize * plan.refresh_steps().len();
         eprintln!("Renovación  {refresh} por VU, en segundo plano: hasta {requests} requests");
     }
+    for (i, u) in plan.uploads_summary().iter().enumerate() {
+        let label = if i == 0 { "Archivos" } else { "" };
+        eprintln!("{label:<11} {u}  (multipart, en cada request)");
+    }
     for (i, d) in plan.data.iter().enumerate() {
         let label = if i == 0 { "Datos" } else { "" };
         eprintln!("{label:<11} {}", d.dataset.describe());

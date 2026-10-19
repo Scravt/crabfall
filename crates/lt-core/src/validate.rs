@@ -294,11 +294,42 @@ fn check_step<'a>(
             "tiene que empezar con `/` (relativa a base_url) o con http:// o https://",
         ));
     }
-    if r.json.is_some() && r.body.is_some() {
+    let bodies = [r.json.is_some(), r.body.is_some(), !r.multipart.is_empty()];
+    if bodies.iter().filter(|b| **b).count() > 1 {
         errors.push(Issue::at(
             format!("{path}.request"),
-            "usá `json` o `body`, no los dos",
+            "usá uno solo de `json`, `body` o `multipart`",
         ));
+    }
+    if !r.multipart.is_empty() {
+        if r.headers
+            .keys()
+            .any(|h| h.eq_ignore_ascii_case("content-type"))
+        {
+            errors.push(Issue::at(
+                format!("{path}.request.headers"),
+                "con `multipart`, el `content-type` lo pone lt (lleva el boundary): sacalo",
+            ));
+        }
+        for (name, part) in &r.multipart {
+            let at = format!("{path}.request.multipart.{name}");
+            if name.is_empty() {
+                errors.push(Issue::at(&at, "el campo necesita un nombre"));
+            }
+            if let crate::scenario::MultipartPart::File(f) = part {
+                let p = std::path::Path::new(&f.file);
+                if f.file.is_empty()
+                    || p.is_absolute()
+                    || p.components()
+                        .any(|c| matches!(c, std::path::Component::ParentDir))
+                {
+                    errors.push(Issue::at(
+                        format!("{at}.file"),
+                        "usá una ruta relativa a .loadtest/, sin `..`",
+                    ));
+                }
+            }
+        }
     }
     if r.timeout.is_some_and(|t| t.0.is_zero()) {
         errors.push(Issue::at(
@@ -544,6 +575,28 @@ flows:",
                 "vu_refresh",
                 "vu_refresh.every",
                 "vu_refresh.steps[0].think"
+            ]
+        );
+    }
+
+    #[test]
+    fn multipart_excludes_other_bodies_and_its_content_type() {
+        let yaml = OK.replacen(
+            "url: /products",
+            "url: /products
+          json: { a: 1 }
+          headers: { Content-Type: text/plain }
+          multipart:
+            file: { file: ../secreto.txt }",
+            1,
+        );
+        let paths: Vec<_> = errors(&yaml).into_iter().map(|e| e.path).collect();
+        assert_eq!(
+            paths,
+            [
+                "flows.main.steps[0].request",
+                "flows.main.steps[0].request.headers",
+                "flows.main.steps[0].request.multipart.file.file"
             ]
         );
     }

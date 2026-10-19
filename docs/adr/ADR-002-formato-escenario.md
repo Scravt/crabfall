@@ -230,7 +230,7 @@ meta:
   created_by: agent
   generated_from: openapi.yaml
   skipped:
-    - { operation_id: uploadImage, reason: "multipart/form-data todavía no soportado" }
+    - { operation_id: liveFeed, reason: "WebSocket todavía no soportado" }
     - { operation_id: streamEvents, reason: "text/event-stream no soportado" }
 
 vars:
@@ -284,7 +284,8 @@ load:
 | flow | `weight`, `steps` | `weight` opcional, por defecto `1` |
 | defaults | `headers`, `timeout`, `think` | Solo para pasos de `flows`, no de `setup` |
 | paso | `name`, `request`, `checks`, `extract`, `tags`, `source`, `think` | `name` único en todo el escenario. `think`: pausa después del paso (`2s` o `1s-3s`), no en `setup` |
-| request | `method`, `url`, `headers`, `query`, `timeout` + uno de `json` / `form` / `body` | `timeout` por defecto 30s. `url` relativa a `base_url` o absoluta; los hosts se validan contra `allowed_hosts` |
+| request | `method`, `url`, `headers`, `query`, `timeout` + uno de `json` / `body` / `multipart` | `timeout` por defecto 30s. `url` relativa a `base_url` o absoluta; los hosts se validan contra `allowed_hosts` |
+| multipart | por campo: un string (texto) o `{ file, filename, content_type }` | `file` relativo a `.loadtest/`; el `content-type` del request lo pone lt (ADR-012) |
 | check | `status`, `status_in`, `json` + (`exists` / `equals` / `matches`), `header` + (`exists` / `equals` / `contains` / `matches`), `body_contains`, `body_matches` | No bloqueantes: cuentan para `checks.pass_rate`. `equals` admite `{{variables}}`. El body usa claves propias (`body_contains`, `body_matches`) porque no tiene selector |
 | extract | `{ json: <path> }`, `{ header: <nombre> }`, `{ regex: <patrón> }` | En `setup`: global de solo lectura. En flows: por iteración |
 | load | `executor` + sus campos: `constant_rate` (`rate`, `duration`, `max_vus`); `ramping_rate` (`start_rate` opcional, por defecto `0/s`; `stages` con `target` y `duration`; `max_vus`); `constant_vus` (`vus`, `duration`); más adelante `breakpoint` | Todos aceptan `graceful_stop` (por defecto 30s). Es un bloque plano: `lt validate` rechaza los campos que no aplican al executor. Con `constant_vus`, la tasa no está acotada de antemano: si el entorno define `limits.max_rps`, el motor espacia las iteraciones para no superarlo |

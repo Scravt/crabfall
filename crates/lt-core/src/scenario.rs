@@ -245,6 +245,30 @@ pub struct RequestSpec {
     /// Body de texto tal cual. Excluye a `json`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub body: Option<String>,
+    /// Body `multipart/form-data`, por ejemplo para subir archivos: `{ file: { file: files/foto.jpg }, description: "texto" }`. Cada clave es el nombre del campo; un string es un campo de texto. lt pone el `content-type` con su boundary. Excluye a `json` y `body`.
+    #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
+    pub multipart: IndexMap<String, MultipartPart>,
+}
+
+/// Un campo de un body multipart: texto (`"hola {{x}}"`) o un archivo (`{ file: files/a.pdf }`).
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum MultipartPart {
+    Text(String),
+    File(FilePart),
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FilePart {
+    /// Archivo relativo a `.loadtest/`, por ejemplo `files/foto.jpg`. Se lee una vez y se manda entero en cada request; la aprobación firma su contenido. Hasta 100 MB.
+    pub file: String,
+    /// Nombre que ve el servidor. Por defecto, el del archivo. Admite `{{variables}}`, por ejemplo `foto-{{$uuid}}.jpg`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filename: Option<String>,
+    /// Tipo del archivo. Por defecto sale de la extensión (`application/octet-stream` si no se conoce).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_type: Option<String>,
 }
 
 /// Dónde está el código que atiende este paso. El motor no lo usa: lo copia en los resultados.

@@ -36,5 +36,5 @@ url = "2.5.8"
 windows-sys = { version = "0.61.2", features = ["Win32_Media"] }
 
 [dev-dependencies]
-axum = "0.8.9"
+axum = { version = "0.8.9", features = ["multipart"] }
 tokio = { version = "1.53.2", features = ["full"] }

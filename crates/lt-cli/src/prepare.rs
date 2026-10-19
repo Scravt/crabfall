@@ -141,6 +141,15 @@ pub fn inputs(
             Err(e) => errors.push(e),
         }
     }
+    let mut files = BTreeMap::new();
+    for file in lt_core::upload::files(scenario) {
+        match lt_core::upload::Upload::load(&project.dir, file) {
+            Ok(u) => {
+                files.insert(file.to_string(), u);
+            }
+            Err(e) => errors.push(e),
+        }
+    }
     if !errors.is_empty() {
         return Err(errors.join(
             "
@@ -151,6 +160,7 @@ pub fn inputs(
         vars: parsed,
         secrets,
         data,
+        files,
     })
 }
 

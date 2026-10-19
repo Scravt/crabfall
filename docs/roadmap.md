@@ -151,9 +151,16 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente. Al cerrar
 - [x] `approve` sugiere el `lt run` con los mismos ajustes
 - Listo: en `market-api`, con tokens de 60 s y 20 VUs durante 2 minutos, `shop-per-user` recibió 608 401 desde el segundo 59 y el hallazgo dijo "venció la sesión" con la sugerencia de `vu_refresh`. `session-refresh`, lo mismo con renovación por `/auth/refresh` cada 45 s, hizo 40 renovaciones (p50 5,5 ms), 0 401 y 1.860 de 1.860 checks pasados (18 oct 2026).
 
+**12. Subir archivos (multipart)**
+- [x] `multipart:` en el `request`: campos de texto con variables y archivos de `.loadtest/` con `filename` y `content_type` opcionales; excluye a `json` y `body` (ADR-012)
+- [x] Los archivos se leen una vez y van enteros en cada request (hasta 100 MB); boundary aleatorio por paso que no aparece en ningún archivo; `content-type` con el boundary lo pone lt
+- [x] Firma el SHA-256 de cada archivo, no el boundary; `approve` y `run` muestran cada archivo con su tamaño y el paso que lo sube
+- [x] Tests: un servidor con el parser multipart de axum recibe el archivo intacto (con CRLF y algo que parece un boundary) y los campos de texto; firma estable y sensible al contenido; validación
+- Listo cuando: en `market-api`, `upload` (10 VUs, cada uno sube un adjunto de 1 MB, verifica el `sha256` que devuelve el servidor, lo baja y lo borra) termina con 0 checks fallidos. `check` pasa (18 oct 2026). **Pendiente:** la corrida (la aprueba y ejecuta una persona).
+
 ## Backlog (sin orden)
 
-Requests multipart (subir archivos; `market-api` tiene `POST /files`), más reglas de diagnóstico, corrida base fija para CI (`lt compare --baseline`), servidor MCP, importadores (OpenAPI, curl, Postman), GUI con Tauri, HTTP/2, `pick: unique` para datasets, leer `expires_in` para elegir solo cuándo renovar, leer `Retry-After` en los 429 para que el hallazgo diga la ventana del límite, GitHub Action, correlación con métricas del servidor (OTLP, Prometheus), WebSockets, gRPC, Kafka.
+Bytes enviados y recibidos por segundo en los resultados (con archivos grandes, el ancho de banda puede ser el límite), más reglas de diagnóstico, corrida base fija para CI (`lt compare --baseline`), servidor MCP, importadores (OpenAPI, curl, Postman), GUI con Tauri, HTTP/2, `pick: unique` para datasets, leer `expires_in` para elegir solo cuándo renovar, leer `Retry-After` en los 429 para que el hallazgo diga la ventana del límite, GitHub Action, correlación con métricas del servidor (OTLP, Prometheus), WebSockets, gRPC, Kafka.
 
 ## Decisiones abiertas
 
@@ -189,3 +196,4 @@ Requests multipart (subir archivos; `market-api` tiene `POST /files`), más regl
 | 17 oct 2026 | Reporte HTML autocontenido por corrida, generado por `lt run` | ADR-009 |
 | 17 oct 2026 | `vu_setup`: cada VU hace su login antes de la carga; el modelo abierto reparte VUs desde un pool | ADR-010 |
 | 18 oct 2026 | `vu_refresh`: renovación en segundo plano, sin sacar al VU del pool; si falla, el VU deja de iterar | ADR-011 |
+| 18 oct 2026 | `multipart`: archivos leídos una vez y firmados por contenido; sin streaming ni rutas con variables | ADR-012 |

@@ -18,4 +18,5 @@ pub mod template;
 pub mod threshold;
 pub mod timer;
 pub mod units;
+pub mod upload;
 pub mod validate;
