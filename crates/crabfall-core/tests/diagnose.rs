@@ -116,9 +116,17 @@ async fn rate_limiter_shows_an_error_threshold_with_429() {
                     window.1.store(0, Relaxed);
                 }
                 if window.1.fetch_add(1, Relaxed) < 150 {
-                    StatusCode::OK
+                    StatusCode::OK.into_response()
                 } else {
-                    StatusCode::TOO_MANY_REQUESTS
+                    // Como express-rate-limit (draft-8).
+                    (
+                        StatusCode::TOO_MANY_REQUESTS,
+                        [
+                            ("ratelimit-policy", "\"api\"; q=150; w=1"),
+                            ("retry-after", "1"),
+                        ],
+                    )
+                        .into_response()
                 }
             }
         }),
@@ -129,6 +137,15 @@ async fn rate_limiter_shows_an_error_threshold_with_429() {
     let f = find(&r, "error_threshold");
     assert!(f.title.contains("429"), "{}", f.title);
     assert!(f.causes[0].contains("rate limiter"), "{:?}", f.causes);
+    assert!(
+        f.causes[0].contains("declara 150 requests cada 1 s")
+            && f.causes[0].contains("Retry-After 1 s"),
+        "{:?}",
+        f.causes
+    );
+    assert_eq!(f.evidence["rate_limit"]["quota"], 150);
+    let limited = r.steps[0].rate_limit.as_ref().unwrap();
+    assert_eq!(Some(&limited.responses), r.steps[0].status_codes.get("429"));
     let at = f.evidence["offered_iterations_per_s"].as_u64().unwrap();
     assert!(
         (120..=260).contains(&at),

@@ -553,6 +553,27 @@ fn error_threshold(
         // Reemplaza a la causa genérica de los 4xx, que ya mencionaba los tokens.
         causes = vec![why];
     }
+    // Si el servidor declaró su límite, el hallazgo lo dice con números.
+    let limit = step
+        .rate_limit
+        .as_ref()
+        .filter(|_| dominant_code == Some("429"));
+    if let Some(l) = limit {
+        let declared: Vec<String> = [
+            l.policy()
+                .map(|p| format!("declara {p} (`RateLimit-Policy`)")),
+            l.retry_after().map(|r| format!("pide esperar con `{r}`")),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        if !declared.is_empty() {
+            causes = vec![format!(
+                "El rate limiter del servidor corta: {}. El límite suele ser por clave (IP, usuario o token): con una sola IP y pocos usuarios, la carga lo alcanza antes que el tráfico real.",
+                declared.join(" y ")
+            )];
+        }
+    }
     if from_start {
         causes.insert(0, "Un error funcional del escenario o de la API (URL, datos, auth): revisalo con `crabfall check`.".into());
     }
@@ -573,6 +594,7 @@ fn error_threshold(
             "status_codes": step.status_codes,
             "failures": step.failures,
             "error_samples": step.error_samples,
+            "rate_limit": limit,
         }),
         causes,
     })

@@ -312,6 +312,15 @@ fn print_summary(r: &RunResult) {
                 .collect();
             println!("códigos  {}: {}", s.name, codes.join("  "));
         }
+        if let Some(l) = &s.rate_limit {
+            let said: Vec<String> = [l.policy(), l.retry_after()]
+                .into_iter()
+                .flatten()
+                .collect();
+            if !said.is_empty() {
+                println!("límite   {}: {}", s.name, said.join(" · "));
+            }
+        }
         if !s.failures.is_empty() {
             let kinds: Vec<_> = s
                 .failures

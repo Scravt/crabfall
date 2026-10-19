@@ -22,6 +22,10 @@ const SIGN_TEST_ALPHA: f64 = 0.05;
 const SIGN_TEST_MIN_WINDOWS: usize = 6;
 const RATE_MIN_DELTA_PP: f64 = 1.0;
 const BREAKING_POINT_MIN_RATIO: f64 = 0.10;
+/// Un cambio de tamaño por request que vale la pena avisar: al menos ×1,5 (o la mitad
+/// menos) y 1 KB.
+const SIZE_MIN_RATIO: f64 = 1.5;
+const SIZE_MIN_DELTA_BYTES: f64 = 1024.0;
 
 /// Lo que se lee de `results.json`; el resto se ignora.
 #[derive(Debug, Deserialize)]
@@ -66,11 +70,21 @@ pub struct StepRun {
     pub failed: u64,
     pub non_2xx: u64,
     pub latency_ms: Option<Percentiles>,
+    /// Las corridas anteriores a ADR-013 no los tienen.
+    #[serde(default)]
+    pub bytes_sent: u64,
+    #[serde(default)]
+    pub bytes_received: u64,
 }
 
 impl StepRun {
     fn error_pct(&self) -> Option<f64> {
         pct(self.failed + self.non_2xx, self.requests)
+    }
+
+    /// Bytes por request; `None` sin requests o si la corrida no midió bytes.
+    fn per_request(&self, bytes: u64) -> Option<f64> {
+        (self.requests > 0 && bytes > 0).then(|| (bytes as f64 / self.requests as f64).round())
     }
 }
 
@@ -187,6 +201,9 @@ pub struct StepDiff {
     pub p50_ms: Delta,
     pub p95_ms: Delta,
     pub p99_ms: Delta,
+    /// Bytes por request (ADR-013).
+    pub sent_per_request: Delta,
+    pub received_per_request: Delta,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -262,7 +279,7 @@ pub fn compare(base: &Run, new: &Run) -> Result<Comparison, String> {
         verdict,
         same_load,
         paired_windows: windows.len(),
-        warnings: warnings(base, new, same_load),
+        warnings: [warnings(base, new, same_load), size_changes(&steps)].concat(),
         regressions,
         improvements,
         totals,
@@ -312,6 +329,35 @@ fn warnings(base: &Run, new: &Run, same_load: bool) -> Vec<String> {
         out.push(
             "el escenario cambió entre corridas (otra aprobación): requests, pasos o variables pueden ser distintos".into(),
         );
+    }
+    out
+}
+
+/// Pasos cuyo tamaño por request cambió mucho: no es mejora ni regresión, pero puede
+/// explicar un cambio de latencia (una respuesta que creció, un archivo más grande).
+fn size_changes(steps: &[StepDiff]) -> Vec<String> {
+    let mut out = Vec::new();
+    for s in steps {
+        for (what, d) in [
+            ("la respuesta", &s.received_per_request),
+            ("el request", &s.sent_per_request),
+        ] {
+            let (Some(b), Some(n)) = (d.base, d.new) else {
+                continue;
+            };
+            let ratio = n.max(1.0) / b.max(1.0);
+            if (n - b).abs() >= SIZE_MIN_DELTA_BYTES
+                && (ratio >= SIZE_MIN_RATIO || ratio <= 1.0 / SIZE_MIN_RATIO)
+            {
+                out.push(format!(
+                    "`{}`: {what} pasó de {} a {} por request (×{:.1}); puede explicar parte del cambio de latencia",
+                    s.name,
+                    crate::upload::size(b as usize),
+                    crate::upload::size(n as usize),
+                    ratio
+                ));
+            }
+        }
     }
     out
 }
@@ -410,6 +456,14 @@ fn steps(base: &Run, new: &Run, windows: Option<&[u32]>) -> Vec<StepDiff> {
                 p50_ms: Delta::new(lat(b, |p| p.p50), lat(n, |p| p.p50)),
                 p95_ms: p95,
                 p99_ms: Delta::new(lat(b, |p| p.p99), lat(n, |p| p.p99)),
+                sent_per_request: Delta::new(
+                    b.and_then(|s| s.per_request(s.bytes_sent)),
+                    n.and_then(|s| s.per_request(s.bytes_sent)),
+                ),
+                received_per_request: Delta::new(
+                    b.and_then(|s| s.per_request(s.bytes_received)),
+                    n.and_then(|s| s.per_request(s.bytes_received)),
+                ),
             }
         })
         .collect()
@@ -718,6 +772,37 @@ mod tests {
             "series": { "window_s": 1, "points": global, "steps": [{ "name": "a", "points": points }] },
         }))
         .unwrap()
+    }
+
+    #[test]
+    fn warns_when_the_response_size_changes_a_lot() {
+        let sized = |id: &str, received: u64| {
+            let mut r = run(id, &[10.0; 8], json!([]));
+            r.steps[0].bytes_sent = 100 * 300;
+            r.steps[0].bytes_received = 100 * received;
+            r
+        };
+        let c = compare(&sized("a", 4_000), &sized("b", 40_000)).unwrap();
+        assert_eq!(c.steps[0].received_per_request.base, Some(4_000.0));
+        assert_eq!(
+            c.warnings,
+            [
+                "`a`: la respuesta pasó de 4 KB a 39 KB por request (×10.0); puede explicar parte del cambio de latencia"
+            ]
+        );
+        // Un cambio chico, o una corrida sin bytes (anterior a ADR-013), no avisa.
+        assert!(
+            compare(&sized("a", 4_000), &sized("b", 4_500))
+                .unwrap()
+                .warnings
+                .is_empty()
+        );
+        assert!(
+            compare(&sized("a", 0), &sized("b", 40_000))
+                .unwrap()
+                .warnings
+                .is_empty()
+        );
     }
 
     fn breaking(rate: u64) -> Value {

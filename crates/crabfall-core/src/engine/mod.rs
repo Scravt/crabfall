@@ -838,6 +838,8 @@ async fn iteration(
             Ok(r) => Outcome::Response {
                 status: r.status,
                 timings: r.timings,
+                limit: (r.status == 429)
+                    .then(|| Box::new(crate::ratelimit::Sample::from_headers(&r.headers))),
             },
             Err(f) => Outcome::Failure {
                 kind: f.kind,

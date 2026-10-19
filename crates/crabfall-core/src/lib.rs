@@ -13,6 +13,7 @@ pub mod load;
 pub mod metrics;
 pub mod overrides;
 pub mod project;
+pub mod ratelimit;
 pub mod scenario;
 pub mod template;
 pub mod threshold;
