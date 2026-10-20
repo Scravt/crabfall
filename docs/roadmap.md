@@ -218,6 +218,12 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente. Al cerrar
 - [x] Tests: el orden del historial, la comparación con la anterior (empeoró) y contra una base (mejoró), y un escenario sin corridas
 - Listo cuando: en `market-api`, el historial de `search-ramp` compara la corrida sin índice con la de después y dice "mejoró". **Pendiente:** la prueba.
 
+**20. Diagnóstico de ancho de banda** (ADR-005)
+- [x] `bandwidth_limit`: el tráfico se estanca en un techo (85% del pico, 5 segundos o más) mientras la carga pide un 25% más y el p95 se triplica; solo por encima de 1 MB/s
+- [x] Evidencia (pico, movido, pedido, bytes por iteración, p95) con nombres en el reporte, en los dos idiomas; la skill sabe leerla
+- [x] Laboratorio: un enlace simulado de 2 MB/s da el hallazgo; las mismas respuestas sin límite, no
+- Listo cuando: contra `market-api` detrás de un enlace real (la prueba de TLS), `upload` con más VUs lo muestra si el enlace se llena. **Pendiente:** depende del servidor remoto.
+
 ## Primera versión
 
 **v0.1.0** (19 oct 2026): las rebanadas 0 a 13 con el nombre Crabfall (binario `crabfall`, carpeta `.crabfall/`), en `main` y en GitHub (privado). Lo que queda abierto de esas rebanadas: TLS contra un servidor real (1), la skill en una sesión nueva de Claude Code (2). La rebanada 13 se cerró después, con la corrida de `upload`.
@@ -226,7 +232,7 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente. Al cerrar
 
 **Al final: modelos de carga nuevos** (`ramping_vus`, iteraciones fijas, arrival por VU). Hoy alcanzan `constant_rate`, `ramping_rate` y `constant_vus`.
 
-Regla de diagnóstico para el ancho de banda (los bytes por segundo se estancan mientras la latencia sube), más reglas de diagnóstico, corrida base fija para CI (`crabfall compare --baseline`), servidor MCP, importadores (OpenAPI, curl, Postman), HTTP/2, GUI con Tauri (después de la TUI), `pick: unique` para datasets, leer `expires_in` para elegir solo cuándo renovar, GitHub Action, correlación con métricas del servidor (OTLP, Prometheus), WebSockets, gRPC, Kafka.
+más reglas de diagnóstico, corrida base fija para CI (`crabfall compare --baseline`), servidor MCP, importadores (OpenAPI, curl, Postman), HTTP/2, GUI con Tauri (después de la TUI), `pick: unique` para datasets, leer `expires_in` para elegir solo cuándo renovar, GitHub Action, correlación con métricas del servidor (OTLP, Prometheus), WebSockets, gRPC, Kafka.
 
 ## Decisiones abiertas
 

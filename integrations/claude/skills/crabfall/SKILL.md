@@ -129,6 +129,7 @@ Always start with `crabfall findings --json` (the most recent run; `crabfall fin
    - `degradation_over_time`: with constant load, latency rises steadily.
    - `long_tail`: p99 far from p50 under steady load.
    - `new_connections`: connections are not reused.
+   - `bandwidth_limit`: traffic (bytes per second) levels off while the load asks for more and latency rises: the limit may be the link, not the server. Before blaming the code, suggest measuring the link or running the generator next to the server.
 3. **Go to the code.** For each finding with a `source`, open that file and symbol and look for what would explain the evidence: synchronous CPU work, small pools, locks, queries without an index, growing collections, external calls without a concurrency limit.
 4. **Report in two parts, always separate:**
    - **Measured**: what the finding says, with its numbers (`evidence`).
