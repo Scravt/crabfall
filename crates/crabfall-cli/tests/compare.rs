@@ -88,3 +88,55 @@ fn compare_picks_the_previous_run_of_the_same_scenario() {
     let out = cli(&dir, &["compare", "20991231-000000"]);
     assert_eq!(out.status.code(), Some(2));
 }
+
+#[test]
+fn compare_against_a_fixed_baseline() {
+    let dir = std::env::temp_dir().join(format!("crabfall-baseline-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join(".crabfall")).unwrap();
+    std::fs::write(
+        dir.join(".crabfall/config.yaml"),
+        "version: 1\nenvironments:\n  local:\n    base_url: http://127.0.0.1:9\n    allowed_hosts: [127.0.0.1]\n",
+    )
+    .unwrap();
+
+    // Sin base todavía: error de uso, y dice cómo fijarla.
+    save_run(&dir, "20260101-000000", "s", 10.0);
+    let out = cli(&dir, &["compare", "--baseline"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("crabfall baseline"));
+
+    // La primera corrida es la base; se versiona en .crabfall/baselines/.
+    let out = cli(&dir, &["baseline", "20260101-000000"]);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(dir.join(".crabfall/baselines/s.local.json").is_file());
+
+    // Dos corridas después: --baseline compara contra la base, no contra la anterior.
+    save_run(&dir, "20260101-000100", "s", 40.0);
+    save_run(&dir, "20260101-000200", "s", 40.0);
+    let out = cli(&dir, &["compare", "--baseline", "--json"]);
+    assert_eq!(out.status.code(), Some(1), "empeoró contra la base");
+    let c = json_out(&out);
+    assert_eq!(c["base"]["run_id"], "20260101-000000");
+    assert_eq!(c["new"]["run_id"], "20260101-000200");
+    // Sin --baseline, contra la anterior: igual.
+    let out = cli(&dir, &["compare", "--json"]);
+    assert_eq!(json_out(&out)["verdict"], "same");
+
+    // Con --baseline se pasa una sola corrida.
+    let out = cli(
+        &dir,
+        &[
+            "compare",
+            "--baseline",
+            "20260101-000100",
+            "20260101-000200",
+        ],
+    );
+    assert_eq!(out.status.code(), Some(2));
+}

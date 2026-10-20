@@ -1,4 +1,5 @@
 mod approve;
+mod baseline;
 mod check;
 mod claude;
 mod compare;
@@ -173,9 +174,17 @@ enum Command {
         base: Option<String>,
         /// New run. By default, `latest`.
         new: Option<String>,
+        /// Compares against the scenario's baseline (crabfall baseline) instead of the previous run; the only argument is then the new run.
+        #[arg(long)]
+        baseline: bool,
         /// JSON output for agents.
         #[arg(long)]
         json: bool,
+    },
+    /// Sets a run (by default, the most recent one) as the baseline of its scenario and environment, in .crabfall/baselines/ (commit it to share it).
+    Baseline {
+        /// Run id (folder in .crabfall/runs/) or `latest`.
+        run: Option<String>,
     },
     /// HTML report of a run (by default, the most recent one): charts, findings and comparison.
     ///
@@ -244,9 +253,13 @@ fn main() -> ExitCode {
             event: HookEvent::PreToolUse,
         } => hook::cmd_pre_tool_use(),
         Command::Findings { run, json } => findings::cmd_findings(run.as_deref(), json),
-        Command::Compare { base, new, json } => {
-            compare::cmd_compare(base.as_deref(), new.as_deref(), json)
-        }
+        Command::Compare {
+            base,
+            new,
+            baseline,
+            json,
+        } => compare::cmd_compare(base.as_deref(), new.as_deref(), baseline, json),
+        Command::Baseline { run } => baseline::cmd_baseline(run.as_deref()),
         Command::Report { run, open } => report::cmd_report(run.as_deref(), open),
         Command::Schema => {
             let schema = crabfall_core::scenario::json_schema();
@@ -406,6 +419,9 @@ fn spanish_help(command: clap::Command) -> clap::Command {
                     a.help("Corrida base (carpeta en .crabfall/runs/). Por defecto, la anterior a la nueva")
                 })
                 .mut_arg("new", |a| a.help("Corrida nueva. Por defecto, `latest`"))
+                .mut_arg("baseline", |a| {
+                    a.help("Compara contra la base del escenario (crabfall baseline) en lugar de la corrida anterior; el único argumento es entonces la corrida nueva")
+                })
                 .mut_arg("json", |a| a.help("Salida JSON para agentes"))
         })
         .mut_subcommand("report", |c| {
@@ -416,6 +432,10 @@ fn spanish_help(command: clap::Command) -> clap::Command {
                 )
                 .mut_arg("run", |a| a.help("Id de la corrida (carpeta en .crabfall/runs/) o `latest`"))
                 .mut_arg("open", |a| a.help("Lo abre en el navegador"))
+        })
+        .mut_subcommand("baseline", |c| {
+            c.about("Fija una corrida (por defecto, la más reciente) como base de su escenario y entorno, en .crabfall/baselines/ (versionala para compartirla)")
+                .mut_arg("run", |a| a.help("Id de la corrida (carpeta en .crabfall/runs/) o `latest`"))
         })
         .mut_subcommand("schema", |c| {
             c.about("Imprime el JSON Schema del escenario (para editores y agentes)")

@@ -232,6 +232,14 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente. Al cerrar
 - [x] Tests: los dos modelos usan cada fila una vez y terminan al acabarse; la validación de `vu_setup`
 - Listo cuando: en `market-api`, un escenario que registra usuarios nuevos con `pick: unique` no repite ninguno. **Pendiente:** la corrida.
 
+**22. Corrida base fija** (ADR-006)
+- [x] `crabfall baseline [corrida]` la guarda en `.crabfall/baselines/<escenario>.<entorno>.json`, versionada; no acepta una corrida abortada
+- [x] `crabfall compare --baseline [corrida]` compara contra ella; sin base, sale con 2 y dice cómo fijarla
+- [x] En la TUI, `b` en el historial fija la base y la fila la marca
+- [x] Ayuda en los dos idiomas, README, skill (Claude la prefiere para preguntar si algo empeoró, pero no la mueve)
+- [x] Tests: fijar, comparar contra la base aunque haya corridas en el medio, sin base, argumentos de más, y la tecla `b`
+- Listo cuando: en `market-api`, fijo como base la corrida de `search-ramp` con índice y una corrida sin índice da "empeoró" contra la base. **Pendiente:** la prueba.
+
 ## Primera versión
 
 **v0.1.0** (19 oct 2026): las rebanadas 0 a 13 con el nombre Crabfall (binario `crabfall`, carpeta `.crabfall/`), en `main` y en GitHub (privado). Lo que queda abierto de esas rebanadas: TLS contra un servidor real (1), la skill en una sesión nueva de Claude Code (2). La rebanada 13 se cerró después, con la corrida de `upload`.
@@ -240,7 +248,7 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente. Al cerrar
 
 **Al final: modelos de carga nuevos** (`ramping_vus`, iteraciones fijas, arrival por VU). Hoy alcanzan `constant_rate`, `ramping_rate` y `constant_vus`.
 
-más reglas de diagnóstico, corrida base fija para CI (`crabfall compare --baseline`), servidor MCP, importadores (OpenAPI, curl, Postman), HTTP/2, GUI con Tauri (después de la TUI), leer `expires_in` para elegir solo cuándo renovar, GitHub Action, correlación con métricas del servidor (OTLP, Prometheus), WebSockets, gRPC, Kafka.
+más reglas de diagnóstico, aprobar en CI sin una persona (para que la base fija sirva en un pipeline), servidor MCP, importadores (OpenAPI, curl, Postman), HTTP/2, GUI con Tauri (después de la TUI), leer `expires_in` para elegir solo cuándo renovar, GitHub Action, correlación con métricas del servidor (OTLP, Prometheus), WebSockets, gRPC, Kafka.
 
 ## Decisiones abiertas
 

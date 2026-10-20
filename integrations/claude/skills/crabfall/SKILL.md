@@ -142,7 +142,7 @@ Always start with `crabfall findings --json` (the most recent run; `crabfall fin
 
 When the person changed something (code, configuration, infrastructure) and ran the same scenario again, or asks "did it improve?":
 
-1. `crabfall compare --json` compares the most recent run with the previous one of the same scenario and environment (`crabfall compare <base> <new> --json` to choose them).
+1. `crabfall compare --json` compares the most recent run with the previous one of the same scenario and environment (`crabfall compare <base> <new> --json` to choose them). If the project has a baseline (`.crabfall/baselines/<scenario>.<env>.json`), `crabfall compare --baseline --json` compares against that accepted reference instead; prefer it when the person asks whether something regressed. Only the person decides to move the baseline (`crabfall baseline <run>`).
 2. **Read `warnings` first.** If the load is different (`same_load: false`) or the scenario changed, say so: the differences may come from there and not from the change.
 3. **Verdict per step (`steps[].change`)**, on p95: `better` and `worse` are large changes, consistent second by second (`sign_test`: in how many seconds it moved in that direction, and the p-value). `uncertain` is a large but inconsistent change: say it may be noise and suggest repeating the run; do not present it as an improvement or a regression. `same` is a small change.
    If `warnings` says a step's response or request changed size, mention it next to that step's latency change: it may be the explanation (more data, other pagination, a larger file) rather than a slower server.
