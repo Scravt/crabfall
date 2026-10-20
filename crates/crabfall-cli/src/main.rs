@@ -11,10 +11,12 @@ mod runs;
 
 use std::{path::Path, process::ExitCode};
 
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand};
 use crabfall_core::{
     engine::plan::Plan,
+    i18n::{self, Lang},
     project::{Project, describe},
+    tr,
     validate::{self, Issue, Report},
 };
 use serde_json::json;
@@ -34,13 +36,18 @@ mod exit {
 /// Versión de la salida `--json`.
 const JSON_FORMAT: u32 = 1;
 
+// La ayuda está en inglés (los comentarios de documentación) y `spanish_help` la traduce
+// cuando el idioma es español (ADR-016).
 #[derive(Parser)]
 #[command(
     name = "crabfall",
     version,
-    about = "Pruebas de carga diseñadas con Claude, aprobadas por una persona"
+    about = "Load tests designed with Claude, approved by a person"
 )]
 struct Cli {
+    /// Language of the output: en (default) or es. Also CRABFALL_LANG or `language:` in .crabfall/config.yaml.
+    #[arg(long, global = true, value_name = "en|es")]
+    lang: Option<Lang>,
     #[command(subcommand)]
     command: Command,
 }
@@ -48,13 +55,13 @@ struct Cli {
 /// Qué escenario, contra qué entorno y con qué variables.
 #[derive(Args)]
 pub struct Target {
-    /// Nombre (busca en .crabfall/scenarios/) o ruta al archivo.
+    /// Name (looked up in .crabfall/scenarios/) or path to the file.
     scenario: String,
-    /// Entorno de .crabfall/config.yaml (por defecto, default_environment).
+    /// Environment from .crabfall/config.yaml (default: default_environment).
     #[arg(long)]
     env: Option<String>,
-    /// Variable `nombre=valor`; pisa a las del escenario y el entorno. Se puede repetir.
-    #[arg(long = "var", value_name = "NOMBRE=VALOR")]
+    /// Variable `name=value`; overrides the scenario's and the environment's. Can be repeated.
+    #[arg(long = "var", value_name = "NAME=VALUE")]
     vars: Vec<String>,
     #[command(flatten)]
     tweaks: Tweaks,
@@ -63,46 +70,46 @@ pub struct Target {
 /// Ajustes de la corrida sin editar el YAML (ADR-008). Cambian el tráfico, así que la
 /// aprobación los firma: pasá los mismos a `approve` y a `run`.
 #[derive(Args, Default)]
-#[command(next_help_heading = "Ajustes (pisan al escenario)")]
+#[command(next_help_heading = "Tweaks (override the scenario)")]
 pub struct Tweaks {
-    /// Executor: constant_rate, ramping_rate o constant_vus. Descarta los campos de `load` que no le aplican.
+    /// Executor: constant_rate, ramping_rate or constant_vus. Drops the `load` fields that do not apply to it.
     #[arg(long)]
     executor: Option<crabfall_core::scenario::Executor>,
-    /// Iteraciones por segundo de constant_rate (50/s, 3000/m).
+    /// Iterations per second for constant_rate (50/s, 3000/m).
     #[arg(long, value_name = "50/s")]
     rate: Option<crabfall_core::units::Rate>,
-    /// Duración de constant_rate o constant_vus (30s, 5m).
+    /// Duration of constant_rate or constant_vus (30s, 5m).
     #[arg(long, value_name = "30s")]
     duration: Option<crabfall_core::units::HumanDuration>,
-    /// Usuarios concurrentes de constant_vus.
+    /// Concurrent users for constant_vus.
     #[arg(long, value_name = "N")]
     vus: Option<u32>,
-    /// Máximo de iteraciones en vuelo de constant_rate y ramping_rate.
+    /// Maximum iterations in flight for constant_rate and ramping_rate.
     #[arg(long, value_name = "N")]
     max_vus: Option<u32>,
-    /// Tasa inicial de ramping_rate.
+    /// Starting rate of ramping_rate.
     #[arg(long, value_name = "0/s")]
     start_rate: Option<crabfall_core::units::Rate>,
-    /// Etapas de ramping_rate: tasa:duración separadas por comas (100/s:1m,0/s:30s).
-    #[arg(long, value_name = "TASA:DURACIÓN,...", value_parser = crabfall_core::overrides::parse_stages)]
+    /// Stages of ramping_rate: rate:duration separated by commas (100/s:1m,0/s:30s).
+    #[arg(long, value_name = "RATE:DURATION,...", value_parser = crabfall_core::overrides::parse_stages)]
     stages: Option<crabfall_core::overrides::Stages>,
-    /// Espera a las iteraciones en curso al terminar (30s).
+    /// Waits for the iterations in progress when finishing (30s).
     #[arg(long, value_name = "30s")]
     graceful_stop: Option<crabfall_core::units::HumanDuration>,
-    /// Pausa después de cada paso de los flows, fija (2s) o al azar (1s-3s); 0s la quita. Pisa a la del escenario.
+    /// Pause after each flow step, fixed (2s) or random (1s-3s); 0s removes it. Overrides the scenario's.
     #[arg(long, value_name = "1s-3s")]
     think: Option<crabfall_core::units::Think>,
-    /// Cada cuánto renueva la sesión cada VU (4m), para tokens que vencen durante la carga. Sin vu_refresh en el escenario, repite el vu_setup (login de nuevo).
+    /// How often each VU renews its session (4m), for tokens that expire during the load. Without vu_refresh in the scenario, it repeats vu_setup (logs in again).
     #[arg(long, value_name = "4m")]
     refresh_every: Option<crabfall_core::units::HumanDuration>,
-    /// Otro archivo para un dataset, relativo a .crabfall/. Se puede repetir.
-    #[arg(long = "data", value_name = "DATASET=ARCHIVO", value_parser = crabfall_core::overrides::parse_pair::<String>)]
+    /// Another file for a dataset, relative to .crabfall/. Can be repeated.
+    #[arg(long = "data", value_name = "DATASET=FILE", value_parser = crabfall_core::overrides::parse_pair::<String>)]
     data: Vec<(String, String)>,
-    /// Cómo elige filas un dataset: sequential o random. Se puede repetir.
-    #[arg(long = "pick", value_name = "DATASET=MODO", value_parser = crabfall_core::overrides::parse_pair::<crabfall_core::scenario::Pick>)]
+    /// How a dataset picks rows: sequential or random. Can be repeated.
+    #[arg(long = "pick", value_name = "DATASET=MODE", value_parser = crabfall_core::overrides::parse_pair::<crabfall_core::scenario::Pick>)]
     pick: Vec<(String, crabfall_core::scenario::Pick)>,
-    /// Criterio de la corrida, como en los resultados: "http.latency.p95<300ms", "http.latency.p99{step=login}<1s", "http.error_rate<1%", "http.rps>=40". Si pasás alguno, reemplazan a los del escenario. No cambian el tráfico: no hace falta volver a aprobar. Se puede repetir.
-    #[arg(long = "threshold", value_name = "MÉTRICA<LÍMITE")]
+    /// Pass criterion, as in the results: "http.latency.p95<300ms", "http.latency.p99{step=login}<1s", "http.error_rate<1%", "http.rps>=40". If you pass any, they replace the scenario's. They do not change the traffic: no new approval needed. Can be repeated.
+    #[arg(long = "threshold", value_name = "METRIC<LIMIT")]
     thresholds: Vec<crabfall_core::scenario::Threshold>,
 }
 
@@ -128,83 +135,91 @@ impl Tweaks {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Integra Crabfall con Claude Code en este repo: skill, hook y permisos.
+    /// Integrates Crabfall with Claude Code in this repo: skill, hook and permissions.
     Claude {
         #[command(subcommand)]
         action: ClaudeAction,
     },
-    /// Hooks de Claude Code (los invoca Claude Code, no una persona).
+    /// Claude Code hooks (Claude Code invokes them, not a person).
     #[command(hide = true)]
     Hook {
         #[command(subcommand)]
         event: HookEvent,
     },
-    /// Valida un escenario: campos, tipos, unidades, variables y valores pendientes (`todo`).
+    /// Validates a scenario: fields, types, units, variables and pending values (`todo`).
     Validate {
         #[command(flatten)]
         target: Target,
-        /// Salida JSON para agentes.
+        /// JSON output for agents.
         #[arg(long, help_heading = None::<&str>)]
         json: bool,
     },
-    /// Hallazgos de una corrida (por defecto, la más reciente).
+    /// Findings of a run (by default, the most recent one).
     Findings {
-        /// Id de la corrida (carpeta en .crabfall/runs/) o `latest`.
+        /// Run id (folder in .crabfall/runs/) or `latest`.
         run: Option<String>,
-        /// Resumen compacto para agentes: totales, thresholds, hallazgos y pasos, sin series.
+        /// Compact summary for agents: totals, thresholds, findings and steps, without series.
         #[arg(long)]
         json: bool,
     },
-    /// Compara dos corridas: qué mejoró, qué empeoró y si es real o ruido.
+    /// Compares two runs: what improved, what got worse and whether it is real or noise.
     ///
-    /// Sin argumentos, la más reciente contra la anterior del mismo escenario y entorno.
-    /// Sale con 1 si hay regresiones.
+    /// Without arguments, the most recent one against the previous one of the same scenario
+    /// and environment. Exits with 1 if there are regressions.
     Compare {
-        /// Corrida base (carpeta en .crabfall/runs/). Por defecto, la anterior a la nueva.
+        /// Base run (folder in .crabfall/runs/). By default, the one before the new one.
         base: Option<String>,
-        /// Corrida nueva. Por defecto, `latest`.
+        /// New run. By default, `latest`.
         new: Option<String>,
-        /// Salida JSON para agentes.
+        /// JSON output for agents.
         #[arg(long)]
         json: bool,
     },
-    /// Reporte HTML de una corrida (por defecto, la más reciente): gráficos, hallazgos y comparación.
+    /// HTML report of a run (by default, the most recent one): charts, findings and comparison.
     ///
-    /// Escribe `report.html` al lado de `results.json`. `crabfall run` lo genera solo.
+    /// Writes `report.html` next to `results.json`. `crabfall run` generates it on its own.
     Report {
-        /// Id de la corrida (carpeta en .crabfall/runs/) o `latest`.
+        /// Run id (folder in .crabfall/runs/) or `latest`.
         run: Option<String>,
-        /// Lo abre en el navegador.
+        /// Opens it in the browser.
         #[arg(long)]
         open: bool,
     },
-    /// Imprime el JSON Schema del escenario (para editores y agentes).
+    /// Prints the JSON Schema of the scenario (for editors and agents).
     Schema,
-    /// Smoke check: corre cada flow una vez, en serie, solo contra loopback. No necesita aprobación.
+    /// Smoke check: runs each flow once, in series, only against loopback. Needs no approval.
     Check {
         #[command(flatten)]
         target: Target,
-        /// Salida JSON para agentes (incluye los bodies, truncados a 2 KB).
+        /// JSON output for agents (includes the bodies, truncated to 2 KB).
         #[arg(long, help_heading = None::<&str>)]
         json: bool,
     },
-    /// Aprueba un escenario para un entorno. Lo ejecuta una persona, en una terminal.
+    /// Approves a scenario for an environment. A person runs it, in a terminal.
     Approve {
         #[command(flatten)]
         target: Target,
     },
-    /// Ejecuta un escenario aprobado y guarda los resultados.
+    /// Runs an approved scenario and saves the results.
     Run {
         #[command(flatten)]
         target: Target,
-        /// Imprime los resultados completos en JSON.
+        /// Prints the full results as JSON.
         #[arg(long, help_heading = None::<&str>)]
         json: bool,
     },
 }
 
 fn main() -> ExitCode {
-    let cli = Cli::parse();
+    choose_language();
+    let mut command = Cli::command();
+    if i18n::is_es() {
+        command = spanish_help(command);
+    }
+    let cli = match Cli::from_arg_matches(&command.get_matches()) {
+        Ok(cli) => cli,
+        Err(e) => e.exit(),
+    };
     let code = match cli.command {
         Command::Validate { target, json } => cmd_validate(&target, json),
         Command::Claude {
@@ -228,6 +243,183 @@ fn main() -> ExitCode {
         Command::Run { target, json } => run::cmd_run(&target, json),
     };
     ExitCode::from(code)
+}
+
+/// `--lang` > `CRABFALL_LANG` > `language:` del config.yaml > inglés (ADR-016). Se resuelve
+/// antes de que clap arme la ayuda, así que `--lang` se busca a mano en los argumentos.
+fn choose_language() {
+    let args: Vec<String> = std::env::args().collect();
+    let flag = args.iter().enumerate().find_map(|(i, a)| {
+        a.strip_prefix("--lang=")
+            .map(String::from)
+            .or_else(|| (a == "--lang").then(|| args.get(i + 1).cloned()).flatten())
+    });
+    if let Some(lang) = flag.and_then(|l| l.parse::<Lang>().ok()) {
+        i18n::set(lang);
+        return;
+    }
+    let config = std::env::current_dir()
+        .ok()
+        .and_then(|cwd| Project::discover(&cwd))
+        .and_then(|p| p.load_config().ok());
+    if let Some(lang) = config.and_then(|c| c.language) {
+        i18n::set_from_config(lang);
+    }
+}
+
+/// La ayuda en español: los mismos textos que los comentarios de arriba.
+fn spanish_help(command: clap::Command) -> clap::Command {
+    const TARGET: &[(&str, &str)] = &[
+        (
+            "scenario",
+            "Nombre (busca en .crabfall/scenarios/) o ruta al archivo",
+        ),
+        (
+            "env",
+            "Entorno de .crabfall/config.yaml (por defecto, default_environment)",
+        ),
+        (
+            "vars",
+            "Variable `nombre=valor`; pisa a las del escenario y el entorno. Se puede repetir",
+        ),
+        (
+            "executor",
+            "Executor: constant_rate, ramping_rate o constant_vus. Descarta los campos de `load` que no le aplican",
+        ),
+        (
+            "rate",
+            "Iteraciones por segundo de constant_rate (50/s, 3000/m)",
+        ),
+        (
+            "duration",
+            "Duración de constant_rate o constant_vus (30s, 5m)",
+        ),
+        ("vus", "Usuarios concurrentes de constant_vus"),
+        (
+            "max_vus",
+            "Máximo de iteraciones en vuelo de constant_rate y ramping_rate",
+        ),
+        ("start_rate", "Tasa inicial de ramping_rate"),
+        (
+            "stages",
+            "Etapas de ramping_rate: tasa:duración separadas por comas (100/s:1m,0/s:30s)",
+        ),
+        (
+            "graceful_stop",
+            "Espera a las iteraciones en curso al terminar (30s)",
+        ),
+        (
+            "think",
+            "Pausa después de cada paso de los flows, fija (2s) o al azar (1s-3s); 0s la quita. Pisa a la del escenario",
+        ),
+        (
+            "refresh_every",
+            "Cada cuánto renueva la sesión cada VU (4m), para tokens que vencen durante la carga. Sin vu_refresh en el escenario, repite el vu_setup (login de nuevo)",
+        ),
+        (
+            "data",
+            "Otro archivo para un dataset, relativo a .crabfall/. Se puede repetir",
+        ),
+        (
+            "pick",
+            "Cómo elige filas un dataset: sequential o random. Se puede repetir",
+        ),
+        (
+            "thresholds",
+            "Criterio de la corrida, como en los resultados: \"http.latency.p95<300ms\", \"http.latency.p99{step=login}<1s\", \"http.error_rate<1%\", \"http.rps>=40\". Si pasás alguno, reemplazan a los del escenario. No cambian el tráfico: no hace falta volver a aprobar. Se puede repetir",
+        ),
+    ];
+    const TWEAKS: &[&str] = &[
+        "executor",
+        "rate",
+        "duration",
+        "vus",
+        "max_vus",
+        "start_rate",
+        "stages",
+        "graceful_stop",
+        "think",
+        "refresh_every",
+        "data",
+        "pick",
+        "thresholds",
+    ];
+    let target = |mut c: clap::Command| {
+        for (id, help) in TARGET {
+            c = c.mut_arg(*id, |a| {
+                let a = a.help(*help);
+                if TWEAKS.contains(id) {
+                    a.help_heading("Ajustes (pisan al escenario)")
+                } else {
+                    a
+                }
+            });
+        }
+        c
+    };
+    command
+        .about("Pruebas de carga diseñadas con Claude, aprobadas por una persona")
+        .mut_arg("lang", |a| {
+            a.help("Idioma de la salida: en (por defecto) o es. También CRABFALL_LANG o `language:` en .crabfall/config.yaml")
+        })
+        .mut_subcommand("claude", |c| {
+            c.about("Integra Crabfall con Claude Code en este repo: skill, hook y permisos")
+                .mut_subcommand("install", |c| {
+                    c.about("Escribe .claude/skills/crabfall/SKILL.md y agrega el hook y los permisos a .claude/settings.json")
+                })
+        })
+        .mut_subcommand("validate", |c| {
+            target(c)
+                .about("Valida un escenario: campos, tipos, unidades, variables y valores pendientes (`todo`)")
+                .mut_arg("json", |a| a.help("Salida JSON para agentes"))
+        })
+        .mut_subcommand("findings", |c| {
+            c.about("Hallazgos de una corrida (por defecto, la más reciente)")
+                .mut_arg("run", |a| a.help("Id de la corrida (carpeta en .crabfall/runs/) o `latest`"))
+                .mut_arg("json", |a| {
+                    a.help("Resumen compacto para agentes: totales, thresholds, hallazgos y pasos, sin series")
+                })
+        })
+        .mut_subcommand("compare", |c| {
+            c.about("Compara dos corridas: qué mejoró, qué empeoró y si es real o ruido")
+                .long_about(
+                    "Compara dos corridas: qué mejoró, qué empeoró y si es real o ruido.\n\n\
+                     Sin argumentos, la más reciente contra la anterior del mismo escenario y entorno.\n\
+                     Sale con 1 si hay regresiones",
+                )
+                .mut_arg("base", |a| {
+                    a.help("Corrida base (carpeta en .crabfall/runs/). Por defecto, la anterior a la nueva")
+                })
+                .mut_arg("new", |a| a.help("Corrida nueva. Por defecto, `latest`"))
+                .mut_arg("json", |a| a.help("Salida JSON para agentes"))
+        })
+        .mut_subcommand("report", |c| {
+            c.about("Reporte HTML de una corrida (por defecto, la más reciente): gráficos, hallazgos y comparación")
+                .long_about(
+                    "Reporte HTML de una corrida (por defecto, la más reciente): gráficos, hallazgos y comparación.\n\n\
+                     Escribe `report.html` al lado de `results.json`. `crabfall run` lo genera solo",
+                )
+                .mut_arg("run", |a| a.help("Id de la corrida (carpeta en .crabfall/runs/) o `latest`"))
+                .mut_arg("open", |a| a.help("Lo abre en el navegador"))
+        })
+        .mut_subcommand("schema", |c| {
+            c.about("Imprime el JSON Schema del escenario (para editores y agentes)")
+        })
+        .mut_subcommand("check", |c| {
+            target(c)
+                .about("Smoke check: corre cada flow una vez, en serie, solo contra loopback. No necesita aprobación")
+                .mut_arg("json", |a| {
+                    a.help("Salida JSON para agentes (incluye los bodies, truncados a 2 KB)")
+                })
+        })
+        .mut_subcommand("approve", |c| {
+            target(c).about("Aprueba un escenario para un entorno. Lo ejecuta una persona, en una terminal")
+        })
+        .mut_subcommand("run", |c| {
+            target(c)
+                .about("Ejecuta un escenario aprobado y guarda los resultados")
+                .mut_arg("json", |a| a.help("Imprime los resultados completos en JSON"))
+        })
 }
 
 /// Muestra rutas relativas al directorio actual cuando se puede.
@@ -260,7 +452,11 @@ fn cmd_validate(target: &Target, as_json: bool) -> u8 {
             Err(report) => report,
         },
         Err(e) => Report {
-            errors: vec![issue(format!("no se pudo leer {}: {e}", display(&path)))],
+            errors: vec![issue(tr!(
+                "could not read {}: {e}",
+                "no se pudo leer {}: {e}",
+                display(&path)
+            ))],
             todos: vec![],
         },
     };
@@ -275,7 +471,7 @@ fn cmd_validate(target: &Target, as_json: bool) -> u8 {
         });
         println!("{}", serde_json::to_string_pretty(&out).unwrap());
     } else if report.is_valid() {
-        println!("✓ {} es válido", display(&path));
+        println!("{}", tr!("✓ {} is valid", "✓ {} es válido", display(&path)));
     } else {
         for issue in &report.errors {
             println!("✗ {}", describe(issue));
@@ -285,8 +481,12 @@ fn cmd_validate(target: &Target, as_json: bool) -> u8 {
         }
         if !report.todos.is_empty() {
             println!(
-                "{} pendiente(s): completalos antes de ejecutar.",
-                report.todos.len()
+                "{}",
+                tr!(
+                    "{} pending value(s): fill them in before running.",
+                    "{} pendiente(s): completalos antes de ejecutar.",
+                    report.todos.len()
+                )
             );
         }
     }
@@ -340,12 +540,12 @@ fn issue(message: String) -> Issue {
 
 #[derive(Subcommand)]
 enum ClaudeAction {
-    /// Escribe .claude/skills/crabfall/SKILL.md y agrega el hook y los permisos a .claude/settings.json.
+    /// Writes .claude/skills/crabfall/SKILL.md and adds the hook and the permissions to .claude/settings.json.
     Install,
 }
 
 #[derive(Subcommand)]
 enum HookEvent {
-    /// Bloquea `crabfall run` y `crabfall approve` invocados por Claude.
+    /// Blocks `crabfall run` and `crabfall approve` invoked by Claude.
     PreToolUse,
 }

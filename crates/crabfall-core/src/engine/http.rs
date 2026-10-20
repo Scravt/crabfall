@@ -146,9 +146,13 @@ impl Client {
         self.exchange(origin, conn, make(), timings)
             .await
             .map_err(|e| match e {
-                Retry::Stale => {
-                    Failure::new(FailureKind::Reset, "la conexión se cerró antes de enviar")
-                }
+                Retry::Stale => Failure::new(
+                    FailureKind::Reset,
+                    crate::tr!(
+                        "the connection closed before sending",
+                        "la conexión se cerró antes de enviar"
+                    ),
+                ),
                 Retry::No(f) => f,
             })
     }
@@ -233,14 +237,18 @@ impl Client {
             .ok_or_else(|| {
                 Failure::new(
                     FailureKind::Dns,
-                    format!("{host} no resolvió a ninguna dirección"),
+                    crate::tr!(
+                        "{host} did not resolve to any address",
+                        "{host} no resolvió a ninguna dirección"
+                    ),
                 )
             })?;
         timings.dns = Some(t.elapsed());
         if self.loopback_only && !addr.ip().is_loopback() {
             return Err(Failure::new(
                 FailureKind::Connect,
-                format!(
+                crate::tr!(
+                    "`{host}` resolves to {}, outside loopback: the smoke check only runs against the local machine",
                     "`{host}` resuelve a {}, fuera de loopback: el smoke check solo corre contra la máquina local",
                     addr.ip()
                 ),
@@ -481,13 +489,19 @@ pub fn decode(response: &mut Response) -> Result<(), Failure> {
         .map_err(|e| {
             Failure::new(
                 FailureKind::Protocol,
-                format!("no se pudo descomprimir el body ({encoding}): {e}"),
+                crate::tr!(
+                    "could not decompress the body ({encoding}): {e}",
+                    "no se pudo descomprimir el body ({encoding}): {e}"
+                ),
             )
         })?;
     if out.len() as u64 > MAX_DECODED_BYTES {
         return Err(Failure::new(
             FailureKind::Protocol,
-            format!("el body descomprimido ({encoding}) supera 64 MB"),
+            crate::tr!(
+                "the decompressed body ({encoding}) exceeds 64 MB",
+                "el body descomprimido ({encoding}) supera 64 MB"
+            ),
         ));
     }
     response.body = Bytes::from(out);

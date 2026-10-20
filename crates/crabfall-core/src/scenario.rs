@@ -1,8 +1,8 @@
 //! Modelo del escenario (ADR-002). Por ahora es el subconjunto de la rebanada 1:
 //! flows con peso, pasos con request y el executor `constant_rate`.
 //!
-//! Los doc comments de los campos van al JSON Schema (`crabfall schema`): están escritos
-//! para quien escribe el escenario, incluido Claude.
+//! Los doc comments de los campos van al JSON Schema (`crabfall schema`): están en inglés
+//! (ADR-016) y escritos para quien escribe el escenario, incluido Claude.
 
 use std::{collections::BTreeMap, time::Duration};
 
@@ -18,46 +18,46 @@ use crate::{
 
 pub const FORMAT_VERSION: u32 = 1;
 
-/// Escenario de prueba de carga de Crabfall. Va en `.crabfall/scenarios/<name>.yaml`.
+/// A Crabfall load test scenario. It goes in `.crabfall/scenarios/<name>.yaml`.
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Scenario {
-    /// Versión del formato. Siempre `1`.
+    /// Format version. Always `1`.
     pub version: u32,
-    /// Nombre del escenario: letras, números, `_`, `.` y `-`. Conviene que coincida con el nombre del archivo.
+    /// Scenario name: letters, digits, `_`, `.` and `-`. It should match the file name.
     pub name: String,
-    /// Qué simula el escenario, en una o dos oraciones.
+    /// What the scenario simulates, in one or two sentences.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    /// Datos libres que no afectan el tráfico, por ejemplo `created_by: agent`.
+    /// Free-form data that does not affect the traffic, for example `created_by: agent`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub meta: Option<Value>,
-    /// Variables del escenario, usables como `{{nombre}}`. Las del entorno, `--var` y `extract` las pisan (en ese orden).
+    /// Scenario variables, usable as `{{name}}`. The environment's, `--var` and `extract` override them (in that order).
     #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
     pub vars: IndexMap<String, Value>,
-    /// Datasets: archivos CSV o JSON, relativos a `.crabfall/`. Cada iteración toma una fila de cada dataset que usa su flow, y los pasos la ven como `{{nombre.columna}}`. No se pueden usar en `setup`.
+    /// Datasets: CSV or JSON files, relative to `.crabfall/`. Each iteration takes a row of each dataset its flow uses, and the steps see it as `{{name.column}}`. They cannot be used in `setup`.
     #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
     pub data: IndexMap<String, DataSpec>,
-    /// Cookies: cada VU guarda las que le manda el servidor (`set-cookie`) y las reenvía en sus requests, como un navegador, desde su `vu_setup` hasta su última iteración. `setup` usa las suyas, aparte. Por defecto `true`; `false` las apaga.
+    /// Cookies: each VU keeps the ones the server sends (`set-cookie`) and sends them back in its requests, like a browser, from its `vu_setup` to its last iteration. `setup` uses its own, separately. Default `true`; `false` turns them off.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cookies: Option<bool>,
-    /// Headers y timeout que heredan todos los pasos de `flows` (no los de `setup`).
+    /// Headers, timeout, pause and redirects inherited by every step of `flows` (not by `setup`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub defaults: Option<Defaults>,
-    /// Pasos que corren una vez, en orden, antes de la carga (por ejemplo, login). Sus `extract` quedan como variables para todos los flows. Si alguno falla, la corrida se aborta.
+    /// Steps that run once, in order, before the load (for example, a login). Their `extract`s become variables for every flow. If any fails, the run aborts.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub setup: Vec<Step>,
-    /// Pasos que cada VU corre una vez, antes de la carga (por ejemplo, el login de cada usuario). Sus `extract` quedan como variables de ese VU en todas sus iteraciones. Ven `setup` y los datasets (una fila por VU). Corren para `vus` (constant_vus) o `max_vus` (executors de tasa). Si fallan en un VU, ese VU queda afuera; si fallan en todos, la corrida se aborta.
+    /// Steps each VU runs once, before the load (for example, each user's login). Their `extract`s become variables of that VU in all its iterations. They see `setup` and the datasets (one row per VU). They run for `vus` (constant_vus) or `max_vus` (rate executors). If they fail in a VU, that VU is left out; if they fail in all of them, the run aborts.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub vu_setup: Vec<Step>,
-    /// Renovación de la sesión de cada VU, para tokens que vencen durante la carga. Requiere `vu_setup`. Corre en segundo plano: la iteración en curso sigue con el token anterior y la siguiente toma el nuevo. No entra en las métricas de carga.
+    /// Renewal of each VU's session, for tokens that expire during the load. Requires `vu_setup`. It runs in the background: the iteration in progress keeps the previous token and the next one takes the new one. It is not part of the load metrics.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vu_refresh: Option<VuRefresh>,
-    /// Flujos de usuario. Cada iteración elige uno según su `weight` y ejecuta sus pasos en orden.
+    /// User flows. Each iteration picks one by its `weight` and runs its steps in order.
     pub flows: IndexMap<String, Flow>,
-    /// Perfil de carga. La tasa se mide en iteraciones por segundo, no en requests.
+    /// Load profile. The rate is measured in iterations per second, not requests.
     pub load: Load,
-    /// Criterios de aprobación de la corrida. Si alguno falla, `crabfall run` sale con código 1.
+    /// Pass criteria of the run. If any fails, `crabfall run` exits with code 1.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub thresholds: Vec<Threshold>,
 }
@@ -65,15 +65,15 @@ pub struct Scenario {
 #[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Defaults {
-    /// Un header definido en el paso pisa al de `defaults`.
+    /// A header defined in the step overrides the one in `defaults`.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub headers: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout: Option<HumanDuration>,
-    /// Pausa después de cada paso de los flows, como `think` del paso. Un paso con su propio `think` (incluso `0s`) la pisa.
+    /// Pause after each flow step, like the step's `think`. A step with its own `think` (even `0s`) overrides it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub think: Option<Think>,
-    /// Cuántos redirects sigue cada paso, como `redirects` del request. Por defecto 10.
+    /// How many redirects each step follows, like the request's `redirects`. Default 10.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub redirects: Option<u32>,
 }
@@ -81,11 +81,11 @@ pub struct Defaults {
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Flow {
-    /// Peso relativo frente a los otros flows (no tienen que sumar 100). Por defecto 1.
+    /// Relative weight against the other flows (they do not need to add up to 100). Default 1.
     #[serde(default = "default_weight")]
     #[schemars(range(min = 1))]
     pub weight: u32,
-    /// Pasos que se ejecutan en orden en cada iteración.
+    /// Steps run in order in each iteration.
     #[schemars(length(min = 1))]
     pub steps: Vec<Step>,
 }
@@ -94,24 +94,24 @@ fn default_weight() -> u32 {
     1
 }
 
-/// Renovación de la sesión de cada VU, por ejemplo `{ every: 4m, steps: [refresh] }`.
+/// Renewal of each VU's session, for example `{ every: 4m, steps: [refresh] }`.
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct VuRefresh {
-    /// Cada cuánto renueva cada VU, contado desde su `vu_setup` o su última renovación. Tiene que ser menor que la vida del token menos lo que dura una iteración, porque cada iteración usa el token que tenía al empezar.
+    /// How often each VU renews, counted from its `vu_setup` or its last renewal. It must be shorter than the token lifetime minus the length of an iteration, because each iteration uses the token it had when it started.
     pub every: HumanDuration,
-    /// Pasos de la renovación, en orden (por ejemplo, `POST /auth/refresh`). Ven las variables del VU y lo que extraen las pisa. Sin pasos, se repite `vu_setup` (login de nuevo). Si fallan, ese VU deja de iterar.
+    /// Renewal steps, in order (for example, `POST /auth/refresh`). They see the VU's variables and what they extract overrides them. Without steps, `vu_setup` is repeated (logs in again). If they fail, that VU stops iterating.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub steps: Vec<Step>,
 }
 
-/// Un dataset, por ejemplo `{ file: data/users.csv }`.
+/// A dataset, for example `{ file: data/users.csv }`.
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DataSpec {
-    /// Archivo relativo a `.crabfall/`. `.csv` con encabezado (todas las celdas son strings) o `.json` con un arreglo de objetos (conserva los tipos). Los nombres de columna usan letras, números y `_`.
+    /// File relative to `.crabfall/`. `.csv` with a header row (every cell is a string) or `.json` with an array of objects (keeps types). Column names use letters, digits and `_`.
     pub file: String,
-    /// `sequential` (por defecto): las filas en orden, y al terminar vuelve a empezar. `random`: una fila al azar en cada iteración.
+    /// `sequential` (default): rows in order, starting over at the end. `random`: a random row in each iteration.
     #[serde(default)]
     pub pick: Pick,
 }
@@ -136,73 +136,73 @@ impl Pick {
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Step {
-    /// Nombre estable y único en todo el escenario (`[A-Za-z0-9_.-]+`). Las métricas se agrupan por este nombre, no por la URL.
+    /// Stable name, unique in the whole scenario (`[A-Za-z0-9_.-]+`). Metrics are grouped by this name, not by URL.
     #[schemars(regex(pattern = r"^[A-Za-z0-9_.-]+$"))]
     pub name: String,
     pub request: RequestSpec,
-    /// Etiquetas libres. Usá `write` en los pasos que modifican datos.
+    /// Free-form tags. Use `write` on steps that change data.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
-    /// Dónde está el código que atiende este paso. Completalo siempre que lo conozcas: el diagnóstico lo usa para ir al código.
+    /// Where the code that serves this step is. Fill it in whenever you know it: diagnosis uses it to go to the code.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<Source>,
-    /// Valores de la respuesta que pasan a ser variables (`{{nombre}}`) para los pasos siguientes.
+    /// Response values that become variables (`{{name}}`) for the following steps.
     #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
     pub extract: IndexMap<String, Extract>,
-    /// Verificaciones de la respuesta. No cortan la iteración: se cuentan en `checks.pass_rate`.
+    /// Checks on the response. They do not stop the iteration: they count in `checks.pass_rate`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub checks: Vec<Check>,
-    /// Pausa después de este paso, como una persona que lee la página: `2s` o al azar en un rango (`1s-3s`). No cuenta en la latencia, pero ocupa el VU. `crabfall check` la ignora y en `setup` no se permite.
+    /// Pause after this step, like a person reading the page: `2s` or random within a range (`1s-3s`). It does not count in the latency, but it occupies the VU. `crabfall check` ignores it and it is not allowed in `setup`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub think: Option<Think>,
 }
 
-/// Una verificación. Elegí un sujeto (`status`, `status_in`, `json`, `header`, `body_contains`, `body_matches`); `json` y `header` llevan además un predicado (`exists`, `equals`, `contains`, `matches`).
+/// A check. Pick a subject (`status`, `status_in`, `json`, `header`, `body_contains`, `body_matches`); `json` and `header` also take a predicate (`exists`, `equals`, `contains`, `matches`).
 #[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Check {
-    /// Código de estado esperado. Si un paso tiene checks de status, reemplazan la expectativa de 2xx en `crabfall check`.
+    /// Expected status code. If a step has status checks, they replace the 2xx expectation in `crabfall check`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<u16>,
-    /// Alguno de estos códigos.
+    /// One of these codes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status_in: Option<Vec<u16>>,
-    /// JSONPath sobre el body, como en `extract`.
+    /// JSONPath on the body, as in `extract`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub json: Option<String>,
-    /// Nombre de un header de la respuesta.
+    /// Name of a response header.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub header: Option<String>,
-    /// El body contiene este texto.
+    /// The body contains this text.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub body_contains: Option<String>,
-    /// El body coincide con esta regex.
+    /// The body matches this regex.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub body_matches: Option<String>,
-    /// Con `json` o `header`: existe (`true`) o no existe (`false`).
+    /// With `json` or `header`: it exists (`true`) or not (`false`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exists: Option<bool>,
-    /// Con `json` o `header`: igual a este valor (admite `{{variables}}`).
+    /// With `json` or `header`: equal to this value (accepts `{{variables}}`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub equals: Option<Value>,
-    /// Con `header`: contiene este texto.
+    /// With `header`: contains this text.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub contains: Option<String>,
-    /// Con `json` o `header`: coincide con esta regex.
+    /// With `json` or `header`: matches this regex.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub matches: Option<String>,
 }
 
-/// Criterio sobre una métrica, por ejemplo `{ metric: http.latency.p95, lt: 300ms }`. Usá exactamente uno de `lt`, `lte`, `gt`, `gte`.
+/// A criterion on a metric, for example `{ metric: http.latency.p95, lt: 300ms }`. Use exactly one of `lt`, `lte`, `gt`, `gte`.
 #[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Threshold {
-    /// `http.latency.p50` … `http.latency.p99.9`, `http.latency.avg`, `http.latency.max` (duración, ej. `300ms`); `http.error_rate` y `checks.pass_rate` (porcentaje, ej. `1%`); `http.rps` (número).
+    /// `http.latency.p50` … `http.latency.p99.9`, `http.latency.avg`, `http.latency.max` (a duration, e.g. `300ms`); `http.error_rate` and `checks.pass_rate` (a percentage, e.g. `1%`); `http.rps` (a number).
     pub metric: String,
-    /// Solo este paso.
+    /// Only this step.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub step: Option<String>,
-    /// Solo los pasos con este tag.
+    /// Only the steps with this tag.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tag: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -215,17 +215,17 @@ pub struct Threshold {
     pub gte: Option<Value>,
 }
 
-/// De dónde sale un valor extraído. Usá exactamente uno de los tres.
+/// Where an extracted value comes from. Use exactly one of the three.
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Extract {
-    /// JSONPath simple sobre el body: `$.token`, `$.items[0].id`, `$['a-b']`. Conserva el tipo.
+    /// Simple JSONPath on the body: `$.token`, `$.items[0].id`, `$['a-b']`. Keeps the type.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub json: Option<String>,
-    /// Nombre de un header de la respuesta.
+    /// Name of a response header.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub header: Option<String>,
-    /// Regex sobre el body: se toma el primer grupo de captura, o todo el match.
+    /// Regex on the body: takes the first capture group, or the whole match.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub regex: Option<String>,
 }
@@ -233,36 +233,36 @@ pub struct Extract {
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RequestSpec {
-    /// GET, POST, PUT, PATCH, DELETE, HEAD u OPTIONS.
+    /// GET, POST, PUT, PATCH, DELETE, HEAD or OPTIONS.
     pub method: String,
-    /// Relativa a la `base_url` del entorno (empieza con `/`) o absoluta (`https://...`). El host tiene que estar en `allowed_hosts`. Admite `{{variables}}` en el path y la query, nunca en el host.
+    /// Relative to the environment's `base_url` (starts with `/`) or absolute (`https://...`). The host must be in `allowed_hosts`. Accepts `{{variables}}` in the path and the query, never in the host.
     pub url: String,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub headers: BTreeMap<String, String>,
-    /// Parámetros de query; se agregan a la URL codificados.
+    /// Query parameters; they are added to the URL, encoded.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub query: BTreeMap<String, Value>,
-    /// Timeout del request. Por defecto 30s.
+    /// Request timeout. Default 30s.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout: Option<HumanDuration>,
-    /// Cuántos redirects (301, 302, 303, 307, 308) sigue, solo hacia hosts de `allowed_hosts`. Por defecto 10; `0` no sigue ninguno y el paso responde con el 3xx. La latencia incluye todos los saltos y el status es el de la última respuesta.
+    /// How many redirects (301, 302, 303, 307, 308) it follows, only to hosts in `allowed_hosts`. Default 10; `0` follows none and the step responds with the 3xx. The latency includes every hop and the status is the last response's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub redirects: Option<u32>,
-    /// Body JSON; agrega `content-type: application/json`. Excluye a `body`, `multipart` y `form`.
+    /// JSON body; adds `content-type: application/json`. Excludes `body`, `multipart` and `form`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub json: Option<Value>,
-    /// Body de texto tal cual. Excluye a `json`, `multipart` y `form`.
+    /// Text body, as is. Excludes `json`, `multipart` and `form`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub body: Option<String>,
-    /// Body `multipart/form-data`, por ejemplo para subir archivos: `{ file: { file: files/foto.jpg }, description: "texto" }`. Cada clave es el nombre del campo; un string es un campo de texto. Crabfall pone el `content-type` con su boundary. Excluye a `json`, `body` y `form`.
+    /// `multipart/form-data` body, for example to upload files: `{ file: { file: files/photo.jpg }, description: "text" }`. Each key is the field name; a string is a text field. Crabfall sets the `content-type` with its boundary. Excludes `json`, `body` and `form`.
     #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
     pub multipart: IndexMap<String, MultipartPart>,
-    /// Body de formulario (`application/x-www-form-urlencoded`), por ejemplo `{ username: "{{users.email}}", remember: true }`. Agrega el `content-type`. Excluye a `json`, `body` y `multipart`.
+    /// Form body (`application/x-www-form-urlencoded`), for example `{ username: "{{users.email}}", remember: true }`. Adds the `content-type`. Excludes `json`, `body` and `multipart`.
     #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
     pub form: IndexMap<String, Value>,
 }
 
-/// Un campo de un body multipart: texto (`"hola {{x}}"`) o un archivo (`{ file: files/a.pdf }`).
+/// A field of a multipart body: text (`"hello {{x}}"`) or a file (`{ file: files/a.pdf }`).
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(untagged)]
 pub enum MultipartPart {
@@ -273,61 +273,61 @@ pub enum MultipartPart {
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct FilePart {
-    /// Archivo relativo a `.crabfall/`, por ejemplo `files/foto.jpg`. Se lee una vez y se manda entero en cada request; la aprobación firma su contenido. Hasta 100 MB.
+    /// File relative to `.crabfall/`, for example `files/photo.jpg`. It is read once and sent whole in each request; the approval signs its content. Up to 100 MB.
     pub file: String,
-    /// Nombre que ve el servidor. Por defecto, el del archivo. Admite `{{variables}}`, por ejemplo `foto-{{$uuid}}.jpg`.
+    /// Name the server sees. Default: the file's. Accepts `{{variables}}`, for example `photo-{{$uuid}}.jpg`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub filename: Option<String>,
-    /// Tipo del archivo. Por defecto sale de la extensión (`application/octet-stream` si no se conoce).
+    /// File type. By default it comes from the extension (`application/octet-stream` if unknown).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub content_type: Option<String>,
 }
 
-/// Dónde está el código que atiende este paso. El motor no lo usa: lo copia en los resultados.
+/// Where the code that serves this step is. The engine does not use it: it copies it into the results.
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Source {
-    /// Ruta del archivo, relativa a la raíz del repo.
+    /// File path, relative to the repo root.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub file: Option<String>,
-    /// Función, método o handler.
+    /// Function, method or handler.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub symbol: Option<String>,
-    /// `operationId` de OpenAPI, si existe.
+    /// OpenAPI `operationId`, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub operation_id: Option<String>,
 }
 
-/// Bloque `load`. Es un struct plano (no un enum etiquetado) para que los errores
-/// conserven ruta y línea; qué campos aplican a cada executor lo valida `validate`.
+/// The `load` block. A flat struct (not a tagged enum) so errors keep their path and
+/// line; `validate` checks which fields apply to each executor.
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Load {
-    /// `constant_rate`: `rate` iteraciones/s durante `duration` (requiere `rate`, `duration`, `max_vus`).
-    /// `ramping_rate`: la tasa va de `start_rate` a cada `target` de `stages` (requiere `stages`, `max_vus`).
-    /// `constant_vus`: `vus` usuarios en loop durante `duration`; la tasa depende de la latencia (requiere `vus`, `duration`).
+    /// `constant_rate`: `rate` iterations/s for `duration` (requires `rate`, `duration`, `max_vus`).
+    /// `ramping_rate`: the rate goes from `start_rate` to each `target` of `stages` (requires `stages`, `max_vus`).
+    /// `constant_vus`: `vus` users in a loop for `duration`; the rate depends on the latency (requires `vus`, `duration`).
     pub executor: Executor,
-    /// Iteraciones por segundo, por ejemplo `50/s` o `3000/m`.
+    /// Iterations per second, for example `50/s` or `3000/m`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rate: Option<Rate>,
-    /// Cuánto dura la carga, por ejemplo `30s` o `5m`.
+    /// How long the load lasts, for example `30s` or `5m`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub duration: Option<HumanDuration>,
-    /// Máximo de iteraciones en vuelo. Si no hay lugar, la iteración se descarta y se reporta.
+    /// Maximum iterations in flight. If there is no room, the iteration is dropped and reported.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(range(min = 1))]
     pub max_vus: Option<u32>,
-    /// Tasa inicial de `ramping_rate`. Por defecto `0/s`.
+    /// Starting rate of `ramping_rate`. Default `0/s`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub start_rate: Option<Rate>,
-    /// Etapas de `ramping_rate`: la tasa cambia linealmente hasta `target` en `duration`.
+    /// Stages of `ramping_rate`: the rate changes linearly up to `target` within `duration`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stages: Option<Vec<Stage>>,
-    /// Usuarios concurrentes de `constant_vus`.
+    /// Concurrent users of `constant_vus`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(range(min = 1))]
     pub vus: Option<u32>,
-    /// Cuánto se espera a las iteraciones en curso al terminar. Por defecto 30s.
+    /// How long to wait for the iterations in progress when finishing. Default 30s.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub graceful_stop: Option<HumanDuration>,
 }
@@ -343,7 +343,7 @@ pub enum Executor {
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Stage {
-    /// Tasa al final de la etapa, por ejemplo `100/s`.
+    /// Rate at the end of the stage, for example `100/s`.
     pub target: Rate,
     pub duration: HumanDuration,
 }

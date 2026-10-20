@@ -34,7 +34,14 @@ pub fn cmd_run(target: &crate::Target, as_json: bool) -> u8 {
     };
     let violations = plan.limit_violations(&env);
     if !violations.is_empty() {
-        eprintln!("✗ {} supera los límites de `{env_name}`:", plan.scenario);
+        eprintln!(
+            "{}",
+            crabfall_core::tr!(
+                "✗ {} exceeds the limits of `{env_name}`:",
+                "✗ {} supera los límites de `{env_name}`:",
+                plan.scenario
+            )
+        );
         for v in violations {
             eprintln!("  {v}");
         }
@@ -46,28 +53,47 @@ pub fn cmd_run(target: &crate::Target, as_json: bool) -> u8 {
     eprintln!("{} → {env_name} ({})", plan.scenario, hosts.join(", "));
     eprintln!("  {} · {}", plan.load.describe(), plan.rate_summary());
     if let Some(think) = plan.think_summary() {
-        eprintln!("  pausas: {think}");
+        eprintln!(
+            "{}",
+            crabfall_core::tr!("  pauses: {think}", "  pausas: {think}")
+        );
     }
     if !plan.vu_setup.is_empty() {
         let names: Vec<&str> = plan.vu_setup.iter().map(|s| s.name.as_str()).collect();
         eprintln!(
-            "  por VU: {} ({} VUs, antes de la carga)",
-            names.join(", "),
-            plan.load.concurrency()
+            "{}",
+            crabfall_core::tr!(
+                "  per VU: {} ({} VUs, before the load)",
+                "  por VU: {} ({} VUs, antes de la carga)",
+                names.join(", "),
+                plan.load.concurrency()
+            )
         );
     }
     if let Some(refresh) = plan.refresh_summary() {
-        eprintln!("  renovación: {refresh} por VU, en segundo plano");
+        eprintln!(
+            "{}",
+            crabfall_core::tr!(
+                "  renewal: {refresh} per VU, in the background",
+                "  renovación: {refresh} por VU, en segundo plano"
+            )
+        );
     }
     if !tweaks.is_empty() {
-        eprintln!("  ajustes: {}", tweaks.join(" "));
+        eprintln!(
+            "{}",
+            crabfall_core::tr!("  tweaks: {}", "  ajustes: {}", tweaks.join(" "))
+        );
     }
     for u in plan.uploads_summary() {
-        eprintln!("  archivo: {u}");
+        eprintln!("{}", crabfall_core::tr!("  file: {u}", "  archivo: {u}"));
     }
     eprintln!("  http: {}", plan.http_summary());
     for d in &plan.data {
-        eprintln!("  datos: {}", d.dataset.describe());
+        eprintln!(
+            "{}",
+            crabfall_core::tr!("  data: {}", "  datos: {}", d.dataset.describe())
+        );
     }
     let (duration, graceful_stop) = (plan.load.duration(), plan.load.graceful_stop());
 
@@ -76,8 +102,13 @@ pub fn cmd_run(target: &crate::Target, as_json: bool) -> u8 {
         return exit::REFUSED;
     };
     eprintln!(
-        "  aprobado por {} el {}",
-        approval.approved_by, approval.approved_at
+        "{}",
+        crabfall_core::tr!(
+            "  approved by {} on {}",
+            "  aprobado por {} el {}",
+            approval.approved_by,
+            approval.approved_at
+        )
     );
 
     timer::high_resolution();
@@ -115,10 +146,22 @@ pub fn cmd_run(target: &crate::Target, as_json: bool) -> u8 {
     }
     match saved {
         Ok(file) => {
-            eprintln!("resultados: {}", display(&file));
+            eprintln!(
+                "{}",
+                crabfall_core::tr!("results: {}", "resultados: {}", display(&file))
+            );
             match crate::report::write(&project, &file) {
-                Ok(report) => eprintln!("reporte:    {}", display(&report)),
-                Err(e) => eprintln!("AVISO: no se generó el reporte: {e}"),
+                Ok(report) => eprintln!(
+                    "{}",
+                    crabfall_core::tr!("report:  {}", "reporte:    {}", display(&report))
+                ),
+                Err(e) => eprintln!(
+                    "{}",
+                    crabfall_core::tr!(
+                        "WARNING: the report was not generated: {e}",
+                        "AVISO: no se generó el reporte: {e}"
+                    )
+                ),
             }
             if result.passed {
                 exit::OK
@@ -127,7 +170,13 @@ pub fn cmd_run(target: &crate::Target, as_json: bool) -> u8 {
             }
         }
         Err(e) => {
-            eprintln!("✗ no se pudieron guardar los resultados: {e}");
+            eprintln!(
+                "{}",
+                crabfall_core::tr!(
+                    "✗ could not save the results: {e}",
+                    "✗ no se pudieron guardar los resultados: {e}"
+                )
+            );
             exit::RUNTIME
         }
     }
@@ -141,20 +190,28 @@ async fn show_progress(p: Arc<Progress>, total: Duration) {
         let total_vus = p.vus_total.load(Relaxed);
         if total_vus > 0 && p.started.load(Relaxed) == 0 && p.dropped.load(Relaxed) == 0 {
             eprint!(
-                "\r  preparando VUs (vu_setup) {}/{total_vus}   ",
-                p.vus_ready.load(Relaxed)
+                "{}",
+                crabfall_core::tr!(
+                    "\r  preparing VUs (vu_setup) {}/{total_vus}   ",
+                    "\r  preparando VUs (vu_setup) {}/{total_vus}   ",
+                    p.vus_ready.load(Relaxed)
+                )
             );
             start = Instant::now();
             continue;
         }
         eprint!(
-            "\r  {:>4}s / {}s  iteraciones {}  descartadas {}  requests {}  fallas {}   ",
-            start.elapsed().as_secs(),
-            total.as_secs(),
-            p.started.load(Relaxed),
-            p.dropped.load(Relaxed),
-            p.requests.load(Relaxed),
-            p.failed.load(Relaxed),
+            "{}",
+            crabfall_core::tr!(
+                "\r  {:>4}s / {}s  iterations {}  dropped {}  requests {}  failures {}   ",
+                "\r  {:>4}s / {}s  iteraciones {}  descartadas {}  requests {}  fallas {}   ",
+                start.elapsed().as_secs(),
+                total.as_secs(),
+                p.started.load(Relaxed),
+                p.dropped.load(Relaxed),
+                p.requests.load(Relaxed),
+                p.failed.load(Relaxed),
+            )
         );
     }
 }
@@ -216,50 +273,88 @@ fn print_summary(r: &RunResult) {
     }
     if let Some(v) = &r.vu_setup {
         let ok = if v.failed == 0 {
-            "todos listos".to_string()
+            crabfall_core::tr!("all ready", "todos listos").to_string()
         } else {
-            format!("{} quedaron afuera", v.failed)
+            crabfall_core::tr!("{} left out", "{} quedaron afuera", v.failed)
         };
         println!(
-            "vu_setup  {} VUs en {}: {ok}",
-            v.vus,
-            elapsed(v.duration_ms)
+            "{}",
+            crabfall_core::tr!(
+                "vu_setup  {} VUs in {}: {ok}",
+                "vu_setup  {} VUs en {}: {ok}",
+                v.vus,
+                elapsed(v.duration_ms)
+            )
         );
         session_steps(&v.steps, "          ");
     }
     if let Some(v) = &r.vu_refresh {
         let lost = if v.failed_vus == 0 {
-            "ningún VU perdido".to_string()
+            crabfall_core::tr!("no VU lost", "ningún VU perdido").to_string()
         } else {
-            format!("{} VUs dejaron de iterar", v.failed_vus)
+            crabfall_core::tr!(
+                "{} VUs stopped iterating",
+                "{} VUs dejaron de iterar",
+                v.failed_vus
+            )
         };
         println!(
-            "vu_refresh  cada {}: {} renovaciones, {lost}",
-            crabfall_core::units::HumanDuration(std::time::Duration::from_secs_f64(v.every_s)),
-            v.refreshes
+            "{}",
+            crabfall_core::tr!(
+                "vu_refresh  every {}: {} renewals, {lost}",
+                "vu_refresh  cada {}: {} renovaciones, {lost}",
+                crabfall_core::units::HumanDuration(std::time::Duration::from_secs_f64(v.every_s)),
+                v.refreshes
+            )
         );
         session_steps(&v.steps, "            ");
     }
     if let Some(reason) = &r.aborted {
-        println!("✗ {reason}. No se generó carga.");
+        println!(
+            "{}",
+            crabfall_core::tr!(
+                "✗ {reason}. No load was generated.",
+                "✗ {reason}. No se generó carga."
+            )
+        );
         return;
     }
     println!(
-        "iteraciones  planificadas {}  iniciadas {}  descartadas {}  interrumpidas {}  ({}/s)",
-        t.planned, t.started, t.dropped, t.interrupted, t.iteration_rate
+        "{}",
+        crabfall_core::tr!(
+            "iterations   planned {}  started {}  dropped {}  interrupted {}  ({}/s)",
+            "iteraciones  planificadas {}  iniciadas {}  descartadas {}  interrumpidas {}  ({}/s)",
+            t.planned,
+            t.started,
+            t.dropped,
+            t.interrupted,
+            t.iteration_rate
+        )
     );
     println!(
-        "requests     {}  fallidos {}  no-2xx {}  ({}/s)  duración {}s",
-        t.requests, t.failed, t.non_2xx, t.request_rate, r.duration_s
+        "{}",
+        crabfall_core::tr!(
+            "requests     {}  failed {}  non-2xx {}  ({}/s)  duration {}s",
+            "requests     {}  fallidos {}  no-2xx {}  ({}/s)  duración {}s",
+            t.requests,
+            t.failed,
+            t.non_2xx,
+            t.request_rate,
+            r.duration_s
+        )
     );
     if t.bytes_sent + t.bytes_received > 0 {
         let points = &r.series.points;
         let peak =
             |f: fn(&crabfall_core::metrics::Point) -> u64| points.iter().map(f).max().unwrap_or(0);
         println!(
-            "tráfico      enviados {}  recibidos {}",
-            traffic(t.bytes_sent, t.send_rate, peak(|p| p.bytes_sent)),
-            traffic(t.bytes_received, t.receive_rate, peak(|p| p.bytes_received))
+            "{}",
+            crabfall_core::tr!(
+                "traffic      sent {}  received {}",
+                "tráfico      enviados {}  recibidos {}",
+                traffic(t.bytes_sent, t.send_rate, peak(|p| p.bytes_sent)),
+                traffic(t.bytes_received, t.receive_rate, peak(|p| p.bytes_received))
+            )
         );
     }
     let checks: Vec<(&str, &CheckResult)> = r
@@ -282,7 +377,16 @@ fn print_summary(r: &RunResult) {
         .max(4);
     println!(
         "{:<width$} {:>7} {:>7} {:>7} {:>8} {:>8} {:>8} {:>8} {:>8} {:>8}",
-        "paso", "req", "fallas", "no-2xx", "p50", "p90", "p95", "p99", "p99.9", "max"
+        crabfall_core::i18n::pick("step", "paso"),
+        "req",
+        crabfall_core::i18n::pick("failed", "fallas"),
+        "no-2xx",
+        "p50",
+        "p90",
+        "p95",
+        "p99",
+        "p99.9",
+        "max"
     );
     for s in &r.steps {
         print!(
@@ -298,8 +402,12 @@ fn print_summary(r: &RunResult) {
         }
     }
     println!(
-        "{:>width$}  latencia en ms, desde el instante planificado",
-        ""
+        "{}",
+        crabfall_core::tr!(
+            "{:>width$}  latency in ms, from the planned instant",
+            "{:>width$}  latencia en ms, desde el instante planificado",
+            ""
+        )
     );
 
     for s in &r.steps {
@@ -310,7 +418,15 @@ fn print_summary(r: &RunResult) {
                 .iter()
                 .map(|(c, n)| format!("{c}×{n}"))
                 .collect();
-            println!("códigos  {}: {}", s.name, codes.join("  "));
+            println!(
+                "{}",
+                crabfall_core::tr!(
+                    "codes    {}: {}",
+                    "códigos  {}: {}",
+                    s.name,
+                    codes.join("  ")
+                )
+            );
         }
         if let Some(l) = &s.rate_limit {
             let said: Vec<String> = [l.policy(), l.retry_after()]
@@ -318,7 +434,15 @@ fn print_summary(r: &RunResult) {
                 .flatten()
                 .collect();
             if !said.is_empty() {
-                println!("límite   {}: {}", s.name, said.join(" · "));
+                println!(
+                    "{}",
+                    crabfall_core::tr!(
+                        "limit    {}: {}",
+                        "límite   {}: {}",
+                        s.name,
+                        said.join(" · ")
+                    )
+                );
             }
         }
         if !s.failures.is_empty() {
@@ -327,7 +451,15 @@ fn print_summary(r: &RunResult) {
                 .iter()
                 .map(|(k, n)| format!("{}×{n}", serde_json::to_value(k).unwrap().as_str().unwrap()))
                 .collect();
-            println!("fallas   {}: {}", s.name, kinds.join("  "));
+            println!(
+                "{}",
+                crabfall_core::tr!(
+                    "failures {}: {}",
+                    "fallas   {}: {}",
+                    s.name,
+                    kinds.join("  ")
+                )
+            );
             for e in &s.error_samples {
                 println!("         {e}");
             }
@@ -347,18 +479,32 @@ fn print_summary(r: &RunResult) {
         println!();
         for t in &r.thresholds {
             let mark = if t.passed { '✓' } else { '✗' };
-            let actual = t
-                .actual
-                .map_or("sin datos".to_string(), |a| format!("{a} {}", t.unit));
-            println!("{mark} {}  (medido: {actual})", t.threshold);
+            let actual = t.actual.map_or(
+                crabfall_core::tr!("no data", "sin datos").to_string(),
+                |a| format!("{a} {}", t.unit),
+            );
+            println!(
+                "{}",
+                crabfall_core::tr!(
+                    "{mark} {}  (measured: {actual})",
+                    "{mark} {}  (medido: {actual})",
+                    t.threshold
+                )
+            );
         }
         let failed = r.thresholds.iter().filter(|t| !t.passed).count();
         if failed > 0 {
-            println!("{failed} threshold(s) no se cumplieron.");
+            println!(
+                "{}",
+                crabfall_core::tr!(
+                    "{failed} threshold(s) were not met.",
+                    "{failed} threshold(s) no se cumplieron."
+                )
+            );
         }
     }
     for w in &r.warnings {
-        println!("AVISO: {w}");
+        println!("{}", crabfall_core::tr!("WARNING: {w}", "AVISO: {w}"));
     }
     println!();
 }
@@ -371,7 +517,8 @@ fn check_summary(checks: &[(&str, &CheckResult)]) -> Vec<String> {
     if passed + failed == 0 {
         return vec![];
     }
-    let mut lines = vec![format!(
+    let mut lines = vec![crabfall_core::tr!(
+        "checks       {}  passed {passed}  failed {failed}  ({})",
         "checks       {}  pasados {passed}  fallidos {failed}  ({})",
         passed + failed,
         percent(passed, passed + failed)
@@ -380,11 +527,16 @@ fn check_summary(checks: &[(&str, &CheckResult)]) -> Vec<String> {
     if failing.is_empty() {
         return lines;
     }
-    lines.push(format!("✗ {} check(s) fallaron:", failing.len()));
+    lines.push(crabfall_core::tr!(
+        "✗ {} check(s) failed:",
+        "✗ {} check(s) fallaron:",
+        failing.len()
+    ));
     let width = failing.iter().map(|(s, _)| s.len()).max().unwrap_or(0);
     for (step, c) in failing {
         let total = c.passed + c.failed;
-        lines.push(format!(
+        lines.push(crabfall_core::tr!(
+            "  {step:<width$}  {}  ✗ {} of {total} ({})",
             "  {step:<width$}  {}  ✗ {} de {total} ({})",
             c.check,
             c.failed,
@@ -405,8 +557,14 @@ fn session_steps(steps: &[crabfall_core::metrics::VuSetupStep], indent: &str) {
             .as_ref()
             .map_or("-".into(), |l| format!("{:.2} ms", l.p50));
         println!(
-            "{indent}{}  {} requests  {} fallidos  p50 {p50}",
-            s.name, s.requests, s.failed
+            "{}",
+            crabfall_core::tr!(
+                "{indent}{}  {} requests  {} failed  p50 {p50}",
+                "{indent}{}  {} requests  {} fallidos  p50 {p50}",
+                s.name,
+                s.requests,
+                s.failed
+            )
         );
         for e in &s.errors {
             println!("{indent}  {e}");
@@ -419,7 +577,8 @@ fn session_steps(steps: &[crabfall_core::metrics::VuSetupStep], indent: &str) {
 /// se miden los enlaces.
 fn traffic(total: u64, rate: f64, peak: u64) -> String {
     use crabfall_core::upload::size;
-    format!(
+    crabfall_core::tr!(
+        "{} ({}/s, peak {}/s = {})",
         "{} ({}/s, pico {}/s = {})",
         size(total as usize),
         size(rate as usize),

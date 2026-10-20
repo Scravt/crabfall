@@ -1,0 +1,5 @@
+# The tests check the Spanish messages; English has its own tests (crates/crabfall-core/tests/english.rs
+# and crates/crabfall-cli/tests/english.rs), which choose it explicitly. This only affects
+# processes started by cargo in this workspace: an installed `crabfall` still defaults to English.
+[env]
+CRABFALL_LANG = "es"

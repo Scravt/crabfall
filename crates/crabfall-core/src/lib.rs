@@ -9,6 +9,7 @@ pub mod data;
 pub mod diagnose;
 pub mod engine;
 pub mod extract;
+pub mod i18n;
 pub mod load;
 pub mod metrics;
 pub mod overrides;

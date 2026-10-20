@@ -42,7 +42,10 @@ pub fn prepare(target: &crate::Target) -> Result<Prepared, u8> {
         .ok_or_else(|| {
             fail(
                 exit::INVALID,
-                "no encontré .crabfall/ en este directorio ni en los superiores".into(),
+                crabfall_core::tr!(
+                    "no .crabfall/ found in this directory or its parents",
+                    "no encontré .crabfall/ en este directorio ni en los superiores"
+                ),
             )
         })?;
     let config = project.load_config().map_err(|e| fail(exit::INVALID, e))?;
@@ -55,13 +58,21 @@ pub fn prepare(target: &crate::Target) -> Result<Prepared, u8> {
     let text = std::fs::read_to_string(&path).map_err(|e| {
         fail(
             exit::INVALID,
-            format!("no se pudo leer {}: {e}", display(&path)),
+            crabfall_core::tr!(
+                "could not read {}: {e}",
+                "no se pudo leer {}: {e}",
+                display(&path)
+            ),
         )
     })?;
     let mut scenario = validate::parse_scenario(&text).map_err(|report| {
         eprintln!(
-            "✗ {} no es válido (corré `crabfall validate`):",
-            display(&path)
+            "{}",
+            crabfall_core::tr!(
+                "✗ {} is not valid (run `crabfall validate`):",
+                "✗ {} no es válido (corré `crabfall validate`):",
+                display(&path)
+            )
         );
         for issue in report.errors.iter().chain(&report.todos) {
             eprintln!("  {}", describe(issue));
@@ -71,7 +82,14 @@ pub fn prepare(target: &crate::Target) -> Result<Prepared, u8> {
     let overrides = target.tweaks.overrides();
     let problems = overrides.apply(&mut scenario);
     if !problems.is_empty() {
-        eprintln!("✗ los ajustes no sirven para {}:", scenario.name);
+        eprintln!(
+            "{}",
+            crabfall_core::tr!(
+                "✗ the tweaks do not fit {}:",
+                "✗ los ajustes no sirven para {}:",
+                scenario.name
+            )
+        );
         for issue in &problems {
             eprintln!("  {}", describe(issue));
         }
@@ -79,7 +97,14 @@ pub fn prepare(target: &crate::Target) -> Result<Prepared, u8> {
     }
     let inputs = inputs(&project, &config, &scenario, vars).map_err(|e| fail(exit::INVALID, e))?;
     let plan = Plan::build(&scenario, &env, &inputs).map_err(|errors| {
-        eprintln!("✗ no se puede armar {} en `{env_name}`:", scenario.name);
+        eprintln!(
+            "{}",
+            crabfall_core::tr!(
+                "✗ {} cannot be built in `{env_name}`:",
+                "✗ no se puede armar {} en `{env_name}`:",
+                scenario.name
+            )
+        );
         for e in errors {
             eprintln!("  {e}");
         }
@@ -111,9 +136,12 @@ pub fn inputs(
 ) -> Result<Inputs, String> {
     let mut parsed = BTreeMap::new();
     for var in vars {
-        let (name, raw) = var
-            .split_once('=')
-            .ok_or_else(|| format!("--var `{var}`: usá nombre=valor"))?;
+        let (name, raw) = var.split_once('=').ok_or_else(|| {
+            crabfall_core::tr!(
+                "--var `{var}`: use name=value",
+                "--var `{var}`: usá nombre=valor"
+            )
+        })?;
         // `42` es un número, `true` un booleano y el resto un string, como en YAML.
         let value = validate::parse_yaml::<Value>(raw)
             .ok()

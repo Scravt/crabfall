@@ -25,9 +25,15 @@ pub fn cmd_pre_tool_use() -> u8 {
     match blocked_subcommand(command) {
         Some(sub) => {
             eprintln!(
-                "crabfall {sub} genera carga o la autoriza, y lo ejecuta solo una persona (ADR-004). \
+                "{}",
+                crabfall_core::tr!(
+                    "crabfall {sub} generates load or authorizes it, and only a person runs it (ADR-004). \
+                 Ask the person to run `crabfall {sub} ...` in their terminal. \
+                 You can use `crabfall validate` and `crabfall check`.",
+                    "crabfall {sub} genera carga o la autoriza, y lo ejecuta solo una persona (ADR-004). \
                  Pedile a la persona que corra `crabfall {sub} ...` en su terminal. \
                  Vos podés usar `crabfall validate` y `crabfall check`."
+                )
             );
             2
         }

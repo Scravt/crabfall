@@ -12,8 +12,12 @@ impl FromStr for HumanDuration {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let invalid =
-            || format!("duración inválida `{s}`: usá un entero y una unidad (500ms, 30s, 2m, 1h)");
+        let invalid = || {
+            crate::tr!(
+                "invalid duration `{s}`: use an integer and a unit (500ms, 30s, 2m, 1h)",
+                "duración inválida `{s}`: usá un entero y una unidad (500ms, 30s, 2m, 1h)"
+            )
+        };
         let (number, unit) = split_number(s.trim()).ok_or_else(invalid)?;
         let duration = match unit {
             "ms" => Duration::from_millis(number),
@@ -56,7 +60,12 @@ impl FromStr for Rate {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let invalid = || format!("tasa inválida `{s}`: usá un entero por unidad (50/s, 3000/m)");
+        let invalid = || {
+            crate::tr!(
+                "invalid rate `{s}`: use an integer per unit (50/s, 3000/m)",
+                "tasa inválida `{s}`: usá un entero por unidad (50/s, 3000/m)"
+            )
+        };
         let (count, unit) = s.trim().split_once('/').ok_or_else(invalid)?;
         let count = count.trim().parse().map_err(|_| invalid())?;
         let per = match unit.trim() {
@@ -101,8 +110,12 @@ impl FromStr for Think {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let invalid =
-            || format!("pausa inválida `{s}`: usá una duración (2s) o un rango (1s-3s, 500ms-2s)");
+        let invalid = || {
+            crate::tr!(
+                "invalid pause `{s}`: use a duration (2s) or a range (1s-3s, 500ms-2s)",
+                "pausa inválida `{s}`: usá una duración (2s) o un rango (1s-3s, 500ms-2s)"
+            )
+        };
         let (min, max) = match s.trim().split_once('-') {
             Some((a, b)) => (
                 a.parse::<HumanDuration>().map_err(|_| invalid())?,
@@ -114,7 +127,8 @@ impl FromStr for Think {
             }
         };
         if min.0 > max.0 {
-            return Err(format!(
+            return Err(crate::tr!(
+                "invalid pause `{s}`: the minimum is greater than the maximum",
                 "pausa inválida `{s}`: el mínimo es mayor que el máximo"
             ));
         }
@@ -171,7 +185,7 @@ impl schemars::JsonSchema for HumanDuration {
         schemars::json_schema!({
             "type": "string",
             "pattern": "^[0-9]+(ms|s|m|h)$",
-            "description": "Entero + unidad: 500ms, 30s, 2m, 1h.",
+            "description": "An integer and a unit: 500ms, 30s, 2m, 1h.",
         })
     }
 }
@@ -185,7 +199,7 @@ impl schemars::JsonSchema for Rate {
         schemars::json_schema!({
             "type": "string",
             "pattern": "^[0-9]+/(s|m)$",
-            "description": "Entero por segundo o por minuto: 50/s, 3000/m.",
+            "description": "An integer per second or per minute: 50/s, 3000/m.",
         })
     }
 }
@@ -199,7 +213,7 @@ impl schemars::JsonSchema for Think {
         schemars::json_schema!({
             "type": "string",
             "pattern": "^[0-9]+(ms|s|m|h)(-[0-9]+(ms|s|m|h))?$",
-            "description": "Duración fija (2s) o rango al azar (1s-3s). 0s: sin pausa.",
+            "description": "A fixed duration (2s) or a random range (1s-3s). 0s: no pause.",
         })
     }
 }

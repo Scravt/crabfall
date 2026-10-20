@@ -239,7 +239,8 @@ pub struct ThresholdDiff {
 pub fn compare(base: &Run, new: &Run) -> Result<Comparison, String> {
     for run in [base, new] {
         if let Some(reason) = &run.aborted {
-            return Err(format!(
+            return Err(crate::tr!(
+                "run `{}` generated no load ({reason}): there are no metrics to compare",
                 "la corrida `{}` no generó carga ({reason}): no hay métricas para comparar",
                 run.run_id
             ));
@@ -255,8 +256,11 @@ pub fn compare(base: &Run, new: &Run) -> Result<Comparison, String> {
     let (mut regressions, mut improvements) = (Vec::new(), Vec::new());
     let totals = totals(base, new);
     for (what, d) in [
-        ("errores", totals.error_pct),
-        ("iteraciones descartadas", totals.dropped_pct),
+        (crate::i18n::pick("errors", "errores"), totals.error_pct),
+        (
+            crate::i18n::pick("dropped iterations", "iteraciones descartadas"),
+            totals.dropped_pct,
+        ),
     ] {
         rate_change(&mut regressions, &mut improvements, what, d);
     }
@@ -301,33 +305,36 @@ fn warnings(base: &Run, new: &Run, same_load: bool) -> Vec<String> {
     let mut out = Vec::new();
     for r in [base, new] {
         if r.findings.iter().any(|f| f.id == "invalid_result") {
-            out.push(format!(
-                "la corrida `{}` tiene `invalid_result`: el generador fue el cuello de botella y sus números no son confiables",
+            out.push(crate::tr!("run `{}` has `invalid_result`: the generator was the bottleneck and its numbers are not reliable", "la corrida `{}` tiene `invalid_result`: el generador fue el cuello de botella y sus números no son confiables",
                 r.run_id
             ));
         }
     }
     if base.scenario != new.scenario {
-        out.push(format!(
+        out.push(crate::tr!(
+            "they are different scenarios (`{}` and `{}`)",
             "son escenarios distintos (`{}` y `{}`)",
-            base.scenario, new.scenario
+            base.scenario,
+            new.scenario
         ));
     }
     if base.environment != new.environment {
-        out.push(format!(
+        out.push(crate::tr!(
+            "they are different environments (`{}` and `{}`)",
             "son entornos distintos (`{}` y `{}`)",
-            base.environment, new.environment
+            base.environment,
+            new.environment
         ));
     }
     if !same_load {
         out.push(
-            "la carga es distinta: se comparan solo los agregados y las diferencias pueden deberse a la carga".into(),
+            crate::tr!("the load is different: only aggregates are compared and the differences may be due to the load", "la carga es distinta: se comparan solo los agregados y las diferencias pueden deberse a la carga"),
         );
     } else if let (Some(a), Some(b)) = (&base.approval, &new.approval)
         && a.hash != b.hash
     {
         out.push(
-            "el escenario cambió entre corridas (otra aprobación): requests, pasos o variables pueden ser distintos".into(),
+            crate::tr!("the scenario changed between runs (another approval): requests, steps or variables may differ", "el escenario cambió entre corridas (otra aprobación): requests, pasos o variables pueden ser distintos"),
         );
     }
     out
@@ -339,8 +346,11 @@ fn size_changes(steps: &[StepDiff]) -> Vec<String> {
     let mut out = Vec::new();
     for s in steps {
         for (what, d) in [
-            ("la respuesta", &s.received_per_request),
-            ("el request", &s.sent_per_request),
+            (
+                crate::tr!("the response", "la respuesta"),
+                &s.received_per_request,
+            ),
+            (crate::tr!("the request", "el request"), &s.sent_per_request),
         ] {
             let (Some(b), Some(n)) = (d.base, d.new) else {
                 continue;
@@ -349,8 +359,7 @@ fn size_changes(steps: &[StepDiff]) -> Vec<String> {
             if (n - b).abs() >= SIZE_MIN_DELTA_BYTES
                 && (ratio >= SIZE_MIN_RATIO || ratio <= 1.0 / SIZE_MIN_RATIO)
             {
-                out.push(format!(
-                    "`{}`: {what} pasó de {} a {} por request (×{:.1}); puede explicar parte del cambio de latencia",
+                out.push(crate::tr!("`{}`: {what} went from {} to {} per request (×{:.1}); it may explain part of the latency change", "`{}`: {what} pasó de {} a {} por request (×{:.1}); puede explicar parte del cambio de latencia",
                     s.name,
                     crate::upload::size(b as usize),
                     crate::upload::size(n as usize),
@@ -569,7 +578,11 @@ fn step_changes(
                 } else {
                     t.better
                 };
-                format!(", en {agree} de {} segundos", t.windows)
+                crate::tr!(
+                    ", in {agree} of {} seconds",
+                    ", en {agree} de {} segundos",
+                    t.windows
+                )
             }
             _ => String::new(),
         };
@@ -589,7 +602,13 @@ fn step_changes(
     if let (Some(b), Some(n), Some(diff)) = (s.error_pct.base, s.error_pct.new, s.error_pct.diff())
         && diff.abs() >= RATE_MIN_DELTA_PP
     {
-        let line = format!("`{}`: errores {}% → {}%", s.name, round1(b), round1(n));
+        let line = crate::tr!(
+            "`{}`: errors {}% → {}%",
+            "`{}`: errores {}% → {}%",
+            s.name,
+            round1(b),
+            round1(n)
+        );
         if diff > 0.0 {
             regressions.push(line);
         } else {
@@ -628,7 +647,7 @@ fn findings(
             }
             None => {
                 if counts(f) {
-                    regressions.push(format!("hallazgo nuevo: {}", f.title));
+                    regressions.push(crate::tr!("new finding: {}", "hallazgo nuevo: {}", f.title));
                 }
                 out.push(FindingDiff {
                     id: f.id.clone(),
@@ -671,7 +690,10 @@ fn breaking_point_shift(
     let (Some(b), Some(n)) = (rate(base), rate(new)) else {
         return;
     };
-    let line = format!("el punto de quiebre pasó de ~{b} a ~{n} it/s");
+    let line = crate::tr!(
+        "the breaking point moved from ~{b} to ~{n} it/s",
+        "el punto de quiebre pasó de ~{b} a ~{n} it/s"
+    );
     if n <= b * (1.0 - BREAKING_POINT_MIN_RATIO) {
         regressions.push(line);
     } else if n >= b * (1.0 + BREAKING_POINT_MIN_RATIO) {
@@ -701,12 +723,14 @@ fn thresholds(
             let b = base.thresholds.iter().find(|t| t.threshold == name);
             let n = new.thresholds.iter().find(|t| t.threshold == name);
             match (b.map(|t| t.passed), n.map(|t| t.passed)) {
-                (Some(true), Some(false)) => {
-                    regressions.push(format!("threshold `{name}` ahora falla"))
-                }
-                (Some(false), Some(true)) => {
-                    improvements.push(format!("threshold `{name}` ahora pasa"))
-                }
+                (Some(true), Some(false)) => regressions.push(crate::tr!(
+                    "threshold `{name}` now fails",
+                    "threshold `{name}` ahora falla"
+                )),
+                (Some(false), Some(true)) => improvements.push(crate::tr!(
+                    "threshold `{name}` now passes",
+                    "threshold `{name}` ahora pasa"
+                )),
                 _ => {}
             }
             ThresholdDiff {
