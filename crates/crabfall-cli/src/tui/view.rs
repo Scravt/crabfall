@@ -13,7 +13,9 @@ use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style, Stylize},
     text::{Line, Span},
-    widgets::{Block, Cell, Gauge, Paragraph, Row as TableRow, Sparkline, Table, Tabs, Wrap},
+    widgets::{
+        Block, Cell, Clear, Gauge, Paragraph, Row as TableRow, Sparkline, Table, Tabs, Wrap,
+    },
 };
 
 use super::{App, Ask, Detail, HistoryView, LastRun, ResultsView, RunView, Screen, Status};
@@ -56,31 +58,38 @@ pub fn draw(frame: &mut Frame, app: &App) {
 
     let keys = match &app.screen {
         Screen::Home => pick(
-            "↑↓ choose · Enter open · e change environment · q quit",
-            "↑↓ elegir · Enter abrir · e cambiar de entorno · q salir",
+            "? help · ↑↓ or j/k move · Enter open the scenario · e change environment · q quit",
+            "? ayuda · ↑↓ o j/k moverse · Enter abrir el escenario · e cambiar de entorno · q salir",
         ),
         Screen::Detail(d) if d.form.editing => pick(
             "type the value · Enter apply · Esc cancel",
             "escribí el valor · Enter aplicar · Esc cancelar",
         ),
         Screen::Detail(_) => pick(
-            "↑↓ tweak · Enter edit · Del clear · c check · a approve · r run · h history · o last report · Esc back",
-            "↑↓ ajuste · Enter editar · Supr borrar · c check · a aprobar · r correr · h historial · o último reporte · Esc volver",
+            "? help · ↑↓ or j/k tweak · Enter edit it · Del clear it · c check · a approve · r run · h history · o last report · Esc back",
+            "? ayuda · ↑↓ o j/k ajuste · Enter editarlo · Supr borrarlo · c check · a aprobar · r correr · h historial · o último reporte · Esc volver",
         ),
-        Screen::Check(..) => pick("Esc back", "Esc volver"),
+        Screen::Check(..) => pick("? help · Esc back", "? ayuda · Esc volver"),
+        Screen::History(_, h) if h.base.is_some() => pick(
+            "? help · ↑↓ or j/k move · Enter on another run: compare them · Enter on the same one or Esc: release it",
+            "? ayuda · ↑↓ o j/k moverse · Enter en otra corrida: compararlas · Enter en la misma o Esc: soltarla",
+        ),
         Screen::History(..) => pick(
-            "↑↓ choose · Enter compare with the previous one (or with the base) · Space mark as base · b set as baseline · o report · Esc back",
-            "↑↓ elegir · Enter comparar con la anterior (o con la base) · Espacio marcar como base · b fijar como base · o reporte · Esc volver",
+            "? help · ↑↓ or j/k move · Enter choose to compare · c compare with the previous one · b set as baseline · o report · Esc back",
+            "? ayuda · ↑↓ o j/k moverse · Enter elegir para comparar · c comparar con la anterior · b fijar como base · o reporte · Esc volver",
         ),
-        Screen::Compare(..) => pick("Esc back to the history", "Esc volver al historial"),
+        Screen::Compare(..) => pick(
+            "? help · Esc back to the history",
+            "? ayuda · Esc volver al historial",
+        ),
         Screen::Approve(..) => pick(
             "type the host and Enter to approve · Esc cancel",
             "escribí el host y Enter para aprobar · Esc cancelar",
         ),
-        Screen::Running(..) => pick("q stop", "q frenar"),
+        Screen::Running(..) => pick("? help · q stop", "? ayuda · q frenar"),
         Screen::Results(..) => pick(
-            "←→ tabs · o open the HTML report · r run again · h history · Esc back",
-            "←→ pestañas · o abrir el reporte HTML · r correr de nuevo · h historial · Esc volver",
+            "? help · ←→ or 1-4 tabs · o open the HTML report · r run again · h history · Esc back",
+            "? ayuda · ←→ o 1-4 pestañas · o abrir el reporte HTML · r correr de nuevo · h historial · Esc volver",
         ),
     };
     let message = app
@@ -99,7 +108,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
 
     match &app.screen {
         Screen::Home => home(frame, body, app),
-        Screen::Detail(d) => detail(frame, body, d),
+        Screen::Detail(d) => detail(frame, body, app, d),
         Screen::Check(d, c) => check(frame, body, d, c.result.as_ref()),
         Screen::Approve(d, a) => {
             let mut lines: Vec<Line> = a.summary.iter().map(|l| Line::raw(l.clone())).collect();
@@ -131,6 +140,140 @@ pub fn draw(frame: &mut Frame, app: &App) {
         Screen::Compare(_, _, c) => compare(frame, body, &c.comparison),
         Screen::Results(d, r) => results(frame, body, d, r),
     }
+    if app.help {
+        help(frame, frame.area(), &app.screen);
+    }
+}
+
+/// La ayuda de la pantalla actual (`?`), encima de todo.
+fn help(frame: &mut Frame, area: Rect, screen: &Screen) {
+    let (title, text) = match screen {
+        Screen::Home => (
+            pick(" Help · scenarios ", " Ayuda · escenarios "),
+            pick(
+                "Each row is a scenario from .crabfall/scenarios/: the requests to make and how much load to put.\n\n\
+                 How it works, for every scenario:\n\
+                 \u{2003}1. check (c): each step once, without load, to see that it answers well. Only against your machine (loopback).\n\
+                 \u{2003}2. approve (a): you read what load it will make and against which host, and type the host to sign it. A person approves, never an agent.\n\
+                 \u{2003}3. run (r): the load. You watch it live and can stop it with q.\n\
+                 Then you look at the results, the HTML report and the history, where you compare runs.\n\n\
+                 Columns: approval says whether it is approved in this environment (and with which tweaks); last run, how its last run ended (✓ passed, ✗ failed, ■ you stopped it).\n\n\
+                 Keys: ↑↓ or j/k move · Enter open the selected scenario · e switch environment (local, staging…) · q quit.",
+                "Cada fila es un escenario de .crabfall/scenarios/: las requests a hacer y cuánta carga poner.\n\n\
+                 Cómo se usa, para cada escenario:\n\
+                 \u{2003}1. check (c): cada paso una vez, sin carga, para ver que responda bien. Solo contra tu máquina (loopback).\n\
+                 \u{2003}2. aprobar (a): leés qué carga va a hacer y contra qué host, y escribís el host para firmarla. Aprueba una persona, nunca un agente.\n\
+                 \u{2003}3. correr (r): la carga. La mirás en vivo y la podés frenar con q.\n\
+                 Después mirás los resultados, el reporte HTML y el historial, donde comparás corridas.\n\n\
+                 Columnas: aprobación dice si está aprobado en este entorno (y con qué ajustes); última corrida, cómo terminó la última (✓ pasó, ✗ falló, ■ la frenaste).\n\n\
+                 Teclas: ↑↓ o j/k moverse · Enter abrir el escenario elegido · e cambiar de entorno (local, staging…) · q salir.",
+            ),
+        ),
+        Screen::Detail(_) => (
+            pick(" Help · scenario ", " Ayuda · escenario "),
+            pick(
+                "Left: what the scenario will do (flows, load, limits). Right: tweaks, and what to do next.\n\n\
+                 The line at the top shows the three steps and which one comes next: check (c), approve (a), run (r).\n\n\
+                 Tweaks change the load without touching the YAML, only for this run: move with ↑↓ or j/k, Enter to type a value, Enter again to apply it, Del to clear it. Empty means \"as in the scenario\". Below the list you see what the selected tweak means and an example. Changing a tweak changes the plan: it must be approved again.\n\n\
+                 Other keys: h history of runs · o open the last report in the browser · Esc back to the list.",
+                "Izquierda: qué va a hacer el escenario (flows, carga, límites). Derecha: ajustes, y qué hacer después.\n\n\
+                 La línea de arriba muestra los tres pasos y cuál sigue: check (c), aprobar (a), correr (r).\n\n\
+                 Los ajustes cambian la carga sin tocar el YAML, solo para esta corrida: moverse con ↑↓ o j/k, Enter para escribir un valor, Enter de nuevo para aplicarlo, Supr para borrarlo. Vacío es \"como en el escenario\". Debajo de la lista ves qué significa el ajuste elegido y un ejemplo. Cambiar un ajuste cambia el plan: hay que aprobar de nuevo.\n\n\
+                 Otras teclas: h historial de corridas · o abrir el último reporte en el navegador · Esc volver a la lista.",
+            ),
+        ),
+        Screen::Check(..) => (
+            pick(" Help · check ", " Ayuda · check "),
+            pick(
+                "Check runs each step of each flow once, without load, and only against your machine. ✓ means it answered and its checks passed; ✗ shows why not. Below each step: redirects and the values it extracted.\n\nIt does not need an approval. Esc goes back.",
+                "El check corre cada paso de cada flow una vez, sin carga, y solo contra tu máquina. ✓ es que respondió y pasaron sus checks; ✗ muestra por qué no. Debajo de cada paso: las redirecciones y los valores que extrajo.\n\nNo necesita aprobación. Esc vuelve.",
+            ),
+        ),
+        Screen::Approve(..) => (
+            pick(" Help · approve ", " Ayuda · aprobar "),
+            pick(
+                "Read the summary: how much load, for how long, against which host. If it is right, type the host exactly and Enter: that signs the approval for this scenario, environment and tweaks. If the scenario changes, it must be approved again. Esc cancels without approving.",
+                "Leé el resumen: cuánta carga, por cuánto tiempo, contra qué host. Si está bien, escribí el host tal cual y Enter: eso firma la aprobación para este escenario, entorno y ajustes. Si el escenario cambia, hay que aprobar de nuevo. Esc cancela sin aprobar.",
+            ),
+        ),
+        Screen::Running(..) => (
+            pick(" Help · run ", " Ayuda · corrida "),
+            pick(
+                "The load is running. Top: the progress. Numbers: the last second (iterations, requests, errors, traffic). Charts: p95 and errors per second. Table: each step.\n\n\
+                 Dropped iterations mean there were no free VUs: the server is slow or max_vus is low.\n\n\
+                 q stops: it asks first, then stops starting iterations, waits for the ones in progress and saves what ran. q again cuts them.",
+                "La carga está corriendo. Arriba: el avance. Números: el último segundo (iteraciones, requests, errores, tráfico). Gráficos: p95 y errores por segundo. Tabla: cada paso.\n\n\
+                 Iteraciones descartadas quiere decir que no había VUs libres: el servidor está lento o max_vus es bajo.\n\n\
+                 q frena: primero pregunta, después deja de iniciar iteraciones, espera las que están en curso y guarda lo que corrió. q de nuevo las corta.",
+            ),
+        ),
+        Screen::Results(..) => (
+            pick(" Help · results ", " Ayuda · resultados "),
+            pick(
+                "1 Summary: whether it passed, totals, thresholds and the comparison with the previous run. 2 Findings: problems Crabfall recognized (saturation, slow queries…) and their likely causes. 3 Steps: latency per step. 4 Checks: which response checks failed and examples.\n\n\
+                 ←→ or 1-4 switch tabs · o open the HTML report (charts) · r run again · h history · Esc back to the scenario.",
+                "1 Resumen: si pasó, totales, thresholds y la comparación con la corrida anterior. 2 Hallazgos: problemas que Crabfall reconoció (saturación, consultas lentas…) y sus causas probables. 3 Pasos: latencia por paso. 4 Checks: qué chequeos de respuesta fallaron y ejemplos.\n\n\
+                 ←→ o 1-4 cambiar de pestaña · o abrir el reporte HTML (gráficos) · r correr de nuevo · h historial · Esc volver al escenario.",
+            ),
+        ),
+        Screen::History(..) => (
+            pick(" Help · history ", " Ayuda · historial "),
+            pick(
+                "The runs of this scenario in this environment, newest first.\n\n\
+                 To compare two runs: Enter on one (it is marked ◆ chosen), move to the other, Enter again. The one you chose first is the \"before\". c compares the selected run with the one just before it.\n\n\
+                 b sets the selected run as the baseline: the accepted reference that crabfall compare --baseline uses. It is saved in .crabfall/baselines/; commit it to share it.\n\n\
+                 o opens the run's HTML report · Esc releases the chosen run, or goes back.",
+                "Las corridas de este escenario en este entorno, la más nueva primero.\n\n\
+                 Para comparar dos corridas: Enter en una (queda marcada ◆ elegida), te movés a la otra y Enter de nuevo. La que elegiste primero es el \"antes\". c compara la corrida seleccionada con la inmediatamente anterior.\n\n\
+                 b fija la corrida seleccionada como base: la referencia aceptada que usa crabfall compare --baseline. Se guarda en .crabfall/baselines/; versionala para compartirla.\n\n\
+                 o abre el reporte HTML de la corrida · Esc suelta la corrida elegida, o vuelve.",
+            ),
+        ),
+        Screen::Compare(..) => (
+            pick(" Help · comparison ", " Ayuda · comparación "),
+            pick(
+                "Top: the verdict (better, worse, no significant changes, mixed) and why. With the same load, it pairs second by second and discards noise; with different loads, it only compares aggregates.\n\n\
+                 Table: p95 before and now per step. ¿noise? means the difference is not clear enough to call it.\n\n\
+                 Bottom: findings that are new, resolved or persist. Esc goes back to the history.",
+                "Arriba: el veredicto (mejoró, empeoró, sin cambios significativos, mixto) y por qué. Con la misma carga, empareja segundo a segundo y descarta el ruido; con cargas distintas, solo compara agregados.\n\n\
+                 Tabla: p95 antes y ahora por paso. ¿ruido? quiere decir que la diferencia no es lo bastante clara para afirmarla.\n\n\
+                 Abajo: hallazgos nuevos, resueltos o que siguen. Esc vuelve al historial.",
+            ),
+        ),
+    };
+    let width = area.width.saturating_sub(8).min(100);
+    let mut lines: Vec<Line> = text.lines().map(Line::raw).collect();
+    lines.push(Line::default());
+    lines.push(Line::styled(
+        pick(
+            "any key closes this help",
+            "cualquier tecla cierra esta ayuda",
+        ),
+        Style::new().fg(MUTED),
+    ));
+    // Alto según el texto: cada línea ocupa lo que mide dividido por el ancho, redondeado
+    // para arriba (con algo de margen por cómo corta las palabras).
+    let inner = width.saturating_sub(2).max(1) as usize;
+    let needed: usize = lines
+        .iter()
+        .map(|l| (l.width() * 11 / 10).div_ceil(inner).max(1))
+        .sum();
+    let height = (needed as u16 + 2).min(area.height.saturating_sub(2));
+    let popup = Rect {
+        x: area.x + (area.width - width) / 2,
+        y: area.y + (area.height - height) / 2,
+        width,
+        height,
+    };
+    frame.render_widget(Clear, popup);
+    frame.render_widget(
+        Paragraph::new(lines).wrap(Wrap { trim: false }).block(
+            Block::bordered()
+                .title(title)
+                .border_style(Style::new().fg(Color::Cyan)),
+        ),
+        popup,
+    );
 }
 
 fn home(frame: &mut Frame, area: Rect, app: &App) {
@@ -169,7 +312,6 @@ fn home(frame: &mut Frame, area: Rect, app: &App) {
             Cell::from(row.name.clone()).bold(),
             Cell::from(status).fg(color),
             last_run(row.last.as_ref()),
-            Cell::from(row.description.clone().unwrap_or_default()).fg(MUTED),
         ])
         .style(style)
     });
@@ -177,22 +319,49 @@ fn home(frame: &mut Frame, area: Rect, app: &App) {
         pick("scenario", "escenario"),
         pick("approval", "aprobación"),
         pick("last run", "última corrida"),
-        pick("description", "descripción"),
     ])
     .style(Style::new().fg(MUTED));
+    // La tabla ocupa lo que necesita; abajo, la descripción completa del elegido.
+    let [table_area, about_area] = Layout::vertical([
+        Constraint::Length(app.rows.len() as u16 + 3),
+        Constraint::Min(5),
+    ])
+    .areas(area);
     frame.render_widget(
         Table::new(
             rows,
             [
-                Constraint::Length(18),
-                Constraint::Length(48),
                 Constraint::Length(20),
-                Constraint::Min(10),
+                Constraint::Length(50),
+                Constraint::Min(20),
             ],
         )
         .header(header)
         .block(Block::bordered().title(pick(" Scenarios ", " Escenarios "))),
-        area,
+        table_area,
+    );
+    let row = &app.rows[app.selected];
+    let mut about = vec![Line::raw(row.description.clone().unwrap_or_else(|| {
+        pick("(no description)", "(sin descripción)").to_string()
+    }))];
+    // El error entero: en la columna no entra.
+    if let Status::Invalid(why) = &row.status {
+        about.push(Line::default());
+        about.push(Line::styled(format!("✗ {why}"), Style::new().fg(BAD)));
+    }
+    about.push(Line::default());
+    about.push(Line::styled(
+        pick(
+            "Enter to open it: tweak the load, check it, approve it and run it. ? explains how it works.",
+            "Enter para abrirlo: ajustar la carga, probarlo, aprobarlo y correrlo. ? explica cómo funciona.",
+        ),
+        Style::new().fg(MUTED),
+    ));
+    frame.render_widget(
+        Paragraph::new(about)
+            .wrap(Wrap { trim: false })
+            .block(Block::bordered().title(format!(" {} ", row.name))),
+        about_area,
     );
 }
 
@@ -205,7 +374,194 @@ fn last_run(last: Option<&LastRun>) -> Cell<'static> {
     }
 }
 
-fn detail(frame: &mut Frame, area: Rect, d: &Detail) {
+/// Cómo está un paso del camino check → aprobar → correr.
+#[derive(Clone, Copy, PartialEq)]
+enum Mark {
+    Pending,
+    Done,
+    Failed,
+    /// No aplica (el check solo corre contra loopback).
+    Skip,
+}
+
+/// Los tres pasos, cuál sigue y qué hacer.
+fn next_step(app: &App, d: &Detail) -> ([Mark; 3], Option<usize>, String) {
+    let Ok(p) = &d.prepared else {
+        let hint = match &d.field_error {
+            Some((i, _)) => tr!(
+                "the tweak `{}` cannot be understood: Enter to fix it or Del to clear it",
+                "el ajuste `{}` no se entiende: Enter para corregirlo o Supr para borrarlo",
+                d.form.fields[*i].label
+            ),
+            None => tr!(
+                "the scenario has errors (on the left): fix the YAML and open it again",
+                "el escenario tiene errores (a la izquierda): corregí el YAML y abrilo de nuevo"
+            ),
+        };
+        return ([Mark::Pending; 3], None, hint);
+    };
+    let check = if !p.plan.loopback_only() {
+        Mark::Skip
+    } else {
+        match app.checks.get(&d.name) {
+            Some(true) => Mark::Done,
+            Some(false) => Mark::Failed,
+            None => Mark::Pending,
+        }
+    };
+    let approved = d.approval.is_ok();
+    let marks = [
+        check,
+        if approved { Mark::Done } else { Mark::Pending },
+        Mark::Pending,
+    ];
+    let changed = !approved
+        && d.form.fields.iter().all(|f| f.value.is_empty())
+        && app
+            .rows
+            .iter()
+            .any(|r| r.name == d.name && matches!(r.status, Status::Changed));
+    let (next, hint) = if approved {
+        (
+            2,
+            tr!(
+                "r to run the load: you watch it live and can stop it with q",
+                "r para correr la carga: la mirás en vivo y la podés frenar con q"
+            ),
+        )
+    } else if check == Mark::Pending {
+        (
+            0,
+            tr!(
+                "c to try each step once, without load (recommended before approving)",
+                "c para probar cada paso una vez, sin carga (conviene antes de aprobar)"
+            ),
+        )
+    } else if check == Mark::Failed {
+        (
+            0,
+            tr!(
+                "the check failed: look at the scenario or the server and c to try again (or a to approve anyway)",
+                "el check falló: revisá el escenario o el servidor y c para probar de nuevo (o a para aprobar igual)"
+            ),
+        )
+    } else if changed {
+        (
+            1,
+            tr!(
+                "the scenario changed since it was approved: a to read the new summary and approve it again",
+                "el escenario cambió desde que se aprobó: a para leer el resumen nuevo y aprobarlo de nuevo"
+            ),
+        )
+    } else {
+        (
+            1,
+            tr!(
+                "a to approve: you read what load it will make and type the host to sign it",
+                "a para aprobar: leés qué carga va a hacer y escribís el host para firmarla"
+            ),
+        )
+    };
+    (marks, Some(next), hint)
+}
+
+fn steps_bar(frame: &mut Frame, area: Rect, app: &App, d: &Detail) {
+    let (marks, next, hint) = next_step(app, d);
+    let names = [
+        pick("① check (c)", "① check (c)"),
+        pick("② approve (a)", "② aprobar (a)"),
+        pick("③ run (r)", "③ correr (r)"),
+    ];
+    let mut spans = vec![Span::raw(" ")];
+    for (i, (name, mark)) in names.iter().zip(marks).enumerate() {
+        let (symbol, color) = match mark {
+            Mark::Done => (" ✓", GOOD),
+            Mark::Failed => (" ✗", BAD),
+            Mark::Skip => (
+                pick(" (n/a: not loopback)", " (no aplica: no es loopback)"),
+                MUTED,
+            ),
+            Mark::Pending => ("", Color::Reset),
+        };
+        let mut style = Style::new().fg(if mark == Mark::Skip { MUTED } else { color });
+        if next == Some(i) {
+            style = style.bold().fg(Color::Cyan);
+        }
+        spans.push(Span::styled(format!("{name}{symbol}"), style));
+        if i < 2 {
+            spans.push(Span::styled("  →  ", Style::new().fg(MUTED)));
+        }
+    }
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::from(spans),
+            Line::from(vec![
+                Span::styled(
+                    pick(" Next: ", " Siguiente: "),
+                    Style::new().bold().fg(Color::Cyan),
+                ),
+                Span::raw(hint),
+            ]),
+        ])
+        .wrap(Wrap { trim: false }),
+        area,
+    );
+}
+
+/// Qué significa cada ajuste, con un ejemplo.
+fn field_help(flag: &str) -> &'static str {
+    match flag {
+        "--executor" => pick(
+            "Load model. constant_rate: a fixed number of iterations per second. ramping_rate: the rate follows the stages. constant_vus: N users, each repeating the flow. Ex: constant_vus",
+            "Modelo de carga. constant_rate: una cantidad fija de iteraciones por segundo. ramping_rate: la tasa sigue las etapas. constant_vus: N usuarios, cada uno repitiendo el flow. Ej: constant_vus",
+        ),
+        "--rate" => pick(
+            "Iterations per second, with constant_rate. Ex: 50/s or 600/m",
+            "Iteraciones por segundo, con constant_rate. Ej: 50/s o 600/m",
+        ),
+        "--duration" => pick(
+            "How long the load lasts. Ex: 30s or 2m",
+            "Cuánto dura la carga. Ej: 30s o 2m",
+        ),
+        "--vus" => pick(
+            "Users repeating the flow at the same time, with constant_vus. Ex: 20",
+            "Usuarios repitiendo el flow a la vez, con constant_vus. Ej: 20",
+        ),
+        "--max-vus" => pick(
+            "With a rate: how many iterations can be in flight at once. If all are busy, iterations are dropped. Ex: 100",
+            "Con una tasa: cuántas iteraciones pueden estar en curso a la vez. Si están todas ocupadas, se descartan iteraciones. Ej: 100",
+        ),
+        "--start-rate" => pick(
+            "Rate at the start of the ramp, with ramping_rate. Ex: 1/s",
+            "Tasa al empezar la rampa, con ramping_rate. Ej: 1/s",
+        ),
+        "--stages" => pick(
+            "Ramp stages, with ramping_rate: rate:duration separated by commas. Ex: 100/s:1m,0/s:30s",
+            "Etapas de la rampa, con ramping_rate: tasa:duración separadas por comas. Ej: 100/s:1m,0/s:30s",
+        ),
+        "--graceful-stop" => pick(
+            "At the end, how long to wait for the iterations still in flight. Ex: 10s",
+            "Al terminar, cuánto esperar a las iteraciones que siguen en curso. Ej: 10s",
+        ),
+        "--think" => pick(
+            "Pause after each step, fixed or a range; it replaces the scenario's. Ex: 1s or 1s-3s",
+            "Pausa después de cada paso, fija o un rango; reemplaza la del escenario. Ej: 1s o 1s-3s",
+        ),
+        "--refresh-every" => pick(
+            "How often each VU renews its session (it repeats vu_setup if there is no vu_refresh). Ex: 5m",
+            "Cada cuánto renueva la sesión cada VU (repite vu_setup si no hay vu_refresh). Ej: 5m",
+        ),
+        "--threshold" => pick(
+            "Pass conditions separated by spaces; they replace the scenario's. Ex: http.latency.p95<300ms http.error_rate<1%",
+            "Condiciones para pasar, separadas por espacios; reemplazan las del escenario. Ej: http.latency.p95<300ms http.error_rate<1%",
+        ),
+        _ => "",
+    }
+}
+
+fn detail(frame: &mut Frame, area: Rect, app: &App, d: &Detail) {
+    let [bar, area] = Layout::vertical([Constraint::Length(3), Constraint::Min(0)]).areas(area);
+    steps_bar(frame, bar, app, d);
     let [left, right] =
         Layout::horizontal([Constraint::Percentage(58), Constraint::Percentage(42)]).areas(area);
     let summary: Vec<Line> = d
@@ -226,11 +582,20 @@ fn detail(frame: &mut Frame, area: Rect, d: &Detail) {
         left,
     );
 
-    let [form_area, state_area] = Layout::vertical([
+    let [form_area, about_area, state_area] = Layout::vertical([
         Constraint::Length(d.form.fields.len() as u16 + 2),
+        Constraint::Length(6),
         Constraint::Min(0),
     ])
     .areas(right);
+    let field = &d.form.fields[d.form.selected];
+    frame.render_widget(
+        Paragraph::new(field_help(field.flag))
+            .wrap(Wrap { trim: false })
+            .fg(MUTED)
+            .block(Block::bordered().title(format!(" {} ", field.label))),
+        about_area,
+    );
     let fields: Vec<Line> = d
         .form
         .fields
@@ -960,8 +1325,8 @@ fn history(frame: &mut Frame, area: Rect, d: &Detail, h: &HistoryView) {
         let findings = doc["findings"].as_array().map_or(0, Vec::len);
         let is_baseline = h.baseline.as_deref() == Some(row.id.as_str());
         let mark = match (h.base == Some(i), is_baseline) {
-            (true, true) => pick("◆ base · baseline", "◆ base · base fija"),
-            (true, false) => pick("◆ base", "◆ base"),
+            (true, true) => pick("◆ chosen · baseline", "◆ elegida · base fija"),
+            (true, false) => pick("◆ chosen", "◆ elegida"),
             (false, true) => pick("baseline", "base fija"),
             (false, false) => "",
         };

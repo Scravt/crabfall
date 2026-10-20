@@ -224,7 +224,7 @@ struct HistoryView {
     /// La corrida que es la base fija del escenario (`crabfall baseline`), si hay.
     baseline: Option<String>,
     selected: usize,
-    /// La corrida marcada como base (Espacio), si hay.
+    /// La primera corrida elegida para comparar (Enter), si hay.
     base: Option<usize>,
 }
 
@@ -252,6 +252,10 @@ struct App {
     screen: Screen,
     /// Un aviso al pie: (es un error, texto).
     message: Option<(bool, String)>,
+    /// Cómo salió el último check de cada escenario en esta sesión (pasó o no).
+    checks: BTreeMap<String, bool>,
+    /// La ayuda de la pantalla (`?`) está abierta.
+    help: bool,
     quit: bool,
 }
 
@@ -285,6 +289,8 @@ impl App {
             selected: 0,
             screen: Screen::Home,
             message: None,
+            checks: BTreeMap::new(),
+            help: false,
             quit: false,
         };
         app.reload();
@@ -359,8 +365,12 @@ impl App {
     /// Lo que terminó en segundo plano: un check o una corrida.
     fn poll_background(&mut self) {
         match &mut self.screen {
-            Screen::Check(_, check) if check.result.is_none() => {
+            Screen::Check(d, check) if check.result.is_none() => {
                 if let Ok(r) = check.rx.try_recv() {
+                    let passed = r
+                        .as_ref()
+                        .is_ok_and(|r| !r.steps.is_empty() && r.steps.iter().all(|s| s.ok));
+                    self.checks.insert(d.name.clone(), passed);
                     check.result = Some(r);
                 }
             }
@@ -414,6 +424,15 @@ impl App {
             }
             return;
         }
+        // Con la ayuda abierta, cualquier tecla la cierra.
+        if self.help {
+            self.help = false;
+            return;
+        }
+        if key.code == KeyCode::Char('?') && !self.typing() {
+            self.help = true;
+            return;
+        }
         self.message = None;
         let screen = std::mem::replace(&mut self.screen, Screen::Home);
         self.screen = match screen {
@@ -432,6 +451,15 @@ impl App {
             Screen::Running(d, r) => self.on_running(d, r, key),
             Screen::Results(d, r) => self.on_results(d, r, key),
         };
+    }
+
+    /// La pantalla espera texto: `?` es parte de lo que se escribe, no la ayuda.
+    fn typing(&self) -> bool {
+        match &self.screen {
+            Screen::Detail(d) => d.form.editing,
+            Screen::Approve(..) => true,
+            _ => false,
+        }
     }
 
     fn on_home(&mut self, key: KeyEvent) -> Screen {
@@ -743,8 +771,8 @@ impl App {
             .collect();
         if rows.is_empty() {
             self.error(tr!(
-                "this scenario has no runs in this environment yet",
-                "este escenario todavía no tiene corridas en este entorno"
+                "this scenario has no runs in this environment yet: approve it (a) and run it (r)",
+                "este escenario todavía no tiene corridas en este entorno: aprobalo (a) y corrélo (r)"
             ));
             return Screen::Detail(d);
         }
@@ -762,17 +790,27 @@ impl App {
 
     fn on_history(&mut self, d: Box<Detail>, mut h: HistoryView, key: KeyEvent) -> Screen {
         match key.code {
+            // Esc primero suelta la corrida elegida; sin ninguna, vuelve.
+            KeyCode::Esc if h.base.is_some() => h.base = None,
             KeyCode::Esc | KeyCode::Char('q') => return Screen::Detail(d),
             KeyCode::Up | KeyCode::Char('k') => h.selected = h.selected.saturating_sub(1),
             KeyCode::Down | KeyCode::Char('j') => {
                 h.selected = (h.selected + 1).min(h.rows.len() - 1)
             }
-            KeyCode::Char(' ') => {
-                h.base = if h.base == Some(h.selected) {
-                    None
-                } else {
-                    Some(h.selected)
+            KeyCode::Enter | KeyCode::Char(' ') => match h.base {
+                None => h.base = Some(h.selected),
+                Some(b) if b == h.selected => h.base = None,
+                Some(b) => return self.compare_rows(d, h, b),
+            },
+            KeyCode::Char('c') => {
+                if h.selected + 1 < h.rows.len() {
+                    let base = h.selected + 1;
+                    return self.compare_rows(d, h, base);
                 }
+                self.error(tr!(
+                    "it is the oldest run: there is no earlier one to compare with",
+                    "es la corrida más vieja: no hay una anterior para comparar"
+                ));
             }
             KeyCode::Char('o') => {
                 let path = self
@@ -796,43 +834,30 @@ impl App {
                     Err(e) => self.error(e),
                 }
             }
-            KeyCode::Enter => {
-                // Con una base marcada, contra ella; si no, contra la corrida anterior.
-                let base = match h.base {
-                    Some(b) if b != h.selected => b,
-                    Some(_) => {
-                        self.error(tr!(
-                            "pick a different run than the base",
-                            "elegí una corrida distinta de la base"
-                        ));
-                        return Screen::History(d, h);
-                    }
-                    None if h.selected + 1 < h.rows.len() => h.selected + 1,
-                    None => {
-                        self.error(tr!(
-                            "there is no earlier run to compare with: mark a base with Space",
-                            "no hay una corrida anterior para comparar: marcá una base con Espacio"
-                        ));
-                        return Screen::History(d, h);
-                    }
-                };
-                let parse = |row: &HistoryRow| {
-                    serde_json::from_value::<crabfall_core::compare::Run>(row.doc.clone())
-                        .map_err(|e| e.to_string())
-                };
-                let result = parse(&h.rows[base]).and_then(|b| {
-                    parse(&h.rows[h.selected]).and_then(|n| crabfall_core::compare::compare(&b, &n))
-                });
-                match result {
-                    Ok(comparison) => {
-                        return Screen::Compare(d, h, Box::new(CompareView { comparison }));
-                    }
-                    Err(e) => self.error(e),
-                }
-            }
             _ => {}
         }
         Screen::History(d, h)
+    }
+
+    /// Compara la corrida seleccionada contra `base` (la elegida antes, o la anterior).
+    fn compare_rows(&mut self, d: Box<Detail>, mut h: HistoryView, base: usize) -> Screen {
+        let parse = |row: &HistoryRow| {
+            serde_json::from_value::<crabfall_core::compare::Run>(row.doc.clone())
+                .map_err(|e| e.to_string())
+        };
+        let result = parse(&h.rows[base]).and_then(|b| {
+            parse(&h.rows[h.selected]).and_then(|n| crabfall_core::compare::compare(&b, &n))
+        });
+        match result {
+            Ok(comparison) => {
+                h.base = None;
+                Screen::Compare(d, h, Box::new(CompareView { comparison }))
+            }
+            Err(e) => {
+                self.error(e);
+                Screen::History(d, h)
+            }
+        }
     }
 
     fn open_report(&mut self, path: &std::path::Path) {
@@ -1040,14 +1065,84 @@ mod tests {
 
     #[test]
     fn home_lists_scenarios_with_their_state() {
-        let app = App::with_project(project("home")).unwrap();
+        let mut app = App::with_project(project("home")).unwrap();
         let s = screen(&app);
         assert!(s.contains("entorno: local"), "{s}");
         assert!(s.contains("· sin aprobar"), "{s}");
-        assert!(s.contains("un escenario de prueba"), "{s}");
-        // `broken` no tiene flows ni load: no se puede armar.
+        // `broken` no tiene flows ni load: no se puede armar. Abajo va el error entero.
         let broken = s.lines().find(|l| l.contains("broken")).unwrap();
         assert!(broken.contains('✗'), "{broken}");
+        assert!(s.contains("missing field `flows`"), "{s}");
+        // Abajo, la descripción del escenario elegido.
+        press(&mut app, KeyCode::Down);
+        assert!(screen(&app).contains("un escenario de prueba"));
+    }
+
+    #[test]
+    fn home_shows_the_whole_description_of_the_selected_scenario() {
+        let p = project("about");
+        let long = "una descripción larga que no entra en una columna, ".repeat(6) + "FIN";
+        std::fs::write(
+            p.dir.join("scenarios/s.yaml"),
+            format!("version: 1\nname: s\ndescription: {long}\nflows:\n  main:\n    steps:\n      - name: a\n        request: {{ method: GET, url: /x }}\nload: {{ executor: constant_rate, rate: 1/s, duration: 5s, max_vus: 2 }}\n"),
+        )
+        .unwrap();
+        let mut app = App::with_project(p).unwrap();
+        press(&mut app, KeyCode::Char('j'));
+        let s = screen(&app);
+        assert!(s.contains("FIN"), "{s}");
+        assert!(s.contains("Enter para abrirlo"), "{s}");
+        assert!(s.contains("? ayuda"), "{s}");
+    }
+
+    #[test]
+    fn question_mark_opens_the_help_and_any_key_closes_it() {
+        let mut app = App::with_project(project("help")).unwrap();
+        press(&mut app, KeyCode::Char('?'));
+        let s = screen(&app);
+        assert!(s.contains("Ayuda · escenarios"), "{s}");
+        // La tecla que cierra la ayuda no hace nada más: no sale.
+        press(&mut app, KeyCode::Char('q'));
+        assert!(!app.quit);
+        assert!(!screen(&app).contains("Ayuda · escenarios"));
+
+        // Editando un ajuste, ? se escribe.
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Char('?'));
+        assert!(!app.help);
+        let Screen::Detail(d) = &app.screen else {
+            panic!("no se abrió el escenario")
+        };
+        assert_eq!(d.form.fields[0].value, "?");
+    }
+
+    #[test]
+    fn the_scenario_says_what_comes_next() {
+        let mut app = App::with_project(project("next")).unwrap();
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Enter);
+        let s = screen(&app);
+        assert!(s.contains("① check (c)"), "{s}");
+        assert!(s.contains("Siguiente: c para probar cada paso"), "{s}");
+        // Lo que significa el ajuste elegido.
+        assert!(s.contains("Modelo de carga"), "{s}");
+
+        // Un check que falló lo dice; después de él, sigue aprobar.
+        app.checks.insert("s".into(), false);
+        assert!(screen(&app).contains("el check falló"));
+        app.checks.insert("s".into(), true);
+        let s = screen(&app);
+        assert!(s.contains("Siguiente: a para aprobar"), "{s}");
+
+        // Un ajuste que no se entiende va primero.
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Enter);
+        type_text(&mut app, "abc");
+        press(&mut app, KeyCode::Enter);
+        let s = screen(&app);
+        assert!(s.contains("el ajuste `rate` no se entiende"), "{s}");
     }
 
     #[test]
@@ -1161,6 +1256,9 @@ mod look {
         press(&mut app, KeyCode::Down);
         press(&mut app, KeyCode::Enter);
         println!("{}\n", screen(&app));
+        press(&mut app, KeyCode::Char('?'));
+        println!("{}\n", screen(&app));
+        press(&mut app, KeyCode::Esc);
         press(&mut app, KeyCode::Char('a'));
         println!("{}", screen(&app));
     }
@@ -1293,20 +1391,31 @@ mod history_tests {
         let older = s.find("20261020-100000").expect("corrida vieja");
         assert!(newer < older, "{s}");
 
-        // Enter: la seleccionada (la más reciente) contra la anterior.
-        press(&mut app, KeyCode::Enter);
+        // c: la seleccionada (la más reciente) contra la anterior.
+        press(&mut app, KeyCode::Char('c'));
         let s = screen(&app);
         assert!(s.contains("20261020-100000 → 20261020-110000"), "{s}");
         assert!(s.contains("empeoró"), "{s}");
 
-        // Con base marcada: la vieja contra la nueva, al revés.
+        // Enter elige la primera; Enter en otra las compara: la elegida es el "antes".
         press(&mut app, KeyCode::Esc);
-        press(&mut app, KeyCode::Char(' '));
+        press(&mut app, KeyCode::Enter);
+        let s = screen(&app);
+        assert!(s.contains("◆ elegida"), "{s}");
+        assert!(s.contains("Enter en otra corrida: compararlas"), "{s}");
         press(&mut app, KeyCode::Down);
         press(&mut app, KeyCode::Enter);
         let s = screen(&app);
         assert!(s.contains("20261020-110000 → 20261020-100000"), "{s}");
         assert!(s.contains("mejoró"), "{s}");
+
+        // Al volver, no queda ninguna elegida; Enter y Esc la sueltan sin salir.
+        press(&mut app, KeyCode::Esc);
+        assert!(!screen(&app).contains("◆ elegida"));
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Esc);
+        assert!(matches!(app.screen, Screen::History(..)));
+        assert!(!screen(&app).contains("◆ elegida"));
     }
 
     #[test]
