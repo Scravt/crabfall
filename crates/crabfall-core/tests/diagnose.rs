@@ -423,3 +423,58 @@ async fn expired_session_says_so_and_suggests_vu_refresh() {
     );
     assert!(r.vu_refresh.unwrap().refreshes >= 4);
 }
+
+/// Respuestas de 100 KB. Con `link`, salen de a una por un "enlace" de 2 MB/s: cada una
+/// espera su turno, como en una conexión llena.
+async fn big_bodies(link: bool) -> String {
+    let next = Arc::new(std::sync::Mutex::new(Instant::now()));
+    let app = Router::new().route(
+        "/big",
+        get(move || {
+            let next = next.clone();
+            async move {
+                if link {
+                    let slot = {
+                        let mut next = next.lock().unwrap();
+                        *next = (*next).max(Instant::now()) + Duration::from_micros(48_800);
+                        *next
+                    };
+                    tokio::time::sleep_until(slot.into()).await;
+                }
+                vec![b'x'; 100 * 1024]
+            }
+        }),
+    );
+    serve(app).await
+}
+
+const BANDWIDTH_RAMP: &str = "  executor: ramping_rate\n  start_rate: 5/s\n  stages:\n    - { target: 60/s, duration: 8s }\n  max_vus: 300\n";
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_full_link_shows_a_bandwidth_limit() {
+    if skip_timing() {
+        return;
+    }
+    let base = big_bodies(true).await;
+    let r = run(&base, "/big", BANDWIDTH_RAMP).await;
+    let f = find(&r, "bandwidth_limit");
+    let moved = f.evidence["moved_bytes_per_s"].as_f64().unwrap();
+    assert!(
+        (1.5e6..2.8e6).contains(&moved),
+        "movió {moved} B/s; {}",
+        f.title
+    );
+    let demanded = f.evidence["demanded_bytes_per_s"].as_f64().unwrap();
+    assert!(demanded > 1.25 * moved, "pedía {demanded} B/s");
+    assert!(f.causes[0].contains("enlace"), "{:?}", f.causes);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn traffic_that_follows_the_load_is_not_a_bandwidth_limit() {
+    if skip_timing() {
+        return;
+    }
+    let base = big_bodies(false).await;
+    let r = run(&base, "/big", BANDWIDTH_RAMP).await;
+    assert!(!ids(&r).contains(&"bandwidth_limit"), "{:?}", r.findings);
+}

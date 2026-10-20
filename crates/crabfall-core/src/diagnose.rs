@@ -61,6 +61,15 @@ const TAIL_MIN_DELTA_MS: f64 = 50.0;
 const TAIL_MIN_REQUESTS: u64 = 200;
 const NEW_CONN_RATIO: f64 = 0.10;
 const NEW_CONN_MIN_REQUESTS: u64 = 100;
+/// Por debajo de 1 MB/s no se busca un techo de ancho de banda.
+const BANDWIDTH_MIN_BYTES_PER_S: f64 = 1024.0 * 1024.0;
+/// Un segundo está "en el techo" si mueve al menos esta fracción del pico.
+const BANDWIDTH_PLATEAU: f64 = 0.85;
+const BANDWIDTH_MIN_SECONDS: usize = 5;
+/// Desde que se llega al techo, al menos esta fracción de los segundos se queda ahí.
+const BANDWIDTH_MIN_SHARE: f64 = 0.7;
+/// La carga pide al menos esto por encima de lo que se mueve.
+const BANDWIDTH_DEMAND_FACTOR: f64 = 1.25;
 
 pub fn diagnose(load: &LoadPlan, r: &RunResult) -> Vec<Finding> {
     if r.aborted.is_some() {
@@ -86,6 +95,7 @@ pub fn diagnose(load: &LoadPlan, r: &RunResult) -> Vec<Finding> {
         }
         out.extend(degradation_over_time(r, points));
     }
+    out.extend(bandwidth_limit(points));
     for (step, series) in r.steps.iter().zip(&r.series.steps) {
         out.extend(error_threshold(
             step,
@@ -117,6 +127,88 @@ fn invalid_result(r: &RunResult) -> Option<Finding> {
         causes: vec![
             crate::tr!("The machine generating the load is saturated (CPU) or shared with the server.", "La máquina que genera la carga está saturada (CPU) o compartida con el servidor."),
             crate::tr!("Repeat with less load, or generate from another machine.", "Repetir con menos carga, o generar desde otra máquina."),
+        ],
+    })
+}
+
+/// El tráfico (bytes enviados + recibidos por segundo) llega a un techo y se queda ahí,
+/// mientras la carga pide bastante más y la latencia sube: el límite puede ser el ancho de
+/// banda (ADR-013) y no el servidor. Lo que pedía la carga se estima con los bytes por
+/// iteración de antes del techo.
+fn bandwidth_limit(points: &[Point]) -> Option<Finding> {
+    let bytes = |p: &Point| (p.bytes_sent + p.bytes_received) as f64;
+    let peak = points.iter().map(bytes).fold(0.0, f64::max);
+    if peak < BANDWIDTH_MIN_BYTES_PER_S {
+        return None;
+    }
+    let ceiling = BANDWIDTH_PLATEAU * peak;
+    let t0 = points.iter().position(|p| bytes(p) >= ceiling)?;
+    let (before, window) = points.split_at(t0);
+    let at_ceiling = window.iter().filter(|p| bytes(p) >= ceiling).count();
+    if at_ceiling < BANDWIDTH_MIN_SECONDS
+        || (at_ceiling as f64) < BANDWIDTH_MIN_SHARE * window.len() as f64
+    {
+        return None;
+    }
+    let (before_bytes, before_started) = before
+        .iter()
+        .fold((0.0, 0), |(b, s), p| (b + bytes(p), s + p.started));
+    if before_started == 0 {
+        return None;
+    }
+    let per_iteration = before_bytes / before_started as f64;
+    let n = window.len() as f64;
+    let moved = window.iter().map(bytes).sum::<f64>() / n;
+    let demanded = window.iter().map(offered).sum::<u64>() as f64 / n * per_iteration;
+    if demanded < BANDWIDTH_DEMAND_FACTOR * moved {
+        return None;
+    }
+    let base = baseline(before, |p| p.p95)?;
+    let after = median(window.iter().filter_map(|p| p.p95).collect())?;
+    if after < (base * DEGRADED_FACTOR).max(base + DEGRADED_MIN_DELTA_MS) {
+        return None;
+    }
+    let size = |b: f64| format!("{}/s", crate::upload::size(b as usize));
+    let mbit = |b: f64| b * 8.0 / 1_000_000.0;
+    let from = window[0].t;
+    Some(Finding {
+        id: "bandwidth_limit".into(),
+        severity: Severity::Medium,
+        title: crate::tr!(
+            "Traffic levels off at ~{} ({:.0} Mbit/s) from second {from} while the load asks for ~{}: the limit may be the bandwidth, not the server",
+            "El tráfico se estanca en ~{} ({:.0} Mbit/s) desde el segundo {from} mientras la carga pide ~{}: el límite puede ser el ancho de banda, no el servidor",
+            size(moved),
+            mbit(moved),
+            size(demanded)
+        ),
+        step: None,
+        source: None,
+        window: Some(Window {
+            from_s: from,
+            to_s: points.last().map_or(from, |p| p.t),
+        }),
+        evidence: json!({
+            "peak_bytes_per_s": peak.round(),
+            "peak_mbit_per_s": (mbit(peak) * 10.0).round() / 10.0,
+            "moved_bytes_per_s": moved.round(),
+            "demanded_bytes_per_s": demanded.round(),
+            "bytes_per_iteration": per_iteration.round(),
+            "baseline_p95_ms": base,
+            "p95_ms": after,
+        }),
+        causes: vec![
+            crate::tr!(
+                "The link between the generator and the server is full: Wi-Fi, VPN, the network card or the provider's plan. Measure it (iperf) or run the generator next to the server.",
+                "El enlace entre el generador y el servidor está lleno: Wi-Fi, VPN, la placa de red o el plan del proveedor. Medilo (iperf) o corré el generador al lado del servidor."
+            ),
+            crate::tr!(
+                "A proxy, CDN or the server itself limits bandwidth per connection or per client.",
+                "Un proxy, una CDN o el propio servidor limita el ancho de banda por conexión o por cliente."
+            ),
+            crate::tr!(
+                "The responses (or uploads) are large: compress them (gzip, br), paginate, or send less.",
+                "Las respuestas (o los uploads) son grandes: comprimilas (gzip, br), paginá o mandá menos."
+            ),
         ],
     })
 }
