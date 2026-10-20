@@ -10,7 +10,12 @@ use serde_json::json;
 
 use crate::{JSON_FORMAT, display, exit, runs};
 
-pub fn cmd_compare(base: Option<&str>, new: Option<&str>, as_json: bool) -> u8 {
+pub fn cmd_compare(
+    base: Option<&str>,
+    new: Option<&str>,
+    against_baseline: bool,
+    as_json: bool,
+) -> u8 {
     let Some(project) = std::env::current_dir()
         .ok()
         .and_then(|cwd| Project::discover(&cwd))
@@ -24,10 +29,36 @@ pub fn cmd_compare(base: Option<&str>, new: Option<&str>, as_json: bool) -> u8 {
         );
         return exit::INVALID;
     };
+    if against_baseline && new.is_some() {
+        eprintln!(
+            "{}",
+            crabfall_core::tr!(
+                "✗ with --baseline, pass only the run to compare (or none: the latest one)",
+                "✗ con --baseline, pasá solo la corrida a comparar (o ninguna: la más reciente)"
+            )
+        );
+        return exit::INVALID;
+    }
     let loaded = (|| {
+        // Con --baseline, el único argumento es la corrida nueva.
+        let new = if against_baseline { base } else { new };
         let new_file = runs::file(&project, new)?;
         let new_doc = runs::read(&new_file)?;
+        let (scenario, env) = (
+            new_doc["scenario"].as_str().unwrap_or_default(),
+            new_doc["environment"].as_str().unwrap_or_default(),
+        );
         let base_file = match base {
+            _ if against_baseline => {
+                let file = crate::baseline::path(&project, scenario, env);
+                if !file.is_file() {
+                    return Err(crabfall_core::tr!(
+                        "{scenario} has no baseline in `{env}`: set one with crabfall baseline <run>",
+                        "{scenario} no tiene base en `{env}`: fijala con crabfall baseline <corrida>"
+                    ));
+                }
+                file
+            }
             Some(id) => runs::file(&project, Some(id))?,
             None => runs::previous(
                 &project,

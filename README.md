@@ -3,7 +3,7 @@
 A load testing tool in Rust, built to be used together with Claude Code:
 Claude designs the scenario and analyzes the results; a person approves and runs the load.
 
-Status: **slice 21** (`pick: unique`), after v0.1.0. Already working: design with Claude, signed approval, scenarios with `setup`, `extract`, checks and thresholds, three executors, diagnosis, run comparison, datasets, pauses between steps, per-run tweaks by flag, an HTML report per run, login per virtual user (`vu_setup`), token renewal during the load (`vu_refresh`), file uploads (`multipart`), bytes sent and received per second, an HTTP client with cookies, redirects, compression and forms, and output in English or Spanish. See the [roadmap](docs/roadmap.md) (in Spanish).
+Status: **slice 22** (fixed baseline), after v0.1.0. Already working: design with Claude, signed approval, scenarios with `setup`, `extract`, checks and thresholds, three executors, diagnosis, run comparison, datasets, pauses between steps, per-run tweaks by flag, an HTML report per run, login per virtual user (`vu_setup`), token renewal during the load (`vu_refresh`), file uploads (`multipart`), bytes sent and received per second, an HTTP client with cookies, redirects, compression and forms, and output in English or Spanish. See the [roadmap](docs/roadmap.md) (in Spanish).
 
 ## Usage
 
@@ -191,7 +191,7 @@ crabfall claude install              # in the repo under test: skill, hook and p
 
 Then, in a Claude Code session: *"build me a load test of the checkout flow"*. Claude reads the code, writes the scenario, checks it with `crabfall validate` and `crabfall check` (only against loopback) and hands you the `crabfall approve` and `crabfall run` commands to run yourself. It cannot approve or run on its own ([ADR-001](docs/adr/ADR-001-claude-first.md), ADR-004).
 
-`crabfall findings [--json]` shows the findings of the last run (or of one by id). `crabfall compare [base] [new] [--json]` compares two runs (by default, the last one with the previous one of the same scenario): what improved, what got worse and whether the change is consistent or may be noise ([ADR-006](docs/adr/ADR-006-comparacion.md)). `crabfall schema` prints the JSON Schema of the scenario.
+`crabfall findings [--json]` shows the findings of the last run (or of one by id). `crabfall compare [base] [new] [--json]` compares two runs (by default, the last one with the previous one of the same scenario): what improved, what got worse and whether the change is consistent or may be noise ([ADR-006](docs/adr/ADR-006-comparacion.md)). To compare against an accepted reference instead of the previous run, set a baseline with `crabfall baseline [run]` (it goes in `.crabfall/baselines/`; commit it to share it) and use `crabfall compare --baseline`. In the TUI history, `b` sets it. `crabfall schema` prints the JSON Schema of the scenario.
 
 Each `crabfall run` also leaves `report.html` next to `results.json`: a file that opens offline, with per-second charts (iterations, latency, p95 per step, traffic), the findings with their window shaded, the comparison with the previous run and the tables. `crabfall report [run] --open` regenerates it and opens it in the browser ([ADR-009](docs/adr/ADR-009-reporte-html.md)).
 

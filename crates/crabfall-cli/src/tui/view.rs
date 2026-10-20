@@ -69,8 +69,8 @@ pub fn draw(frame: &mut Frame, app: &App) {
         ),
         Screen::Check(..) => pick("Esc back", "Esc volver"),
         Screen::History(..) => pick(
-            "↑↓ choose · Enter compare with the previous one (or with the base) · Space mark as base · o report · Esc back",
-            "↑↓ elegir · Enter comparar con la anterior (o con la base) · Espacio marcar como base · o reporte · Esc volver",
+            "↑↓ choose · Enter compare with the previous one (or with the base) · Space mark as base · b set as baseline · o report · Esc back",
+            "↑↓ elegir · Enter comparar con la anterior (o con la base) · Espacio marcar como base · b fijar como base · o reporte · Esc volver",
         ),
         Screen::Compare(..) => pick("Esc back to the history", "Esc volver al historial"),
         Screen::Approve(..) => pick(
@@ -958,10 +958,12 @@ fn history(frame: &mut Frame, area: Rect, d: &Detail, h: &HistoryView) {
             .reduce(f64::max)
             .map_or("—".into(), |v| format!("{v:.1}"));
         let findings = doc["findings"].as_array().map_or(0, Vec::len);
-        let mark = if h.base == Some(i) {
-            pick("◆ base", "◆ base")
-        } else {
-            ""
+        let is_baseline = h.baseline.as_deref() == Some(row.id.as_str());
+        let mark = match (h.base == Some(i), is_baseline) {
+            (true, true) => pick("◆ base · baseline", "◆ base · base fija"),
+            (true, false) => pick("◆ base", "◆ base"),
+            (false, true) => pick("baseline", "base fija"),
+            (false, false) => "",
         };
         let mut style = Style::new();
         if i == h.selected {

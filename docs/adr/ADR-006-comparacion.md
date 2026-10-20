@@ -51,3 +51,10 @@ Se emparejan por `id` y paso: `new`, `resolved` o `persists`. Si persiste un `br
 - Los umbrales (10%, 2 ms, 1 pp, p < 0,05) son constantes al principio del módulo, como en el diagnóstico.
 - Comparar contra una "corrida base" fija (guardada aparte, para CI) queda para después: hoy la base es cualquier corrida en `.crabfall/runs/`.
 - Cada paso compara también los bytes por request (ADR-013), enviados y recibidos. Un cambio de al menos ×1,5 (o a la mitad) y 1 KB sale como aviso, no como regresión ni mejora: una respuesta que creció puede explicar un cambio de latencia sin que el servidor haya empeorado. Las corridas sin bytes no se comparan.
+
+## Corrida base fija (20 oct 2026)
+
+- **Fijarla:** `crabfall baseline [corrida]` (por defecto, la más reciente) copia su `results.json` a `.crabfall/baselines/<escenario>.<entorno>.json`. Esa carpeta no está en `.gitignore`: se versiona, así el equipo compara contra la misma referencia. Una corrida abortada no puede ser la base. En la TUI, `b` en el historial hace lo mismo, y el historial marca cuál es.
+- **Usarla:** `crabfall compare --baseline [corrida]` compara la corrida (por defecto, la más reciente) contra la base de su escenario y entorno, en lugar de contra la anterior. Sale con 1 si hay regresiones, como siempre. Sin base, sale con 2 y dice cómo fijarla.
+- **Por qué no la anterior:** comparar siempre contra la anterior deja pasar regresiones de a poco (cada corrida un poco peor que la otra, nunca lo suficiente). La base fija es la referencia aceptada hasta que alguien decide moverla.
+- **Lo que falta para CI:** correr en CI necesita una forma de aprobar sin una persona en una terminal (ADR-004), que no existe. Por ahora la base sirve en la máquina de quien corre.

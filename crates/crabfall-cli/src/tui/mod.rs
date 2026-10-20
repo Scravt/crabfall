@@ -221,6 +221,8 @@ struct HistoryRow {
 struct HistoryView {
     /// De la más reciente a la más vieja.
     rows: Vec<HistoryRow>,
+    /// La corrida que es la base fija del escenario (`crabfall baseline`), si hay.
+    baseline: Option<String>,
     selected: usize,
     /// La corrida marcada como base (Espacio), si hay.
     base: Option<usize>,
@@ -746,10 +748,12 @@ impl App {
             ));
             return Screen::Detail(d);
         }
+        let baseline = crate::baseline::run_id(&self.project, &d.name, &env);
         Screen::History(
             d,
             HistoryView {
                 rows,
+                baseline,
                 selected: 0,
                 base: None,
             },
@@ -777,6 +781,20 @@ impl App {
                     .join(&h.rows[h.selected].id)
                     .join("report.html");
                 self.open_report(&path);
+            }
+            KeyCode::Char('b') => {
+                let id = h.rows[h.selected].id.clone();
+                let results = self.project.runs_dir().join(&id).join("results.json");
+                match crate::baseline::set(&self.project, &results) {
+                    Ok(_) => {
+                        h.baseline = Some(id.clone());
+                        self.info(tr!(
+                            "✓ {id} is now the baseline (crabfall compare --baseline)",
+                            "✓ {id} es ahora la base (crabfall compare --baseline)"
+                        ));
+                    }
+                    Err(e) => self.error(e),
+                }
             }
             KeyCode::Enter => {
                 // Con una base marcada, contra ella; si no, contra la corrida anterior.
@@ -1289,6 +1307,24 @@ mod history_tests {
         let s = screen(&app);
         assert!(s.contains("20261020-110000 → 20261020-100000"), "{s}");
         assert!(s.contains("mejoró"), "{s}");
+    }
+
+    #[test]
+    fn b_sets_the_baseline_from_the_history() {
+        let p = project("baseline");
+        save_run(&p, "20261020-100000", 10.0);
+        save_run(&p, "20261020-110000", 40.0);
+        let baselines = p.dir.join("baselines/s.local.json");
+        let mut app = App::with_project(p).unwrap();
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Char('h'));
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Char('b'));
+        assert!(baselines.is_file());
+        let s = screen(&app);
+        let row = s.lines().find(|l| l.contains("20261020-100000")).unwrap();
+        assert!(row.contains("base fija"), "{row}");
     }
 
     #[test]
