@@ -760,6 +760,7 @@ mod tests {
         RunResult {
             passed: true,
             duration_s: 1.0,
+            stopped_at_s: None,
             aborted: None,
             setup: vec![],
             vu_setup: None,

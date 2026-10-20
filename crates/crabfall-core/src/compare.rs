@@ -47,6 +47,9 @@ pub struct Run {
     pub findings: Vec<Finding>,
     #[serde(default)]
     pub series: Series,
+    /// El segundo en que la persona frenó la corrida (ADR-015).
+    #[serde(default)]
+    pub stopped_at_s: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -304,6 +307,13 @@ fn run_ref(r: &Run) -> RunRef {
 fn warnings(base: &Run, new: &Run, same_load: bool) -> Vec<String> {
     let mut out = Vec::new();
     for r in [base, new] {
+        if let Some(at) = r.stopped_at_s {
+            out.push(crate::tr!(
+                "run `{}` was stopped by the person at second {at}: it covers less than the other one",
+                "la corrida `{}` la frenó la persona en el segundo {at}: cubre menos que la otra",
+                r.run_id
+            ));
+        }
         if r.findings.iter().any(|f| f.id == "invalid_result") {
             out.push(crate::tr!("run `{}` has `invalid_result`: the generator was the bottleneck and its numbers are not reliable", "la corrida `{}` tiene `invalid_result`: el generador fue el cuello de botella y sus números no son confiables",
                 r.run_id

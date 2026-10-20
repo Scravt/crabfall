@@ -119,7 +119,9 @@ pub fn cmd_run(target: &crate::Target, as_json: bool) -> u8 {
         let ticker = std::io::stderr()
             .is_terminal()
             .then(|| tokio::spawn(show_progress(progress.clone(), duration + graceful_stop)));
+        let stopper = tokio::spawn(stop_on_ctrl_c(progress.clone()));
         let result = engine::run(plan.clone(), progress).await;
+        stopper.abort();
         if let Some(t) = ticker {
             t.abort();
             eprintln!();
@@ -179,6 +181,31 @@ pub fn cmd_run(target: &crate::Target, as_json: bool) -> u8 {
             );
             exit::RUNTIME
         }
+    }
+}
+
+/// Ctrl+C frena en orden: no se inician más iteraciones, se espera a las que están en curso
+/// y se guarda lo que corrió. Un segundo Ctrl+C corta ya (ADR-015).
+async fn stop_on_ctrl_c(progress: Arc<Progress>) {
+    if tokio::signal::ctrl_c().await.is_err() {
+        return;
+    }
+    progress.stop();
+    eprintln!(
+        "
+{}",
+        crabfall_core::tr!(
+            "  stopping: waiting for the iterations in progress (Ctrl+C again to cut them now)",
+            "  frenando: espero a las iteraciones en curso (Ctrl+C de nuevo para cortarlas ya)"
+        )
+    );
+    if tokio::signal::ctrl_c().await.is_ok() {
+        progress.stop();
+        eprintln!(
+            "
+{}",
+            crabfall_core::tr!("  cutting now", "  cortando ya")
+        );
     }
 }
 

@@ -87,6 +87,7 @@ fn summary(doc: &Value, file: &std::path::Path) -> Value {
         "environment": doc["environment"],
         "passed": doc["passed"],
         "aborted": doc["aborted"],
+        "stopped_at_s": doc["stopped_at_s"],
         "load": doc["load"],
         "totals": doc["totals"],
         "thresholds": doc["thresholds"],

@@ -1229,3 +1229,155 @@ async fn bytes_sent_before_a_timeout_still_count() {
         hang.requests
     );
 }
+
+/// `/ok` responde ya; `/hang` tarda 5 s (para ver qué pasa con las iteraciones en curso).
+async fn stop_server() -> String {
+    let app = Router::new().route("/ok", get(|| async { "ok" })).route(
+        "/hang",
+        get(|| async {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            "tarde"
+        }),
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    format!("http://127.0.0.1:{}", addr.port())
+}
+
+fn stop_plan(base: &str, path: &str, root: &str, load: &str) -> Arc<Plan> {
+    let yaml = format!(
+        "version: 1\nname: stop\n{root}flows:\n  main:\n    steps:\n      - name: a\n        request: {{ method: GET, url: {path} }}\nload: {load}\n"
+    );
+    let s = parse_scenario(&yaml).unwrap_or_else(|r| panic!("{r:?}"));
+    Arc::new(Plan::build(&s, &environment(base), &Default::default()).unwrap())
+}
+
+/// Corre el plan y pide frenar `times` veces después de `after`.
+async fn run_and_stop(
+    plan: Arc<Plan>,
+    after: Duration,
+    times: u32,
+) -> (crabfall_core::metrics::RunResult, Arc<Progress>) {
+    let progress = Arc::new(Progress::default());
+    let p = progress.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(after).await;
+        for _ in 0..times {
+            p.stop();
+        }
+    });
+    let r = engine::run(plan, progress.clone()).await;
+    (r, progress)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn stopping_the_open_model_keeps_what_ran() {
+    let base = stop_server().await;
+    let plan = stop_plan(
+        &base,
+        "/ok",
+        "",
+        "{ executor: constant_rate, rate: 20/s, duration: 30s, max_vus: 5 }",
+    );
+    let (r, progress) = run_and_stop(plan, Duration::from_millis(1200), 1).await;
+    let at = r.stopped_at_s.expect("se frenó");
+    assert!((1.0..2.0).contains(&at), "frenó en {at}");
+    assert!(r.duration_s < 4.0, "duró {}", r.duration_s);
+    assert!(!r.passed);
+    assert!(
+        r.warnings[0].contains("Frenada por la persona"),
+        "{:?}",
+        r.warnings
+    );
+    let t = &r.totals;
+    assert!((15..=35).contains(&t.started), "{} iteraciones", t.started);
+    assert_eq!(t.planned, t.started + t.dropped);
+    assert_eq!(progress.phase(), engine::Phase::Done);
+    assert_eq!(progress.busy.load(std::sync::atomic::Ordering::Relaxed), 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn stopping_the_closed_model_ends_every_vu() {
+    let base = stop_server().await;
+    let plan = stop_plan(
+        &base,
+        "/ok",
+        "defaults: { think: 100ms }\n",
+        "{ executor: constant_vus, vus: 3, duration: 30s }",
+    );
+    let (r, _) = run_and_stop(plan, Duration::from_secs(1), 1).await;
+    assert!(r.stopped_at_s.is_some());
+    assert!(r.duration_s < 4.0, "duró {}", r.duration_s);
+    assert!(r.totals.started > 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn stopping_twice_cuts_the_iterations_in_flight() {
+    let base = stop_server().await;
+    // Con graceful_stop de 30 s, frenar una vez esperaría los 5 s de /hang; dos veces, no.
+    let plan = stop_plan(
+        &base,
+        "/hang",
+        "",
+        "{ executor: constant_rate, rate: 5/s, duration: 30s, max_vus: 10, graceful_stop: 30s }",
+    );
+    let (r, _) = run_and_stop(plan, Duration::from_millis(600), 2).await;
+    assert!(r.duration_s < 2.5, "duró {}", r.duration_s);
+    assert!(r.totals.interrupted > 0, "{:?}", r.totals);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn stopping_during_vu_setup_aborts_before_the_load() {
+    let base = stop_server().await;
+    let plan = stop_plan(
+        &base,
+        "/ok",
+        "vu_setup:\n  - name: login\n    request: { method: GET, url: /hang }\n",
+        "{ executor: constant_vus, vus: 2, duration: 30s }",
+    );
+    let (r, progress) = run_and_stop(plan, Duration::from_millis(200), 1).await;
+    let why = r.aborted.as_deref().expect("abortada");
+    assert!(why.contains("antes de la carga"), "{why}");
+    assert!(r.duration_s < 1.0, "no esperó a los logins en curso");
+    assert_eq!(r.totals.started, 0);
+    assert!(progress.load_start().is_none());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_live_series_is_the_final_one() {
+    let base = stop_server().await;
+    let plan = stop_plan(
+        &base,
+        "/ok",
+        "",
+        "{ executor: constant_rate, rate: 20/s, duration: 3s, max_vus: 5 }",
+    );
+    let progress = Arc::new(Progress::default());
+    let watcher = {
+        let p = progress.clone();
+        // Mientras corre, la serie ya tiene segundos cerrados.
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(2600)).await;
+            p.live().len()
+        })
+    };
+    let r = engine::run(plan, progress.clone()).await;
+    assert!(watcher.await.unwrap() >= 1, "nada publicado en vivo");
+    let live = progress.live();
+    let series = &r.series;
+    assert!(
+        live.len() >= series.points.len(),
+        "{} vs {}",
+        live.len(),
+        series.points.len()
+    );
+    for (i, point) in series.points.iter().enumerate() {
+        assert_eq!(&live[i].point, point, "segundo {i}");
+        assert_eq!(
+            live[i].steps[0], series.steps[0].points[i],
+            "segundo {i} del paso"
+        );
+    }
+    assert!(progress.load_start().is_some());
+}
