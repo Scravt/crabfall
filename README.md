@@ -3,7 +3,7 @@
 A load testing tool in Rust, built to be used together with Claude Code:
 Claude designs the scenario and analyzes the results; a person approves and runs the load.
 
-Status: **slice 18 closed** (terminal UI), after v0.1.0. Already working: design with Claude, signed approval, scenarios with `setup`, `extract`, checks and thresholds, three executors, diagnosis, run comparison, datasets, pauses between steps, per-run tweaks by flag, an HTML report per run, login per virtual user (`vu_setup`), token renewal during the load (`vu_refresh`), file uploads (`multipart`), bytes sent and received per second, an HTTP client with cookies, redirects, compression and forms, and output in English or Spanish. See the [roadmap](docs/roadmap.md) (in Spanish).
+Status: **slice 19** (history and comparison in the TUI), after v0.1.0. Already working: design with Claude, signed approval, scenarios with `setup`, `extract`, checks and thresholds, three executors, diagnosis, run comparison, datasets, pauses between steps, per-run tweaks by flag, an HTML report per run, login per virtual user (`vu_setup`), token renewal during the load (`vu_refresh`), file uploads (`multipart`), bytes sent and received per second, an HTTP client with cookies, redirects, compression and forms, and output in English or Spanish. See the [roadmap](docs/roadmap.md) (in Spanish).
 
 ## Usage
 
@@ -56,6 +56,7 @@ Run `crabfall` without a subcommand, in a terminal, to open the TUI ([ADR-015](d
 - **Check** (`c`), **approve** (`a`, typing the host) and **run** (`r`).
 - **Watch it live**: the last second against what you asked for, p95 and errors per second, the steps, and warnings as they happen. `q` stops it, the same way Ctrl+C does.
 - **Results** in tabs, and `o` opens the HTML report.
+- **History** (`h`): the scenario's runs, newest first; Enter compares one with the previous one, or with a base marked with Space.
 
 The HTML report is still the place to analyze and share a run; the TUI is for operating it.
 

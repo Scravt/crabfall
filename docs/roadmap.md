@@ -210,7 +210,13 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente. Al cerrar
 - [x] La CLI se reordenó para compartir piezas: `prepare_in`, `approve::{summary, verify, sign}`, `run::execute`
 - [x] Tests con `TestBackend`: lista, ajustes válidos e inválidos, correr sin aprobación, host equivocado, check, pantalla de corrida; y dos tests ignorados que imprimen las pantallas (uno con una corrida real)
 - Listo: probada por el usuario en `market-api` (20 oct 2026): "es fantástica… buen diseño". Quedan detalles para pulir, a definir con el usuario.
-- Después: historial y comparación en la TUI
+
+**19. Historial y comparación en la TUI** (ADR-015)
+- [x] `h` (desde el detalle o los resultados) lista las corridas del escenario en el entorno, de la más reciente a la más vieja: resultado, duración, requests, req/s, peor p95 y hallazgos
+- [x] Enter compara la elegida con la anterior; Espacio marca una base y Enter compara contra ella; `o` abre el reporte de la elegida
+- [x] La comparación usa `compare::compare`, como `crabfall compare`: veredicto, avisos, regresiones, mejoras, tabla de pasos y hallazgos nuevos, resueltos y que siguen
+- [x] Tests: el orden del historial, la comparación con la anterior (empeoró) y contra una base (mejoró), y un escenario sin corridas
+- Listo cuando: en `market-api`, el historial de `search-ramp` compara la corrida sin índice con la de después y dice "mejoró". **Pendiente:** la prueba.
 
 ## Primera versión
 

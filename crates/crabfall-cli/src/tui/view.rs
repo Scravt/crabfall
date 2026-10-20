@@ -16,7 +16,7 @@ use ratatui::{
     widgets::{Block, Cell, Gauge, Paragraph, Row as TableRow, Sparkline, Table, Tabs, Wrap},
 };
 
-use super::{App, Ask, Detail, LastRun, ResultsView, RunView, Screen, Status};
+use super::{App, Ask, Detail, HistoryView, LastRun, ResultsView, RunView, Screen, Status};
 
 /// Pestañas de los resultados.
 pub const TABS: usize = 4;
@@ -64,18 +64,23 @@ pub fn draw(frame: &mut Frame, app: &App) {
             "escribí el valor · Enter aplicar · Esc cancelar",
         ),
         Screen::Detail(_) => pick(
-            "↑↓ tweak · Enter edit · Del clear · c check · a approve · r run · o last report · Esc back",
-            "↑↓ ajuste · Enter editar · Supr borrar · c check · a aprobar · r correr · o último reporte · Esc volver",
+            "↑↓ tweak · Enter edit · Del clear · c check · a approve · r run · h history · o last report · Esc back",
+            "↑↓ ajuste · Enter editar · Supr borrar · c check · a aprobar · r correr · h historial · o último reporte · Esc volver",
         ),
         Screen::Check(..) => pick("Esc back", "Esc volver"),
+        Screen::History(..) => pick(
+            "↑↓ choose · Enter compare with the previous one (or with the base) · Space mark as base · o report · Esc back",
+            "↑↓ elegir · Enter comparar con la anterior (o con la base) · Espacio marcar como base · o reporte · Esc volver",
+        ),
+        Screen::Compare(..) => pick("Esc back to the history", "Esc volver al historial"),
         Screen::Approve(..) => pick(
             "type the host and Enter to approve · Esc cancel",
             "escribí el host y Enter para aprobar · Esc cancelar",
         ),
         Screen::Running(..) => pick("q stop", "q frenar"),
         Screen::Results(..) => pick(
-            "←→ tabs · o open the HTML report · r run again · Esc back",
-            "←→ pestañas · o abrir el reporte HTML · r correr de nuevo · Esc volver",
+            "←→ tabs · o open the HTML report · r run again · h history · Esc back",
+            "←→ pestañas · o abrir el reporte HTML · r correr de nuevo · h historial · Esc volver",
         ),
     };
     let message = app
@@ -122,6 +127,8 @@ pub fn draw(frame: &mut Frame, app: &App) {
             );
         }
         Screen::Running(d, r) => running(frame, body, d, r),
+        Screen::History(d, h) => history(frame, body, d, h),
+        Screen::Compare(_, _, c) => compare(frame, body, &c.comparison),
         Screen::Results(d, r) => results(frame, body, d, r),
     }
 }
@@ -927,5 +934,224 @@ fn results(frame: &mut Frame, area: Rect, d: &Detail, r: &ResultsView) {
             .wrap(Wrap { trim: false })
             .block(block),
         content,
+    );
+}
+
+fn history(frame: &mut Frame, area: Rect, d: &Detail, h: &HistoryView) {
+    let rows = h.rows.iter().enumerate().map(|(i, row)| {
+        let doc = &row.doc;
+        let (result, color) = if doc["aborted"].is_string() {
+            (pick("✗ aborted", "✗ abortada"), BAD)
+        } else if doc["stopped_at_s"].is_number() {
+            (pick("■ stopped", "■ frenada"), WARN)
+        } else if doc["passed"].as_bool().unwrap_or(false) {
+            (pick("✓ passed", "✓ pasó"), GOOD)
+        } else {
+            (pick("✗ failed", "✗ falló"), BAD)
+        };
+        // El peor p95 de los pasos: un número para ver la tendencia de un vistazo.
+        let worst = doc["steps"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|s| s["latency_ms"]["p95"].as_f64())
+            .reduce(f64::max)
+            .map_or("—".into(), |v| format!("{v:.1}"));
+        let findings = doc["findings"].as_array().map_or(0, Vec::len);
+        let mark = if h.base == Some(i) {
+            pick("◆ base", "◆ base")
+        } else {
+            ""
+        };
+        let mut style = Style::new();
+        if i == h.selected {
+            style = style.add_modifier(Modifier::REVERSED);
+        }
+        TableRow::new(vec![
+            Cell::from(row.id.clone()).bold(),
+            Cell::from(result).fg(color),
+            Cell::from(format!("{} s", doc["duration_s"].as_f64().unwrap_or(0.0))),
+            Cell::from(doc["totals"]["requests"].as_u64().unwrap_or(0).to_string()),
+            Cell::from(format!(
+                "{:.1}",
+                doc["totals"]["request_rate"].as_f64().unwrap_or(0.0)
+            )),
+            Cell::from(worst),
+            Cell::from(findings.to_string()).fg(if findings > 0 { WARN } else { Color::Reset }),
+            Cell::from(mark).fg(Color::Cyan),
+        ])
+        .style(style)
+    });
+    let header = TableRow::new(vec![
+        pick("run", "corrida"),
+        pick("result", "resultado"),
+        pick("duration", "duración"),
+        "requests",
+        "req/s",
+        pick("worst p95 (ms)", "peor p95 (ms)"),
+        pick("findings", "hallazgos"),
+        "",
+    ])
+    .style(Style::new().fg(MUTED));
+    frame.render_widget(
+        Table::new(
+            rows,
+            [
+                Constraint::Length(18),
+                Constraint::Length(13),
+                Constraint::Length(10),
+                Constraint::Length(10),
+                Constraint::Length(8),
+                Constraint::Length(16),
+                Constraint::Length(10),
+                Constraint::Min(8),
+            ],
+        )
+        .header(header)
+        .block(Block::bordered().title(tr!(" {} · history ", " {} · historial ", d.name))),
+        area,
+    );
+}
+
+fn compare(frame: &mut Frame, area: Rect, c: &crabfall_core::compare::Comparison) {
+    use crabfall_core::compare::{Change, FindingState, Verdict};
+    let [head, table, findings] = Layout::vertical([
+        Constraint::Length(
+            (3 + c.warnings.len() + c.regressions.len() + c.improvements.len()).min(14) as u16,
+        ),
+        Constraint::Min(5),
+        Constraint::Length((c.findings.len() as u16 + 2).min(8)),
+    ])
+    .areas(area);
+
+    let (verdict, color) = match c.verdict {
+        Verdict::Better => (pick("better", "mejoró"), GOOD),
+        Verdict::Worse => (pick("worse", "empeoró"), BAD),
+        Verdict::Same => (
+            pick("no significant changes", "sin cambios significativos"),
+            Color::Reset,
+        ),
+        Verdict::Mixed => (
+            pick(
+                "mixed: improvements and regressions",
+                "mixto: hay mejoras y regresiones",
+            ),
+            WARN,
+        ),
+    };
+    let mut lines = vec![Line::from(vec![
+        Span::raw(format!("{} → {}  ", c.base.run_id, c.new.run_id)),
+        Span::styled(verdict, Style::new().bold().fg(color)),
+        Span::styled(
+            if c.same_load {
+                tr!(
+                    "  · same load: {} paired seconds",
+                    "  · misma carga: {} segundos emparejados",
+                    c.paired_windows
+                )
+            } else {
+                tr!(
+                    "  · different loads: aggregates only",
+                    "  · cargas distintas: solo agregados"
+                )
+            },
+            Style::new().fg(MUTED),
+        ),
+    ])];
+    lines.extend(
+        c.warnings
+            .iter()
+            .map(|w| Line::styled(format!("! {w}"), Style::new().fg(WARN))),
+    );
+    lines.extend(
+        c.regressions
+            .iter()
+            .map(|r| Line::styled(format!("✗ {r}"), Style::new().fg(BAD))),
+    );
+    lines.extend(
+        c.improvements
+            .iter()
+            .map(|i| Line::styled(format!("✓ {i}"), Style::new().fg(GOOD))),
+    );
+    frame.render_widget(
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .block(Block::bordered()),
+        head,
+    );
+
+    let ms = |v: Option<f64>| v.map_or("—".to_string(), |v| format!("{v:.1}"));
+    let rows = c.steps.iter().map(|s| {
+        let (word, color) = match s.change {
+            Change::Better => (pick("better", "mejoró"), GOOD),
+            Change::Worse => (pick("worse", "empeoró"), BAD),
+            Change::Same => (pick("same", "igual"), Color::Reset),
+            Change::Uncertain => (pick("noise?", "¿ruido?"), WARN),
+        };
+        let change = s
+            .p95_ms
+            .change_pct
+            .map_or("—".into(), |p| format!("{p:+.1}%"));
+        TableRow::new(vec![
+            Cell::from(s.name.clone()).bold(),
+            Cell::from(ms(s.p95_ms.base)),
+            Cell::from(ms(s.p95_ms.new)),
+            Cell::from(change),
+            Cell::from(word).fg(color),
+            Cell::from(ms(s.error_pct.base) + " → " + &ms(s.error_pct.new)),
+        ])
+    });
+    let header = TableRow::new(vec![
+        pick("step", "paso"),
+        pick("p95 before", "p95 antes"),
+        pick("p95 now", "p95 ahora"),
+        pick("change", "cambio"),
+        pick("verdict", "veredicto"),
+        pick("errors %", "errores %"),
+    ])
+    .style(Style::new().fg(MUTED));
+    frame.render_widget(
+        Table::new(
+            rows,
+            [
+                Constraint::Length(28),
+                Constraint::Length(11),
+                Constraint::Length(11),
+                Constraint::Length(10),
+                Constraint::Length(11),
+                Constraint::Min(14),
+            ],
+        )
+        .header(header)
+        .block(Block::bordered().title(pick(" Steps (ms) ", " Pasos (ms) "))),
+        table,
+    );
+
+    let found: Vec<Line> = c
+        .findings
+        .iter()
+        .map(|f| {
+            let (state, color) = match f.state {
+                FindingState::New => (pick("new     ", "nuevo   "), BAD),
+                FindingState::Resolved => (pick("resolved", "resuelto"), GOOD),
+                FindingState::Persists => (pick("persists", "sigue   "), WARN),
+            };
+            let title = f
+                .new_title
+                .as_ref()
+                .or(f.base_title.as_ref())
+                .cloned()
+                .unwrap_or_default();
+            Line::from(vec![
+                Span::styled(format!("{state} "), Style::new().fg(color)),
+                Span::raw(title),
+            ])
+        })
+        .collect();
+    frame.render_widget(
+        Paragraph::new(found)
+            .wrap(Wrap { trim: false })
+            .block(Block::bordered().title(pick(" Findings ", " Hallazgos "))),
+        findings,
     );
 }
