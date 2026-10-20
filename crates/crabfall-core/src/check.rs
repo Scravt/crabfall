@@ -80,10 +80,16 @@ pub async fn ensure_loopback(plan: &Plan) -> Result<(), String> {
         let host = o.host.trim_start_matches('[').trim_end_matches(']');
         let addrs: Vec<_> = tokio::net::lookup_host((host, o.port))
             .await
-            .map_err(|e| format!("no se pudo resolver `{host}`: {e}"))?
+            .map_err(|e| {
+                crate::tr!(
+                    "could not resolve `{host}`: {e}",
+                    "no se pudo resolver `{host}`: {e}"
+                )
+            })?
             .collect();
         if addrs.is_empty() || addrs.iter().any(|a| !a.ip().is_loopback()) {
-            return Err(format!(
+            return Err(crate::tr!(
+                "`{host}` does not resolve only to loopback: the smoke check only runs against the local machine",
                 "`{host}` no resuelve solo a loopback: el smoke check únicamente corre contra la máquina local"
             ));
         }

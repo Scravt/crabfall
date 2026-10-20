@@ -36,46 +36,85 @@ pub fn cmd_install() -> u8 {
     }
 
     println!("✓ skill:  {}", display(&skill));
-    println!("✓ hook y permisos: {}", display(&settings));
+    println!(
+        "{}",
+        crabfall_core::tr!(
+            "✓ hook and permissions: {}",
+            "✓ hook y permisos: {}",
+            display(&settings)
+        )
+    );
     if !on_path("crabfall") {
         println!(
-            "AVISO: `crabfall` no está en el PATH. Claude y el hook lo invocan como `crabfall`.\n  \
+            "{}",
+            crabfall_core::tr!(
+                "WARNING: `crabfall` is not on the PATH. Claude and the hook invoke it as `crabfall`.\n  \
+             Install it with `cargo install --path crates/crabfall-cli` from the Crabfall repo.",
+                "AVISO: `crabfall` no está en el PATH. Claude y el hook lo invocan como `crabfall`.\n  \
              Instalalo con `cargo install --path crates/crabfall-cli` desde el repo de Crabfall."
+            )
         );
     }
     println!(
-        "Abrí una sesión nueva de Claude Code en {} y pedile una prueba de carga.",
-        root.display()
+        "{}",
+        crabfall_core::tr!(
+            "Open a new Claude Code session in {} and ask it for a load test.",
+            "Abrí una sesión nueva de Claude Code en {} y pedile una prueba de carga.",
+            root.display()
+        )
     );
     exit::OK
 }
 
 fn write_skill(path: &Path) -> Result<(), String> {
     std::fs::create_dir_all(path.parent().unwrap()).map_err(|e| e.to_string())?;
-    std::fs::write(path, SKILL).map_err(|e| format!("no se pudo escribir {}: {e}", display(path)))
+    std::fs::write(path, SKILL).map_err(|e| {
+        crabfall_core::tr!(
+            "could not write {}: {e}",
+            "no se pudo escribir {}: {e}",
+            display(path)
+        )
+    })
 }
 
 fn merge_settings(path: &Path) -> Result<(), String> {
     let mut settings: Value = match std::fs::read_to_string(path) {
-        Ok(text) => serde_json::from_str(&text)
-            .map_err(|e| format!("{} no es JSON válido ({e}); no lo toco", display(path)))?,
+        Ok(text) => serde_json::from_str(&text).map_err(|e| {
+            crabfall_core::tr!(
+                "{} is not valid JSON ({e}); leaving it untouched",
+                "{} no es JSON válido ({e}); no lo toco",
+                display(path)
+            )
+        })?,
         Err(_) => json!({}),
     };
     add_hook(&mut settings)?;
     add_permissions(&mut settings)?;
     let text = serde_json::to_string_pretty(&settings).unwrap() + "\n";
-    std::fs::write(path, text).map_err(|e| format!("no se pudo escribir {}: {e}", display(path)))
+    std::fs::write(path, text).map_err(|e| {
+        crabfall_core::tr!(
+            "could not write {}: {e}",
+            "no se pudo escribir {}: {e}",
+            display(path)
+        )
+    })
 }
 
 fn object<'a>(
     v: &'a mut Value,
     key: &str,
 ) -> Result<&'a mut serde_json::Map<String, Value>, String> {
-    let map = v.as_object_mut().ok_or("settings.json no es un objeto")?;
+    let map = v.as_object_mut().ok_or(crabfall_core::tr!(
+        "settings.json is not an object",
+        "settings.json no es un objeto"
+    ))?;
     map.entry(key)
         .or_insert_with(|| json!({}))
         .as_object_mut()
-        .ok_or(format!("`{key}` no es un objeto"))
+        .ok_or(crabfall_core::tr!(
+            "`{key}` is not an object",
+            "`{key}` no es un objeto"
+        ))
 }
 
 fn array<'a>(
@@ -85,7 +124,10 @@ fn array<'a>(
     map.entry(key)
         .or_insert_with(|| json!([]))
         .as_array_mut()
-        .ok_or(format!("`{key}` no es una lista"))
+        .ok_or(crabfall_core::tr!(
+            "`{key}` is not a list",
+            "`{key}` no es una lista"
+        ))
 }
 
 fn add_hook(settings: &mut Value) -> Result<(), String> {

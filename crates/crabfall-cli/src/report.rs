@@ -19,7 +19,13 @@ pub fn cmd_report(run: Option<&str>, open: bool) -> u8 {
         .ok()
         .and_then(|cwd| Project::discover(&cwd))
     else {
-        eprintln!("✗ no encontré .crabfall/ en este directorio ni en los superiores");
+        eprintln!(
+            "{}",
+            crabfall_core::tr!(
+                "✗ no .crabfall/ found in this directory or its parents",
+                "✗ no encontré .crabfall/ en este directorio ni en los superiores"
+            )
+        );
         return exit::INVALID;
     };
     let file = match runs::file(&project, run) {
@@ -49,8 +55,13 @@ pub fn write(project: &Project, results: &Path) -> Result<PathBuf, String> {
     let doc = runs::read(results)?;
     let html = render(&doc, comparison(project, &doc), &display(results));
     let out = results.with_file_name("report.html");
-    std::fs::write(&out, html)
-        .map_err(|e| format!("no se pudo escribir {}: {e}", display(&out)))?;
+    std::fs::write(&out, html).map_err(|e| {
+        crabfall_core::tr!(
+            "could not write {}: {e}",
+            "no se pudo escribir {}: {e}",
+            display(&out)
+        )
+    })?;
     Ok(out)
 }
 
@@ -83,6 +94,7 @@ fn render(doc: &Value, comparison: Option<(Value, Value)>, results_file: &str) -
         "comparison": comparison,
         "base_points": base_points,
         "crabfall_version": env!("CARGO_PKG_VERSION"),
+        "lang": crabfall_core::i18n::lang().code(),
         "results_file": results_file,
     });
     let data = serde_json::to_string(&data)
@@ -103,7 +115,13 @@ fn open_in_browser(path: &Path) {
         std::process::Command::new("xdg-open").arg(&path).status()
     };
     if !result.is_ok_and(|s| s.success()) {
-        eprintln!("AVISO: no se pudo abrir el navegador; abrí el archivo a mano.");
+        eprintln!(
+            "{}",
+            crabfall_core::tr!(
+                "WARNING: could not open the browser; open the file by hand.",
+                "AVISO: no se pudo abrir el navegador; abrí el archivo a mano."
+            )
+        );
     }
 }
 

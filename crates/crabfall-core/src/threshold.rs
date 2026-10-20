@@ -58,7 +58,12 @@ impl ThresholdPlan {
             (None, None) => Filter::All,
             (Some(s), None) => Filter::Step(s.clone()),
             (None, Some(tag)) => Filter::Tag(tag.clone()),
-            (Some(_), Some(_)) => return Err("usá `step` o `tag`, no los dos".into()),
+            (Some(_), Some(_)) => {
+                return Err(crate::tr!(
+                    "use `step` or `tag`, not both",
+                    "usá `step` o `tag`, no los dos"
+                ));
+            }
         };
         let ops = [
             (Op::Lt, &t.lt, "<"),
@@ -68,7 +73,10 @@ impl ThresholdPlan {
         ];
         let given: Vec<_> = ops.iter().filter(|(_, v, _)| v.is_some()).collect();
         let [(op, Some(value), symbol)] = given.as_slice() else {
-            return Err("usá exactamente uno de: lt, lte, gt, gte".into());
+            return Err(crate::tr!(
+                "use exactly one of: lt, lte, gt, gte",
+                "usá exactamente uno de: lt, lte, gt, gte"
+            ));
         };
         let limit = parse_limit(metric, value)?;
         let scope = match &filter {
@@ -109,7 +117,9 @@ impl ThresholdPlan {
 
 fn parse_metric(name: &str) -> Result<Metric, String> {
     let bad = || {
-        format!(
+        crate::tr!(
+            "unknown metric `{name}` (use http.latency.p50…p99.9, http.latency.avg, http.latency.max, \
+             http.error_rate, http.rps or checks.pass_rate)",
             "métrica `{name}` desconocida (usá http.latency.p50…p99.9, http.latency.avg, http.latency.max, \
              http.error_rate, http.rps o checks.pass_rate)"
         )
@@ -138,19 +148,35 @@ fn parse_limit(metric: Metric, value: &Value) -> Result<f64, String> {
             Value::String(s) => s
                 .parse::<HumanDuration>()
                 .map(|d| d.0.as_secs_f64() * 1000.0)
-                .map_err(|e| format!("{e} (las latencias se comparan contra una duración)")),
+                .map_err(|e| {
+                    crate::tr!(
+                        "{e} (latencies are compared against a duration)",
+                        "{e} (las latencias se comparan contra una duración)"
+                    )
+                }),
             Value::Number(n) => Ok(n.as_f64().unwrap_or_default()),
-            _ => Err("la latencia se compara contra una duración, por ejemplo `300ms`".into()),
+            _ => Err(crate::tr!(
+                "latency is compared against a duration, for example `300ms`",
+                "la latencia se compara contra una duración, por ejemplo `300ms`"
+            )),
         },
         Metric::ErrorRate | Metric::ChecksPassRate => value
             .as_str()
             .and_then(|s| s.trim().strip_suffix('%'))
             .and_then(|n| n.trim().parse::<f64>().ok())
             .filter(|p| (0.0..=100.0).contains(p))
-            .ok_or_else(|| "usá un porcentaje entre 0% y 100%, por ejemplo `1%`".into()),
-        Metric::Rps => value
-            .as_f64()
-            .ok_or_else(|| "http.rps se compara contra un número".into()),
+            .ok_or_else(|| {
+                crate::tr!(
+                    "use a percentage between 0% and 100%, for example `1%`",
+                    "usá un porcentaje entre 0% y 100%, por ejemplo `1%`"
+                )
+            }),
+        Metric::Rps => value.as_f64().ok_or_else(|| {
+            crate::tr!(
+                "http.rps is compared against a number",
+                "http.rps se compara contra un número"
+            )
+        }),
     }
 }
 
@@ -161,7 +187,9 @@ impl std::str::FromStr for Threshold {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let bad = || {
-            format!(
+            crate::tr!(
+                "invalid threshold `{s}`: use metric[{{step=x}}] followed by <, <=, > or >= and the limit \
+                 (http.latency.p95<300ms, http.error_rate<1%, http.rps>=40)",
                 "threshold `{s}` inválido: usá métrica[{{step=x}}] seguido de <, <=, > o >= y el límite \
                  (http.latency.p95<300ms, http.error_rate<1%, http.rps>=40)"
             )

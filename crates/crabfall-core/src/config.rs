@@ -16,6 +16,10 @@ pub struct Config {
     pub environments: BTreeMap<String, Environment>,
     #[serde(default)]
     pub secrets: Vec<String>,
+    /// Language of what Crabfall prints for this project (`en` or `es`). `--lang` and
+    /// `CRABFALL_LANG` override it; without any of them, English (ADR-016).
+    #[serde(default)]
+    pub language: Option<crate::i18n::Lang>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -47,11 +51,17 @@ impl Config {
             None if self.environments.len() == 1 => {
                 self.environments.keys().next().unwrap().clone()
             }
-            None => return Err("hay varios entornos y ninguno por defecto: usá --env".into()),
+            None => {
+                return Err(crate::tr!(
+                    "there are several environments and no default: use --env",
+                    "hay varios entornos y ninguno por defecto: usá --env"
+                ));
+            }
         };
         let env = self.environments.get(&name).ok_or_else(|| {
             let known: Vec<_> = self.environments.keys().map(String::as_str).collect();
-            format!(
+            crate::tr!(
+                "environment `{name}` does not exist (defined: {})",
                 "no existe el entorno `{name}` (definidos: {})",
                 known.join(", ")
             )

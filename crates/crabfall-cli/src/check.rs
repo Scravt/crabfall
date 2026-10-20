@@ -88,7 +88,10 @@ pub fn cmd_check(target: &crate::Target, as_json: bool) -> u8 {
             }
         }
         if !result.skipped.is_empty() {
-            println!("omitidos: {}", result.skipped.join(", "));
+            println!(
+                "{}",
+                crabfall_core::tr!("skipped: {}", "omitidos: {}", result.skipped.join(", "))
+            );
         }
     }
 

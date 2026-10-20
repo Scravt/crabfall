@@ -221,10 +221,14 @@ impl StepPlan {
             .method(self.method.clone())
             .uri(self.target(scope)?)
             .body(Full::new(body))
-            .map_err(|e| format!("request inválido: {e}"))?;
+            .map_err(|e| crate::tr!("invalid request: {e}", "request inválido: {e}"))?;
         for (name, value) in &self.headers {
-            let value = HeaderValue::from_str(&value.render(scope)?)
-                .map_err(|e| format!("header `{name}` inválido: {e}"))?;
+            let value = HeaderValue::from_str(&value.render(scope)?).map_err(|e| {
+                crate::tr!(
+                    "invalid header `{name}`: {e}",
+                    "header `{name}` inválido: {e}"
+                )
+            })?;
             request.headers_mut().insert(name.clone(), value);
         }
         if let BodyPlan::Multipart { boundary, .. } = &self.body {
@@ -306,8 +310,13 @@ impl Plan {
         inputs: &Inputs,
     ) -> Result<Self, Vec<String>> {
         let mut errors = Vec::new();
-        let base = Url::parse(&env.base_url)
-            .map_err(|e| vec![format!("base_url `{}` inválida: {e}", env.base_url)])?;
+        let base = Url::parse(&env.base_url).map_err(|e| {
+            vec![crate::tr!(
+                "invalid base_url `{}`: {e}",
+                "base_url `{}` inválida: {e}",
+                env.base_url
+            )]
+        })?;
         let allowed: BTreeSet<String> = env
             .allowed_hosts
             .iter()
@@ -374,7 +383,10 @@ impl Plan {
                         next: AtomicUsize::new(0),
                     });
                 }
-                None => data_errors.push(format!("data.{name}: el dataset no se cargó")),
+                None => data_errors.push(crate::tr!(
+                    "data.{name}: the dataset was not loaded",
+                    "data.{name}: el dataset no se cargó"
+                )),
             }
         }
         // Lo que extrae `vu_setup` lo ven los flows: se suma a `after_setup`.
@@ -465,7 +477,7 @@ impl Plan {
                     if exists {
                         plan.thresholds.push(t);
                     } else {
-                        errors.push(format!("thresholds[{i}]: ningún paso de los flows coincide con el filtro de `{}`", t.label));
+                        errors.push(crate::tr!("thresholds[{i}]: no flow step matches the filter of `{}`", "thresholds[{i}]: ningún paso de los flows coincide con el filtro de `{}`", t.label));
                     }
                 }
                 Err(e) => errors.push(format!("thresholds[{i}]: {e}")),
@@ -606,9 +618,12 @@ impl Plan {
                 BodyPlan::Multipart { parts, .. } => parts
                     .iter()
                     .filter_map(|(_, p)| match p {
-                        PartPlan::File { upload, .. } => {
-                            Some(format!("{} en {}", upload.describe(), s.name))
-                        }
+                        PartPlan::File { upload, .. } => Some(crate::tr!(
+                            "{} in {}",
+                            "{} en {}",
+                            upload.describe(),
+                            s.name
+                        )),
                         PartPlan::Text(_) => None,
                     })
                     .collect(),
@@ -621,17 +636,24 @@ impl Plan {
     /// redirects (solo a allowed_hosts) · acepta gzip, br`.
     pub fn http_summary(&self) -> String {
         let cookies = if self.cookies {
-            "cookies por VU"
+            crate::tr!("cookies per VU", "cookies por VU")
         } else {
-            "sin cookies"
+            crate::tr!("no cookies", "sin cookies")
         };
         let mut limits: Vec<u32> = self.all_steps().map(|s| s.redirects).collect();
         limits.sort_unstable();
         limits.dedup();
         let redirects = match limits.as_slice() {
-            [0] => "no sigue redirects".to_string(),
-            [n] => format!("sigue hasta {n} redirects (solo a allowed_hosts)"),
-            _ => "sigue redirects según el paso (solo a allowed_hosts)".to_string(),
+            [0] => crate::tr!("does not follow redirects", "no sigue redirects").to_string(),
+            [n] => crate::tr!(
+                "follows up to {n} redirects (only to allowed_hosts)",
+                "sigue hasta {n} redirects (solo a allowed_hosts)"
+            ),
+            _ => crate::tr!(
+                "follows redirects per step (only to allowed_hosts)",
+                "sigue redirects según el paso (solo a allowed_hosts)"
+            )
+            .to_string(),
         };
         let mut encodings: Vec<String> = self
             .all_steps()
@@ -645,8 +667,12 @@ impl Plan {
         encodings.sort();
         encodings.dedup();
         let compression = match encodings.as_slice() {
-            [e] => format!("acepta {e}"),
-            _ => "acepta compresión según el paso".to_string(),
+            [e] => crate::tr!("accepts {e}", "acepta {e}"),
+            _ => crate::tr!(
+                "accepts compression per step",
+                "acepta compresión según el paso"
+            )
+            .to_string(),
         };
         format!("{cookies} · {redirects} · {compression}")
     }
@@ -670,11 +696,15 @@ impl Plan {
             .map(|s| s.name.as_str())
             .collect();
         let what = if r.steps.is_empty() {
-            format!("repite {}", names.join(", "))
+            crate::tr!("repeats {}", "repite {}", names.join(", "))
         } else {
             names.join(", ")
         };
-        Some(format!("{what} cada {}", HumanDuration(r.every)))
+        Some(crate::tr!(
+            "{what} every {}",
+            "{what} cada {}",
+            HumanDuration(r.every)
+        ))
     }
 
     /// Variables de las filas que toma un VU para su `vu_setup`.
@@ -695,14 +725,19 @@ impl Plan {
     /// Cuánta carga puede generar, en requests/s, para resúmenes.
     pub fn rate_summary(&self) -> String {
         match (self.max_request_rate, self.request_cap) {
-            (Some(rate), _) => format!("hasta {rate:.1} requests/s"),
+            (Some(rate), _) => {
+                crate::tr!("up to {rate:.1} requests/s", "hasta {rate:.1} requests/s")
+            }
             (None, Some(cap)) => {
-                format!("según la latencia, con tope de {cap} requests/s (limits.max_rps)")
+                crate::tr!(
+                    "depends on latency, capped at {cap} requests/s (limits.max_rps)",
+                    "según la latencia, con tope de {cap} requests/s (limits.max_rps)"
+                )
             }
-            (None, None) => {
+            (None, None) => crate::tr!(
+                "depends on latency, uncapped (set limits.max_rps in the environment to cap it)",
                 "según la latencia, sin tope (definí limits.max_rps en el entorno para acotarla)"
-                    .into()
-            }
+            ),
         }
     }
 
@@ -715,13 +750,13 @@ impl Plan {
         }
         let first = thinks[0].1;
         if thinks.iter().all(|(_, t)| *t == first) {
-            return first.map(|t| format!("{t} después de cada paso"));
+            return first.map(|t| crate::tr!("{t} after each step", "{t} después de cada paso"));
         }
         let each: Vec<String> = thinks
             .iter()
             .filter_map(|(name, t)| t.map(|t| format!("{name} {t}")))
             .collect();
-        Some(format!("después de {}", each.join(", ")))
+        Some(crate::tr!("after {}", "después de {}", each.join(", ")))
     }
 
     /// Pasos de los flows (los que generan carga y tienen métricas).
@@ -747,7 +782,8 @@ impl Plan {
         if let (Some(max), Some(rate)) = (limits.max_rps, self.max_request_rate)
             && rate > max
         {
-            out.push(format!(
+            out.push(crate::tr!(
+                "the maximum request rate ({rate:.1}/s) exceeds limits.max_rps ({max})",
                 "la tasa máxima de requests ({rate:.1}/s) supera limits.max_rps ({max})"
             ));
         }
@@ -755,14 +791,16 @@ impl Plan {
         if let Some(max) = limits.max_vus
             && concurrency > max
         {
-            out.push(format!(
+            out.push(crate::tr!(
+                "the concurrency ({concurrency}) exceeds limits.max_vus ({max})",
                 "la concurrencia ({concurrency}) supera limits.max_vus ({max})"
             ));
         }
         if let Some(max) = limits.max_duration
             && self.load.duration() > max.0
         {
-            out.push(format!(
+            out.push(crate::tr!(
+                "the duration ({}) exceeds limits.max_duration ({max})",
                 "la duración ({}) supera limits.max_duration ({max})",
                 HumanDuration(self.load.duration())
             ));
@@ -808,9 +846,14 @@ fn check_references(
     let mut problems = BTreeSet::new();
     for var in step.checks.iter().flat_map(|c| c.vars()) {
         if !known.contains(var) && var.contains('.') {
-            problems.insert(format!("un check usa {}", unknown_column(var, columns)));
+            problems.insert(crate::tr!(
+                "a check uses {}",
+                "un check usa {}",
+                unknown_column(var, columns)
+            ));
         } else if !known.contains(var) {
-            problems.insert(format!(
+            problems.insert(crate::tr!(
+                "a check uses `{{{{{var}}}}}`, which is not defined",
                 "un check usa `{{{{{var}}}}}`, que no está definida"
             ));
         }
@@ -820,18 +863,15 @@ fn check_references(
             if !known.contains(var) && var.contains('.') {
                 problems.insert(unknown_column(var, columns));
             } else if !known.contains(var) {
-                problems.insert(format!(
-                    "`{{{{{var}}}}}` no está definida: agregala en `vars`, en el entorno o con --var, o extraéla en un paso anterior"
+                problems.insert(crate::tr!("`{{{{{var}}}}}` is not defined: add it to `vars`, to the environment or with --var, or extract it in an earlier step", "`{{{{{var}}}}}` no está definida: agregala en `vars`, en el entorno o con --var, o extraéla en un paso anterior"
                 ));
             }
         }
         for name in t.secrets() {
             match secrets.get(name) {
-                None => problems.insert(format!(
-                    "`{{{{env.{name}}}}}` no está declarado en `secrets` de config.yaml"
+                None => problems.insert(crate::tr!("`{{{{env.{name}}}}}` is not declared in `secrets` of config.yaml", "`{{{{env.{name}}}}}` no está declarado en `secrets` de config.yaml"
                 )),
-                Some(None) => problems.insert(format!(
-                    "el secreto `{name}` no tiene valor: definilo como variable de entorno o en .env"
+                Some(None) => problems.insert(crate::tr!("secret `{name}` has no value: set it as an environment variable or in .env", "el secreto `{name}` no tiene valor: definilo como variable de entorno o en .env"
                 )),
                 Some(Some(_)) => false,
             };
@@ -853,7 +893,11 @@ fn multipart_plan(
             }
             MultipartPart::File(f) => {
                 let upload = files.get(&f.file).ok_or_else(|| {
-                    format!("multipart.{name}: el archivo {} no se cargó", f.file)
+                    crate::tr!(
+                        "multipart.{name}: file {} was not loaded",
+                        "multipart.{name}: el archivo {} no se cargó",
+                        f.file
+                    )
                 })?;
                 let default_name = std::path::Path::new(&f.file)
                     .file_name()
@@ -964,12 +1008,17 @@ fn datasets_used<'a>(
 fn unknown_column(var: &str, columns: &BTreeMap<&str, &[String]>) -> String {
     let (dataset, column) = var.split_once('.').unwrap_or((var, ""));
     match columns.get(dataset) {
-        None => format!("`{{{{{var}}}}}`: no hay un dataset `{dataset}` en `data`"),
-        Some(cols) if !cols.iter().any(|c| c == column) => format!(
+        None => crate::tr!(
+            "`{{{{{var}}}}}`: there is no dataset `{dataset}` in `data`",
+            "`{{{{{var}}}}}`: no hay un dataset `{dataset}` en `data`"
+        ),
+        Some(cols) if !cols.iter().any(|c| c == column) => crate::tr!(
+            "`{{{{{var}}}}}`: dataset `{dataset}` has no column `{column}` (it has: {})",
             "`{{{{{var}}}}}`: el dataset `{dataset}` no tiene la columna `{column}` (tiene: {})",
             cols.join(", ")
         ),
-        Some(_) => format!(
+        Some(_) => crate::tr!(
+            "`{{{{{var}}}}}`: datasets cannot be used in `setup`, which runs only once; for a step per user (like the login), use `vu_setup`",
             "`{{{{{var}}}}}`: los datasets no se pueden usar en `setup`, que corre una sola vez; para un paso por usuario (como el login), usá `vu_setup`"
         ),
     }
@@ -1013,20 +1062,26 @@ fn build_step(
     let https = match origin_url.scheme() {
         "http" => false,
         "https" => true,
-        other => return Err(format!("esquema `{other}` no soportado")),
+        other => {
+            return Err(crate::tr!(
+                "scheme `{other}` is not supported",
+                "esquema `{other}` no soportado"
+            ));
+        }
     };
     let host = origin_url
         .host_str()
-        .ok_or("la URL no tiene host")?
+        .ok_or(crate::tr!("the URL has no host", "la URL no tiene host"))?
         .to_ascii_lowercase();
     if !allowed.contains(&host) {
-        return Err(format!(
+        return Err(crate::tr!(
+            "host `{host}` is not in the allowed_hosts of the environment",
             "el host `{host}` no está en allowed_hosts del entorno"
         ));
     }
     let port = origin_url
         .port_or_known_default()
-        .ok_or("la URL no tiene puerto")?;
+        .ok_or(crate::tr!("the URL has no port", "la URL no tiene puerto"))?;
 
     let mut query = Vec::new();
     if let Some(raw) = raw_query {
@@ -1131,10 +1186,13 @@ fn split_url(base: &Url, url: &str) -> Result<(Url, String, Option<String>), Str
             let end = after.find(['/', '?']).unwrap_or(after.len());
             let authority = &after[..end];
             if authority.contains("{{") {
-                return Err("el host de la URL no puede tener variables".into());
+                return Err(crate::tr!(
+                    "the URL host cannot have variables",
+                    "el host de la URL no puede tener variables"
+                ));
             }
             let origin = Url::parse(&format!("{scheme}://{authority}/"))
-                .map_err(|e| format!("url inválida: {e}"))?;
+                .map_err(|e| crate::tr!("invalid url: {e}", "url inválida: {e}"))?;
             (origin, String::new(), &after[end..])
         }
         None => (

@@ -24,14 +24,20 @@ impl Upload {
     /// Lee `file`, relativo a `dir` (la carpeta `.crabfall/`).
     pub fn load(dir: &Path, file: &str) -> Result<Self, String> {
         let path = dir.join(file);
-        let bytes = std::fs::read(&path)
-            .map_err(|e| format!("multipart: no se pudo leer {}: {e}", path.display()))?;
+        let bytes = std::fs::read(&path).map_err(|e| {
+            crate::tr!(
+                "multipart: could not read {}: {e}",
+                "multipart: no se pudo leer {}: {e}",
+                path.display()
+            )
+        })?;
         Self::new(file, bytes)
     }
 
     pub fn new(file: &str, bytes: Vec<u8>) -> Result<Self, String> {
         if bytes.len() > MAX_BYTES {
-            return Err(format!(
+            return Err(crate::tr!(
+                "multipart: {file} weighs {}; the maximum is {}",
                 "multipart: {file} pesa {}; el máximo es {}",
                 size(bytes.len()),
                 size(MAX_BYTES)

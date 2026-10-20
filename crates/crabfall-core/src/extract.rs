@@ -23,11 +23,19 @@ impl Extractor {
             (Some(path), None, None) => JsonPath::parse(path).map(Self::Json),
             (None, Some(name), None) => HeaderName::try_from(name.as_str())
                 .map(Self::Header)
-                .map_err(|e| format!("header `{name}` inválido: {e}")),
+                .map_err(|e| {
+                    crate::tr!(
+                        "invalid header `{name}`: {e}",
+                        "header `{name}` inválido: {e}"
+                    )
+                }),
             (None, None, Some(pattern)) => Regex::new(pattern)
                 .map(Self::Regex)
-                .map_err(|e| format!("regex inválida: {e}")),
-            _ => Err("usá exactamente uno de `json`, `header` o `regex`".into()),
+                .map_err(|e| crate::tr!("invalid regex: {e}", "regex inválida: {e}")),
+            _ => Err(crate::tr!(
+                "use exactly one of `json`, `header` or `regex`",
+                "usá exactamente uno de `json`, `header` o `regex`"
+            )),
         }
     }
 
@@ -43,22 +51,36 @@ impl Extractor {
     pub fn apply(&self, headers: &HeaderMap, body: &[u8]) -> Result<Value, String> {
         match self {
             Self::Json(path) => {
-                let json: Value = serde_json::from_slice(body)
-                    .map_err(|_| "la respuesta no es JSON".to_string())?;
-                path.get(&json)
-                    .cloned()
-                    .ok_or_else(|| format!("{} no existe en la respuesta", path.source))
+                let json: Value = serde_json::from_slice(body).map_err(|_| {
+                    crate::tr!("the response is not JSON", "la respuesta no es JSON").to_string()
+                })?;
+                path.get(&json).cloned().ok_or_else(|| {
+                    crate::tr!(
+                        "{} does not exist in the response",
+                        "{} no existe en la respuesta",
+                        path.source
+                    )
+                })
             }
             Self::Header(name) => headers
                 .get(name)
                 .and_then(|v| v.to_str().ok())
                 .map(|v| Value::String(v.to_string()))
-                .ok_or_else(|| format!("la respuesta no tiene el header `{name}`")),
+                .ok_or_else(|| {
+                    crate::tr!(
+                        "the response has no `{name}` header",
+                        "la respuesta no tiene el header `{name}`"
+                    )
+                }),
             Self::Regex(re) => {
                 let text = String::from_utf8_lossy(body);
-                let caps = re
-                    .captures(&text)
-                    .ok_or_else(|| format!("la regex `{}` no encontró nada", re.as_str()))?;
+                let caps = re.captures(&text).ok_or_else(|| {
+                    crate::tr!(
+                        "regex `{}` found nothing",
+                        "la regex `{}` no encontró nada",
+                        re.as_str()
+                    )
+                })?;
                 let m = caps
                     .get(1)
                     .or_else(|| caps.get(0))
@@ -84,35 +106,53 @@ pub struct JsonPath {
 impl JsonPath {
     pub fn parse(s: &str) -> Result<Self, String> {
         let bad = |why: &str| {
-            format!("JSONPath `{s}` inválido: {why} (ejemplos: $.id, $.items[0].name, $['a-b'])")
+            crate::tr!(
+                "invalid JSONPath `{s}`: {why} (examples: $.id, $.items[0].name, $['a-b'])",
+                "JSONPath `{s}` inválido: {why} (ejemplos: $.id, $.items[0].name, $['a-b'])"
+            )
         };
-        let mut rest = s
-            .strip_prefix('$')
-            .ok_or_else(|| bad("tiene que empezar con `$`"))?;
+        let mut rest = s.strip_prefix('$').ok_or_else(|| {
+            bad(&crate::tr!(
+                "must start with `$`",
+                "tiene que empezar con `$`"
+            ))
+        })?;
         let mut segments = Vec::new();
         while !rest.is_empty() {
             if let Some(after) = rest.strip_prefix('.') {
                 let end = after.find(['.', '[']).unwrap_or(after.len());
                 let key = &after[..end];
                 if key.is_empty() {
-                    return Err(bad("falta el nombre después de `.`"));
+                    return Err(bad(&crate::tr!(
+                        "missing name after `.`",
+                        "falta el nombre después de `.`"
+                    )));
                 }
                 segments.push(Segment::Key(key.to_string()));
                 rest = &after[end..];
             } else if let Some(after) = rest.strip_prefix("['") {
-                let end = after.find("']").ok_or_else(|| bad("falta cerrar `']`"))?;
+                let end = after
+                    .find("']")
+                    .ok_or_else(|| bad(&crate::tr!("missing closing `']`", "falta cerrar `']`")))?;
                 segments.push(Segment::Key(after[..end].to_string()));
                 rest = &after[end + 2..];
             } else if let Some(after) = rest.strip_prefix('[') {
-                let end = after.find(']').ok_or_else(|| bad("falta cerrar `]`"))?;
-                let index = after[..end]
-                    .trim()
-                    .parse()
-                    .map_err(|_| bad("el índice tiene que ser un entero"))?;
+                let end = after
+                    .find(']')
+                    .ok_or_else(|| bad(&crate::tr!("missing closing `]`", "falta cerrar `]`")))?;
+                let index = after[..end].trim().parse().map_err(|_| {
+                    bad(&crate::tr!(
+                        "the index must be an integer",
+                        "el índice tiene que ser un entero"
+                    ))
+                })?;
                 segments.push(Segment::Index(index));
                 rest = &after[end + 1..];
             } else {
-                return Err(bad("se esperaba `.` o `[`"));
+                return Err(bad(&crate::tr!(
+                    "expected `.` or `[`",
+                    "se esperaba `.` o `[`"
+                )));
             }
         }
         Ok(Self {

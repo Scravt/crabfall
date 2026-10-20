@@ -30,8 +30,12 @@ pub fn cmd_approve(target: &crate::Target) -> u8 {
     let violations = plan.limit_violations(&env);
     if !violations.is_empty() {
         eprintln!(
-            "✗ {} supera los límites de `{env_name}`; no se puede aprobar:",
-            plan.scenario
+            "{}",
+            crabfall_core::tr!(
+                "✗ {} exceeds the limits of `{env_name}`; it cannot be approved:",
+                "✗ {} supera los límites de `{env_name}`; no se puede aprobar:",
+                plan.scenario
+            )
         );
         for v in violations {
             eprintln!("  {v}");
@@ -40,7 +44,11 @@ pub fn cmd_approve(target: &crate::Target) -> u8 {
     }
     if !(std::io::stdin().is_terminal() && std::io::stderr().is_terminal()) {
         eprintln!(
-            "✗ `crabfall approve` necesita una terminal interactiva: la aprobación la da una persona (ADR-004)."
+            "{}",
+            crabfall_core::tr!(
+                "✗ `crabfall approve` needs an interactive terminal: a person gives the approval (ADR-004).",
+                "✗ `crabfall approve` necesita una terminal interactiva: la aprobación la da una persona (ADR-004)."
+            )
         );
         return exit::REFUSED;
     }
@@ -48,7 +56,10 @@ pub fn cmd_approve(target: &crate::Target) -> u8 {
     let previous = match load(&project, &plan.scenario, &env_name) {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("AVISO: {e}; se reemplaza.");
+            eprintln!(
+                "{}",
+                crabfall_core::tr!("WARNING: {e}; it is replaced.", "AVISO: {e}; se reemplaza.")
+            );
             None
         }
     };
@@ -66,12 +77,24 @@ pub fn cmd_approve(target: &crate::Target) -> u8 {
         .find(|h| !is_loopback(h))
         .or_else(|| plan.hosts.iter().next())
         .expect("un plan válido tiene al menos un host");
-    eprint!("\nPara aprobar, escribí el host destino ({target}): ");
+    eprint!(
+        "{}",
+        crabfall_core::tr!(
+            "\nTo approve, type the target host ({target}): ",
+            "\nPara aprobar, escribí el host destino ({target}): "
+        )
+    );
     std::io::stderr().flush().ok();
     let mut typed = String::new();
     std::io::stdin().lock().read_line(&mut typed).ok();
     if !typed.trim().eq_ignore_ascii_case(target) {
-        eprintln!("✗ no coincide con `{target}`: no se aprobó nada.");
+        eprintln!(
+            "{}",
+            crabfall_core::tr!(
+                "✗ it does not match `{target}`: nothing was approved.",
+                "✗ no coincide con `{target}`: no se aprobó nada."
+            )
+        );
         return exit::REFUSED;
     }
 
@@ -89,7 +112,10 @@ pub fn cmd_approve(target: &crate::Target) -> u8 {
     ) {
         Ok(a) => a,
         Err(e) => {
-            eprintln!("✗ no se pudo firmar: {e}");
+            eprintln!(
+                "{}",
+                crabfall_core::tr!("✗ could not sign: {e}", "✗ no se pudo firmar: {e}")
+            );
             return exit::RUNTIME;
         }
     };
@@ -104,13 +130,23 @@ pub fn cmd_approve(target: &crate::Target) -> u8 {
             eprintln!("✓ aprobado: {}", display(&file));
             // Con los mismos ajustes: la aprobación los firma y `run` sin ellos la rechaza.
             eprintln!(
-                "  Ejecutalo con: {}",
-                command("run", &plan.scenario, &env_name, &tweaks)
+                "{}",
+                crabfall_core::tr!(
+                    "  Run it with: {}",
+                    "  Ejecutalo con: {}",
+                    command("run", &plan.scenario, &env_name, &tweaks)
+                )
             );
             exit::OK
         }
         Err(e) => {
-            eprintln!("✗ no se pudo guardar la aprobación: {e}");
+            eprintln!(
+                "{}",
+                crabfall_core::tr!(
+                    "✗ could not save the approval: {e}",
+                    "✗ no se pudo guardar la aprobación: {e}"
+                )
+            );
             exit::RUNTIME
         }
     }
@@ -126,10 +162,21 @@ pub fn verify_for_run(
 ) -> Result<Approval, ()> {
     let command = |verb: &str, flags: &[String]| command(verb, &plan.scenario, env_name, flags);
     let fail = |msg: String| {
-        eprintln!("✗ {} en `{env_name}`: {msg}", plan.scenario);
         eprintln!(
-            "  Una persona tiene que aprobarlo: {}",
-            command("approve", flags)
+            "{}",
+            crabfall_core::tr!(
+                "✗ {} in `{env_name}`: {msg}",
+                "✗ {} en `{env_name}`: {msg}",
+                plan.scenario
+            )
+        );
+        eprintln!(
+            "{}",
+            crabfall_core::tr!(
+                "  A person has to approve it: {}",
+                "  Una persona tiene que aprobarlo: {}",
+                command("approve", flags)
+            )
         );
     };
     let current = match load(project, &plan.scenario, env_name) {
@@ -147,21 +194,48 @@ pub fn verify_for_run(
                 // Lo más común: se aprobó con otros flags. El diff de abajo lo confirma.
                 let shown = |f: &[String]| {
                     if f.is_empty() {
-                        "sin ajustes".to_string()
+                        crabfall_core::tr!("no tweaks", "sin ajustes").to_string()
                     } else {
                         f.join(" ")
                     }
                 };
                 eprintln!(
-                    "✗ {} en `{env_name}`: se aprobó con otros ajustes",
-                    plan.scenario
+                    "{}",
+                    crabfall_core::tr!(
+                        "✗ {} in `{env_name}`: it was approved with other tweaks",
+                        "✗ {} en `{env_name}`: se aprobó con otros ajustes",
+                        plan.scenario
+                    )
                 );
-                eprintln!("  aprobado: {}", shown(approved));
-                eprintln!("  ahora:    {}", shown(flags));
-                eprintln!("  Para correr lo aprobado: {}", command("run", approved));
-                eprintln!("  Para aprobar esto:       {}", command("approve", flags));
+                eprintln!(
+                    "{}",
+                    crabfall_core::tr!("  approved: {}", "  aprobado: {}", shown(approved))
+                );
+                eprintln!(
+                    "{}",
+                    crabfall_core::tr!("  now:      {}", "  ahora:    {}", shown(flags))
+                );
+                eprintln!(
+                    "{}",
+                    crabfall_core::tr!(
+                        "  To run what was approved: {}",
+                        "  Para correr lo aprobado: {}",
+                        command("run", approved)
+                    )
+                );
+                eprintln!(
+                    "{}",
+                    crabfall_core::tr!(
+                        "  To approve this:          {}",
+                        "  Para aprobar esto:       {}",
+                        command("approve", flags)
+                    )
+                );
             } else {
-                fail("cambió desde la última aprobación".into());
+                fail(crabfall_core::tr!(
+                    "it changed since the last approval",
+                    "cambió desde la última aprobación"
+                ));
             }
             eprintln!("{}", limit_lines(&diff, 40));
             Err(())
@@ -186,9 +260,13 @@ fn command(verb: &str, scenario: &str, env_name: &str, flags: &[String]) -> Stri
 fn load(project: &Project, scenario: &str, env_name: &str) -> Result<Option<Approval>, String> {
     let file = approval::path(&project.approvals_dir(), scenario, env_name);
     match std::fs::read_to_string(&file) {
-        Ok(text) => serde_json::from_str(&text)
-            .map(Some)
-            .map_err(|e| format!("{} está dañado ({e})", display(&file))),
+        Ok(text) => serde_json::from_str(&text).map(Some).map_err(|e| {
+            crabfall_core::tr!(
+                "{} is damaged ({e})",
+                "{} está dañado ({e})",
+                display(&file)
+            )
+        }),
         Err(_) => Ok(None),
     }
 }
@@ -209,28 +287,65 @@ fn print_summary(
     let hosts: Vec<&str> = plan.hosts.iter().map(String::as_str).collect();
     let (duration, graceful_stop) = (plan.load.duration(), plan.load.graceful_stop());
     let status = match change {
-        Change::First => "primera aprobación",
-        Change::Same => "sin cambios desde la última aprobación",
-        Change::Changed(_) => "CAMBIÓ desde la última aprobación",
+        Change::First => crabfall_core::tr!("first approval", "primera aprobación"),
+        Change::Same => crabfall_core::tr!(
+            "unchanged since the last approval",
+            "sin cambios desde la última aprobación"
+        ),
+        Change::Changed(_) => crabfall_core::tr!(
+            "CHANGED since the last approval",
+            "CAMBIÓ desde la última aprobación"
+        ),
     };
 
-    eprintln!("Escenario   {}  ({status})", plan.scenario);
-    eprintln!("Entorno     {env_name} → {}", hosts.join(", "));
+    eprintln!(
+        "{}",
+        crabfall_core::tr!(
+            "Scenario    {}  ({status})",
+            "Escenario   {}  ({status})",
+            plan.scenario
+        )
+    );
+    eprintln!(
+        "{}",
+        crabfall_core::tr!(
+            "Environment {env_name} → {}",
+            "Entorno     {env_name} → {}",
+            hosts.join(", ")
+        )
+    );
     if !tweaks.is_empty() {
-        eprintln!("Ajustes     {}  (pisan al escenario)", tweaks.join(" "));
+        eprintln!(
+            "{}",
+            crabfall_core::tr!(
+                "Tweaks      {}  (override the scenario)",
+                "Ajustes     {}  (pisan al escenario)",
+                tweaks.join(" ")
+            )
+        );
     }
-    eprintln!("Carga       {}", plan.load.describe());
+    eprintln!(
+        "{}",
+        crabfall_core::tr!("Load        {}", "Carga       {}", plan.load.describe())
+    );
     if let Some(n) = plan.load.planned_iterations() {
         eprintln!("            ≈{n} iteraciones");
     }
     eprintln!("            {}", plan.rate_summary());
     eprintln!(
-        "Duración    {} + {} de graceful stop",
-        HumanDuration(duration),
-        HumanDuration(graceful_stop)
+        "{}",
+        crabfall_core::tr!(
+            "Duration    {} + {} of graceful stop",
+            "Duración    {} + {} de graceful stop",
+            HumanDuration(duration),
+            HumanDuration(graceful_stop)
+        )
     );
     if let Some(think) = plan.think_summary() {
-        eprintln!("Pausas      {think}");
+        eprintln!(
+            "{}",
+            crabfall_core::tr!("Pauses      {think}", "Pausas      {think}")
+        );
     }
     if !plan.vu_setup.is_empty() {
         let vus = plan.load.concurrency();
@@ -240,24 +355,44 @@ fn print_summary(
             .map(|s| format!("{} ({} {})", s.name, s.method, s.url()))
             .collect();
         eprintln!(
-            "Por VU      {} × {vus} VUs = {} requests antes de la carga",
-            steps.join(", "),
-            vus as usize * steps.len()
+            "{}",
+            crabfall_core::tr!(
+                "Per VU      {} × {vus} VUs = {} requests before the load",
+                "Por VU      {} × {vus} VUs = {} requests antes de la carga",
+                steps.join(", "),
+                vus as usize * steps.len()
+            )
         );
     }
     if let (Some(refresh), Some(r)) = (plan.refresh_summary(), &plan.vu_refresh) {
         // Cota: cada VU renueva a lo sumo una vez por período mientras dura la carga.
         let rounds = (plan.load.duration().as_secs_f64() / r.every.as_secs_f64()).floor() as usize;
         let requests = rounds * plan.load.concurrency() as usize * plan.refresh_steps().len();
-        eprintln!("Renovación  {refresh} por VU, en segundo plano: hasta {requests} requests");
+        eprintln!(
+            "{}",
+            crabfall_core::tr!(
+                "Renewal     {refresh} per VU, in the background: up to {requests} requests",
+                "Renovación  {refresh} por VU, en segundo plano: hasta {requests} requests"
+            )
+        );
     }
     for (i, u) in plan.uploads_summary().iter().enumerate() {
         let label = if i == 0 { "Archivos" } else { "" };
-        eprintln!("{label:<11} {u}  (multipart, en cada request)");
+        eprintln!(
+            "{}",
+            crabfall_core::tr!(
+                "{label:<11} {u}  (multipart, in every request)",
+                "{label:<11} {u}  (multipart, en cada request)"
+            )
+        );
     }
     eprintln!("HTTP        {}", plan.http_summary());
     for (i, d) in plan.data.iter().enumerate() {
-        let label = if i == 0 { "Datos" } else { "" };
+        let label = if i == 0 {
+            crabfall_core::i18n::pick("Data", "Datos")
+        } else {
+            ""
+        };
         eprintln!("{label:<11} {}", d.dataset.describe());
     }
 
@@ -270,9 +405,19 @@ fn print_summary(
         .map(|s| format!("{} ({} {})", s.name, s.method, s.url()))
         .collect();
     if writes.is_empty() {
-        eprintln!("Escribe     no");
+        eprintln!(
+            "{}",
+            crabfall_core::i18n::pick("Writes      no", "Escribe     no")
+        );
     } else {
-        eprintln!("Escribe     SÍ: {}", writes.join(", "));
+        eprintln!(
+            "{}",
+            crabfall_core::tr!(
+                "Writes      YES: {}",
+                "Escribe     SÍ: {}",
+                writes.join(", ")
+            )
+        );
     }
 
     let l = &env.limits;
@@ -287,15 +432,28 @@ fn print_summary(
         limits.push(format!("max_duration {m} ✓"));
     }
     if limits.is_empty() {
-        eprintln!("Límites     ninguno definido en el entorno");
+        eprintln!(
+            "{}",
+            crabfall_core::tr!(
+                "Limits      none defined in the environment",
+                "Límites     ninguno definido en el entorno"
+            )
+        );
     } else {
-        eprintln!("Límites     {}", limits.join("  "));
+        eprintln!(
+            "{}",
+            crabfall_core::tr!("Limits      {}", "Límites     {}", limits.join("  "))
+        );
     }
 
     if let Change::Changed(diff) = change {
         eprintln!(
-            "\nCambios desde la última aprobación:\n{}",
-            limit_lines(diff, 60)
+            "{}",
+            crabfall_core::tr!(
+                "\nChanges since the last approval:\n{}",
+                "\nCambios desde la última aprobación:\n{}",
+                limit_lines(diff, 60)
+            )
         );
     }
 }
@@ -305,7 +463,8 @@ fn limit_lines(text: &str, max: usize) -> String {
     if lines.len() <= max {
         return text.trim_end().to_string();
     }
-    format!(
+    crabfall_core::tr!(
+        "{}\n… ({} more lines)",
         "{}\n… ({} líneas más)",
         lines[..max].join("\n"),
         lines.len() - max

@@ -41,9 +41,10 @@ impl OsKeyring {
 impl KeyStore for OsKeyring {
     fn get(&self) -> Result<Option<Vec<u8>>, String> {
         match Self::entry()?.get_password() {
-            Ok(hex_key) => from_hex(&hex_key)
-                .map(Some)
-                .ok_or("la clave del keyring está dañada".into()),
+            Ok(hex_key) => from_hex(&hex_key).map(Some).ok_or(crate::tr!(
+                "the keyring key is damaged",
+                "la clave del keyring está dañada"
+            )),
             Err(keyring::Error::NoEntry) => Ok(None),
             Err(e) => Err(format!("keyring: {e}")),
         }
@@ -54,7 +55,12 @@ impl KeyStore for OsKeyring {
             return Ok(key);
         }
         let mut key = vec![0u8; 32];
-        getrandom::fill(&mut key).map_err(|e| format!("no se pudo generar la clave: {e}"))?;
+        getrandom::fill(&mut key).map_err(|e| {
+            crate::tr!(
+                "could not generate the key: {e}",
+                "no se pudo generar la clave: {e}"
+            )
+        })?;
         Self::entry()?
             .set_password(&to_hex(&key))
             .map_err(|e| format!("keyring: {e}"))?;
@@ -105,9 +111,15 @@ pub enum Rejection {
 impl std::fmt::Display for Rejection {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Missing => write!(f, "no está aprobado"),
-            Self::Tampered(why) => write!(f, "la aprobación no es válida: {why}"),
-            Self::Changed(_) => write!(f, "cambió desde la última aprobación"),
+            Self::Missing => f.write_str(&crate::tr!("it is not approved", "no está aprobado")),
+            Self::Tampered(why) => f.write_str(&crate::tr!(
+                "the approval is not valid: {why}",
+                "la aprobación no es válida: {why}"
+            )),
+            Self::Changed(_) => f.write_str(&crate::tr!(
+                "it changed since the last approval",
+                "cambió desde la última aprobación"
+            )),
         }
     }
 }
@@ -159,30 +171,37 @@ pub fn verify(
 ) -> Result<(), Rejection> {
     let approval = approval.ok_or(Rejection::Missing)?;
     if approval.format != FORMAT {
-        return Err(Rejection::Tampered(format!(
+        return Err(Rejection::Tampered(crate::tr!(
+            "unknown format {}",
             "formato {} desconocido",
             approval.format
         )));
     }
     if approval.scenario != plan.scenario || approval.environment != environment {
-        return Err(Rejection::Tampered(format!(
+        return Err(Rejection::Tampered(crate::tr!(
+            "it is for `{}` in `{}`, not for `{}` in `{environment}`",
             "es de `{}` en `{}`, no de `{}` en `{environment}`",
-            approval.scenario, approval.environment, plan.scenario
+            approval.scenario,
+            approval.environment,
+            plan.scenario
         )));
     }
-    let key = keys
-        .get()
-        .map_err(Rejection::Tampered)?
-        .ok_or_else(|| Rejection::Tampered("no hay clave de firma en este equipo".into()))?;
+    let key = keys.get().map_err(Rejection::Tampered)?.ok_or_else(|| {
+        Rejection::Tampered(crate::tr!(
+            "there is no signing key on this machine",
+            "no hay clave de firma en este equipo"
+        ))
+    })?;
     let signature = from_hex(&approval.signature)
-        .ok_or_else(|| Rejection::Tampered("firma ilegible".into()))?;
+        .ok_or_else(|| Rejection::Tampered(crate::tr!("unreadable signature", "firma ilegible")))?;
     let mut mac = <Hmac<Sha256> as KeyInit>::new_from_slice(&key)
         .expect("HMAC acepta cualquier largo de clave");
     mac.update(&signed_message(approval));
     if mac.verify_slice(&signature).is_err() || fingerprint(&approval.plan) != approval.hash {
-        return Err(Rejection::Tampered(
-            "la firma no coincide (¿se editó el archivo?)".into(),
-        ));
+        return Err(Rejection::Tampered(crate::tr!(
+            "the signature does not match (was the file edited?)",
+            "la firma no coincide (¿se editó el archivo?)"
+        )));
     }
 
     let canonical = plan.canonical(env);

@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="es">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Reporte Crabfall</title>
+<title>Crabfall</title>
 <style>
 :root {
   color-scheme: light;
@@ -129,6 +129,11 @@ footer { margin-top: 40px; color: var(--muted); font-size: 12px; }
 const DATA = JSON.parse(document.getElementById("crabfall-data").textContent);
 const run = DATA.run;
 const cmp = DATA.comparison;
+// Idioma: el de la corrida que generó el reporte (ADR-016).
+const ES = DATA.lang === "es";
+const L = (en, es) => (ES ? es : en);
+const LOCALE = ES ? "es-AR" : "en-US";
+document.documentElement.lang = ES ? "es" : "en";
 
 // ---------- DOM helpers: todo el texto entra con textContent (los datos vienen de la corrida). ----------
 function el(tag, attrs, ...children) {
@@ -158,7 +163,7 @@ function sv(tag, attrs) {
 }
 
 // ---------- Formatos ----------
-const nf = new Intl.NumberFormat("es-AR", { maximumFractionDigits: 1 });
+const nf = new Intl.NumberFormat(LOCALE, { maximumFractionDigits: 1 });
 function num(n) { return n == null ? "—" : nf.format(n); }
 function compact(n) {
   if (n == null) return "—";
@@ -171,7 +176,7 @@ function ms(v) {
   if (v == null) return "—";
   if (v >= 1000) return nf.format(v / 1000) + " s";
   if (v >= 10) return nf.format(Math.round(v)) + " ms";
-  return new Intl.NumberFormat("es-AR", { maximumFractionDigits: 2 }).format(v) + " ms";
+  return new Intl.NumberFormat(LOCALE, { maximumFractionDigits: 2 }).format(v) + " ms";
 }
 // Como `crabfall run`: 950 B, 120 KB, 2,4 MB (de a 1024).
 function bytes(n) {
@@ -183,7 +188,7 @@ function bytes(n) {
 function pct(part, total) { return total ? nf.format((part * 100) / total) + "%" : "—"; }
 function when(iso) {
   const d = new Date(iso);
-  return isNaN(d) ? iso : d.toLocaleString("es-AR", { dateStyle: "medium", timeStyle: "short" });
+  return isNaN(d) ? iso : d.toLocaleString(LOCALE, { dateStyle: "medium", timeStyle: "short" });
 }
 
 // ---------- Estado (icono + texto, nunca solo color) ----------
@@ -199,7 +204,7 @@ function pill(kind, text) {
     el("span", { class: "dot", style: `background:${s.color}` }),
     `${s.icon} ${text}`);
 }
-const SEVERITY = { high: ["critical", "alta"], medium: ["serious", "media"], low: ["warning", "baja"], info: ["good", "info"] };
+const SEVERITY = { high: ["critical", L("high", "alta")], medium: ["serious", L("medium", "media")], low: ["warning", L("low", "baja")], info: ["good", "info"] };
 
 // Texto con `código` (los títulos de los hallazgos nombran pasos así), siempre con nodos de texto.
 function rich(text) {
@@ -207,7 +212,7 @@ function rich(text) {
 }
 
 // Nombres de la evidencia de los hallazgos (ADR-005). Una clave nueva se muestra tal cual.
-const EVIDENCE = {
+const EVIDENCE = ES ? {
   offered_iterations_per_s: "iteraciones ofrecidas/s",
   sustained_iterations_per_s: "iteraciones sostenidas/s",
   requests_per_s_at_break: "requests/s en el quiebre",
@@ -229,6 +234,28 @@ const EVIDENCE = {
   r2: "R²",
   vus: "VUs",
   step: "paso",
+} : {
+  offered_iterations_per_s: "offered iterations/s",
+  sustained_iterations_per_s: "sustained iterations/s",
+  requests_per_s_at_break: "requests/s at the break",
+  max_requests_per_s: "max requests/s",
+  baseline_p95_ms: "p95 before (ms)",
+  p95_ms: "p95 (ms)",
+  p95_ms_after_break: "p95 after (ms)",
+  p95_ms_trend_start: "p95 at the start (ms)",
+  p95_ms_trend_end: "p95 at the end (ms)",
+  dropped: "dropped",
+  dropped_after_break: "dropped after",
+  dropped_ratio: "dropped ratio",
+  error_rate_before: "errors before (%)",
+  error_rate_at_start_of_window: "errors at the start (%)",
+  error_rate_in_window: "errors in the window (%)",
+  new_connections: "new connections",
+  requests: "requests",
+  ratio: "times",
+  r2: "R²",
+  vus: "VUs",
+  step: "step",
 };
 
 // ---------- Gráfico de líneas: un eje, crosshair y tooltip con todas las series ----------
@@ -241,7 +268,7 @@ function lineChart({ title, subtitle, unit, xs, series, bands = [], height = 220
   const head = el("div", { style: "display:flex;justify-content:space-between;gap:8px;align-items:flex-start" },
     el("div", {}, el("h3", {}, title), subtitle && el("div", { class: "muted", style: "font-size:13px" }, subtitle)));
   if (logToggle) {
-    const label = () => (log ? "Ver en escala lineal" : "Ver en escala logarítmica");
+    const label = () => (log ? L("Linear scale", "Ver en escala lineal") : L("Logarithmic scale", "Ver en escala logarítmica"));
     const btn = el("button", { class: "theme", type: "button", "aria-pressed": String(log) }, label());
     btn.addEventListener("click", () => {
       log = !log;
@@ -283,7 +310,7 @@ function lineChart({ title, subtitle, unit, xs, series, bands = [], height = 220
       ? (v) => m.t + ih - ((Math.log10(Math.max(v, lo)) - Math.log10(lo)) / (Math.log10(hi) - Math.log10(lo))) * ih
       : (v) => m.t + ih - (v / max) * ih;
 
-    const svg = sv("svg", { viewBox: `0 0 ${W} ${H}`, height: H, tabindex: 0, role: "img", "aria-label": `${title}. Usá las flechas para recorrer los segundos.` });
+    const svg = sv("svg", { viewBox: `0 0 ${W} ${H}`, height: H, tabindex: 0, role: "img", "aria-label": L(`${title}. Use the arrow keys to go through the seconds.`, `${title}. Usá las flechas para recorrer los segundos.`) });
     for (const b of bands) {
       svg.append(sv("rect", { x: x(b.from), y: m.t, width: Math.max(x(b.to) - x(b.from), 1), height: ih, fill: "var(--band)" }));
     }
@@ -326,7 +353,7 @@ function lineChart({ title, subtitle, unit, xs, series, bands = [], height = 220
       const px = x(xs[i]);
       cross.setAttribute("x1", px); cross.setAttribute("x2", px);
       cross.setAttribute("visibility", "visible");
-      tip.replaceChildren(el("div", { class: "t" }, `segundo ${xs[i]}`));
+      tip.replaceChildren(el("div", { class: "t" }, L(`second ${xs[i]}`, `segundo ${xs[i]}`)));
       series.forEach((s, k) => {
         const v = s.values[i];
         if (v == null) { dots[k].setAttribute("visibility", "hidden"); }
@@ -380,7 +407,7 @@ function niceMax(v) {
 }
 function ticks(max) { return [0, max / 4, max / 2, (3 * max) / 4, max]; }
 function logTicks(lo, hi) { const out = []; for (let v = lo; v <= hi * 1.0001; v *= 10) out.push(v); return out; }
-function msTick(v) { return v >= 1000 ? nf.format(v / 1000) + " s" : new Intl.NumberFormat("es-AR", { maximumFractionDigits: 2 }).format(v) + " ms"; }
+function msTick(v) { return v >= 1000 ? nf.format(v / 1000) + " s" : new Intl.NumberFormat(LOCALE, { maximumFractionDigits: 2 }).format(v) + " ms"; }
 function xTicks(a, b, width) {
   const span = b - a, want = Math.max(2, Math.floor(width / 70));
   const step = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600].find((s) => span / s <= want) || 1200;
@@ -397,12 +424,12 @@ document.title = `${run.scenario} · ${run.environment} · Crabfall`;
 
 function header() {
   let verdict;
-  if (run.aborted) verdict = pill("critical", "abortada");
-  else if (!(run.thresholds || []).length) verdict = el("span", { class: "pill" }, "sin thresholds");
-  else if (failedThresholds.length) verdict = pill("critical", `${failedThresholds.length} threshold(s) no se cumplieron`);
-  else verdict = pill("good", "thresholds cumplidos");
+  if (run.aborted) verdict = pill("critical", L("aborted", "abortada"));
+  else if (!(run.thresholds || []).length) verdict = el("span", { class: "pill" }, L("no thresholds", "sin thresholds"));
+  else if (failedThresholds.length) verdict = pill("critical", L(`${failedThresholds.length} threshold(s) not met`, `${failedThresholds.length} threshold(s) no se cumplieron`));
+  else verdict = pill("good", L("thresholds met", "thresholds cumplidos"));
 
-  const theme = el("button", { class: "theme", type: "button" }, "Tema");
+  const theme = el("button", { class: "theme", type: "button" }, L("Theme", "Tema"));
   theme.addEventListener("click", () => {
     const root = document.documentElement;
     const dark = root.dataset.theme ? root.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
@@ -412,25 +439,25 @@ function header() {
 
   const meta = el("dl", { class: "meta" });
   const row = (k, v) => v && meta.append(el("dt", {}, k), el("dd", {}, v));
-  row("Carga", describeLoad(run.load));
-  row("Pausas", run.load && run.load.think);
-  row("Ajustes", (run.tweaks || []).join(" "));
-  row("Escenario", run.scenario_file);
-  row("Aprobada", run.approval && `${run.approval.approved_by} · ${when(run.approval.approved_at)}`);
+  row(L("Load", "Carga"), describeLoad(run.load));
+  row(L("Pauses", "Pausas"), run.load && run.load.think);
+  row(L("Tweaks", "Ajustes"), (run.tweaks || []).join(" "));
+  row(L("Scenario", "Escenario"), run.scenario_file);
+  row(L("Approved", "Aprobada"), run.approval && `${run.approval.approved_by} · ${when(run.approval.approved_at)}`);
 
   return el("header", {},
     el("div", {},
       el("h1", {}, `${run.scenario} · ${run.environment}`),
-      el("p", { class: "sub" }, `${when(run.started_at)} · corrida ${run.run_id} · ${num(run.duration_s)} s`)),
+      el("p", { class: "sub" }, `${when(run.started_at)} · ${L("run", "corrida")} ${run.run_id} · ${num(run.duration_s)} s`)),
     el("div", { class: "toolbar" }, verdict, theme),
     el("div", { style: "flex-basis:100%" }, meta));
 }
 
 function describeLoad(l) {
   if (!l) return null;
-  if (l.executor === "constant_rate") return `constant_rate ${l.rate} durante ${l.duration}, max_vus ${l.max_vus}`;
+  if (l.executor === "constant_rate") return `constant_rate ${l.rate} ${L("for", "durante")} ${l.duration}, max_vus ${l.max_vus}`;
   if (l.executor === "ramping_rate") return `ramping_rate ${l.start_rate || "0/s"} → ${(l.stages || []).map((s) => `${s.target} (${s.duration})`).join(" → ")}, max_vus ${l.max_vus}`;
-  if (l.executor === "constant_vus") return `constant_vus ${l.vus} VUs durante ${l.duration}`;
+  if (l.executor === "constant_vus") return `constant_vus ${l.vus} VUs ${L("for", "durante")} ${l.duration}`;
   return l.executor;
 }
 
@@ -438,19 +465,19 @@ function tiles() {
   const checks = (t.checks_passed || 0) + (t.checks_failed || 0);
   const tile = (label, value, note) => el("div", { class: "card tile" }, el("div", { class: "label" }, label), el("div", { class: "value" }, value), note && el("div", { class: "note" }, note));
   return el("section", { class: "tiles" },
-    tile("Requests", compact(t.requests), `${num(t.request_rate)} por segundo`),
-    tile("Iteraciones", compact(t.started), `${num(t.iteration_rate)} por segundo`),
-    tile("Errores", pct(t.failed || 0, t.requests), `${num(t.failed)} sin respuesta · ${num(t.non_2xx)} no-2xx`),
-    tile("Descartadas", pct(t.dropped || 0, t.planned), `${num(t.dropped)} de ${num(t.planned)} planificadas`),
-    t.bytes_sent + t.bytes_received ? tile("Tráfico", `${bytes(t.send_rate + t.receive_rate)}/s`, `enviados ${bytes(t.bytes_sent)} · recibidos ${bytes(t.bytes_received)}`) : null,
-    checks ? tile("Checks", pct(t.checks_passed, checks), `${num(t.checks_failed)} fallidos de ${num(checks)}`) : null);
+    tile("Requests", compact(t.requests), L(`${num(t.request_rate)} per second`, `${num(t.request_rate)} por segundo`)),
+    tile(L("Iterations", "Iteraciones"), compact(t.started), L(`${num(t.iteration_rate)} per second`, `${num(t.iteration_rate)} por segundo`)),
+    tile(L("Errors", "Errores"), pct(t.failed || 0, t.requests), L(`${num(t.failed)} without response · ${num(t.non_2xx)} non-2xx`, `${num(t.failed)} sin respuesta · ${num(t.non_2xx)} no-2xx`)),
+    tile(L("Dropped", "Descartadas"), pct(t.dropped || 0, t.planned), L(`${num(t.dropped)} of ${num(t.planned)} planned`, `${num(t.dropped)} de ${num(t.planned)} planificadas`)),
+    t.bytes_sent + t.bytes_received ? tile(L("Traffic", "Tráfico"), `${bytes(t.send_rate + t.receive_rate)}/s`, L(`sent ${bytes(t.bytes_sent)} · received ${bytes(t.bytes_received)}`, `enviados ${bytes(t.bytes_sent)} · recibidos ${bytes(t.bytes_received)}`)) : null,
+    checks ? tile("Checks", pct(t.checks_passed, checks), L(`${num(t.checks_failed)} failed of ${num(checks)}`, `${num(t.checks_failed)} fallidos de ${num(checks)}`)) : null);
 }
 
 function findings() {
   const list = run.findings || [];
-  const sec = el("section", {}, el("h2", {}, "Hallazgos"));
+  const sec = el("section", {}, el("h2", {}, L("Findings", "Hallazgos")));
   if (!list.length) {
-    sec.append(el("div", { class: "card" }, run.aborted ? "La corrida se abortó: no hay datos para diagnosticar." : "Sin hallazgos: no se detectó ningún patrón conocido."));
+    sec.append(el("div", { class: "card" }, run.aborted ? L("The run was aborted: there is no data to diagnose.", "La corrida se abortó: no hay datos para diagnosticar.") : L("No findings: no known pattern was detected.", "Sin hallazgos: no se detectó ningún patrón conocido.")));
     return sec;
   }
   const wrap = el("div", { class: "list" });
@@ -464,9 +491,9 @@ function findings() {
       ev.append(el("span", {}, `${EVIDENCE[k] || k.replaceAll("_", " ")}: `, el("b", {}, typeof v === "number" ? num(v) : v)));
     }
     if (ev.childNodes.length) card.append(ev);
-    if (f.window) card.append(el("div", { class: "muted" }, `entre los segundos ${f.window.from_s} y ${f.window.to_s} (sombreado en los gráficos)`));
+    if (f.window) card.append(el("div", { class: "muted" }, L(`between seconds ${f.window.from_s} and ${f.window.to_s} (shaded in the charts)`, `entre los segundos ${f.window.from_s} y ${f.window.to_s} (sombreado en los gráficos)`)));
     if (f.source) card.append(el("div", { class: "mono muted" }, [f.source.file, f.source.symbol].filter(Boolean).join(" · ")));
-    if ((f.causes || []).length) card.append(el("div", {}, el("div", { class: "muted" }, "Causas posibles (hipótesis, no medidas)"), el("ul", { class: "plain" }, f.causes.map((c) => el("li", {}, c)))));
+    if ((f.causes || []).length) card.append(el("div", {}, el("div", { class: "muted" }, L("Possible causes (hypotheses, not measured)", "Causas posibles (hipótesis, no medidas)")), el("ul", { class: "plain" }, f.causes.map((c) => el("li", {}, c)))));
     wrap.append(card);
   }
   sec.append(wrap);
@@ -475,52 +502,52 @@ function findings() {
 
 function comparison() {
   if (!cmp) return null;
-  const VERDICT = { better: ["good", "mejoró"], worse: ["critical", "empeoró"], mixed: ["serious", "mixto"], same: [null, "sin cambios"] };
+  const VERDICT = { better: ["good", L("better", "mejoró")], worse: ["critical", L("worse", "empeoró")], mixed: ["serious", L("mixed", "mixto")], same: [null, L("no changes", "sin cambios")] };
   const [kind, label] = VERDICT[cmp.verdict] || [null, cmp.verdict];
   const card = el("div", { class: "card" },
     el("div", { class: "head", style: "display:flex;gap:8px;align-items:center;flex-wrap:wrap" },
       kind ? pill(kind, label) : el("span", { class: "pill" }, label),
-      el("span", { class: "muted" }, `contra ${cmp.base.run_id}`),
-      el("span", { class: "muted" }, cmp.same_load ? `· misma carga: ${cmp.paired_windows} segundos emparejados` : "· cargas distintas: solo agregados")));
+      el("span", { class: "muted" }, L(`against ${cmp.base.run_id}`, `contra ${cmp.base.run_id}`)),
+      el("span", { class: "muted" }, cmp.same_load ? L(`· same load: ${cmp.paired_windows} paired seconds`, `· misma carga: ${cmp.paired_windows} segundos emparejados`) : L("· different loads: aggregates only", "· cargas distintas: solo agregados"))));
   const block = (title, items, k) => items.length && el("div", { style: "margin-top:10px" },
     el("div", { class: "status" }, el("span", { class: "dot", style: `background:${STATUS[k].color}` }), title),
     el("ul", { class: "plain" }, items.map((i) => el("li", {}, rich(i)))));
-  card.append(block("Regresiones", cmp.regressions || [], "critical") || "", block("Mejoras", cmp.improvements || [], "good") || "");
-  for (const w of cmp.warnings || []) card.append(el("div", { class: "muted", style: "margin-top:8px" }, `Aviso: ${w}`));
+  card.append(block(L("Regressions", "Regresiones"), cmp.regressions || [], "critical") || "", block(L("Improvements", "Mejoras"), cmp.improvements || [], "good") || "");
+  for (const w of cmp.warnings || []) card.append(el("div", { class: "muted", style: "margin-top:8px" }, L(`Warning: ${w}`, `Aviso: ${w}`)));
 
   const rows = (cmp.steps || []).filter((s) => s.p95_ms);
   if (rows.length) {
-    const CH = { better: "mejoró", worse: "empeoró", same: "igual", uncertain: "puede ser ruido" };
+    const CH = { better: L("better", "mejoró"), worse: L("worse", "empeoró"), same: L("same", "igual"), uncertain: L("may be noise", "puede ser ruido") };
     card.append(el("div", { class: "scroll", style: "margin-top:12px" }, el("table", {},
-      el("thead", {}, el("tr", {}, ["paso", "p95 antes", "p95 ahora", "cambio", "veredicto"].map((h) => el("th", {}, h)))),
+      el("thead", {}, el("tr", {}, [L("step", "paso"), L("p95 before", "p95 antes"), L("p95 now", "p95 ahora"), L("change", "cambio"), L("verdict", "veredicto")].map((h) => el("th", {}, h)))),
       el("tbody", {}, rows.map((s) => el("tr", {},
         el("td", {}, s.name), el("td", {}, ms(s.p95_ms.base)), el("td", {}, ms(s.p95_ms.new)),
         el("td", {}, s.p95_ms.change_pct == null ? "—" : `${s.p95_ms.change_pct > 0 ? "+" : ""}${num(s.p95_ms.change_pct)}%`),
-        el("td", {}, (CH[s.change] || s.change || "—") + (s.sign_test ? ` (${s.sign_test[s.change === "worse" ? "worse" : "better"]} de ${s.sign_test.windows} s)` : ""))))))));
+        el("td", {}, (CH[s.change] || s.change || "—") + (s.sign_test ? ` (${s.sign_test[s.change === "worse" ? "worse" : "better"]} ${L("of", "de")} ${s.sign_test.windows} s)` : ""))))))));
   }
-  return el("section", {}, el("h2", {}, "Comparación con la corrida anterior"), card);
+  return el("section", {}, el("h2", {}, L("Comparison with the previous run", "Comparación con la corrida anterior")), card);
 }
 
 function bandsFor(step) {
   return (run.findings || []).filter((f) => f.window && (!step || !f.step || f.step === step))
-    .map((f) => ({ from: f.window.from_s, to: f.window.to_s, label: f.id === "breaking_point" ? "después del quiebre" : f.id.replaceAll("_", " ") }));
+    .map((f) => ({ from: f.window.from_s, to: f.window.to_s, label: f.id === "breaking_point" ? L("after the break", "después del quiebre") : f.id.replaceAll("_", " ") }));
 }
 
 function chartsSection() {
   const pts = (run.series && run.series.points) || [];
   if (!pts.length) return null;
   const xs = pts.map((p) => p.t);
-  const sec = el("section", {}, el("h2", {}, "Por segundo"));
+  const sec = el("section", {}, el("h2", {}, L("Per second", "Por segundo")));
   const grid = el("div", { class: "charts" });
   grid.append(lineChart({
-    title: "Iteraciones por segundo", subtitle: "iniciadas y descartadas por falta de VUs",
+    title: L("Iterations per second", "Iteraciones por segundo"), subtitle: L("started, and dropped for lack of VUs", "iniciadas y descartadas por falta de VUs"),
     xs, series: [
-      { name: "iniciadas", color: "var(--s1)", values: pts.map((p) => p.started) },
-      { name: "descartadas", color: "var(--s2)", values: pts.map((p) => p.dropped) },
+      { name: L("started", "iniciadas"), color: "var(--s1)", values: pts.map((p) => p.started) },
+      { name: L("dropped", "descartadas"), color: "var(--s2)", values: pts.map((p) => p.dropped) },
     ], bands: bandsFor(null),
   }));
   grid.append(lineChart({
-    title: "Latencia", subtitle: "todos los pasos, desde el instante planificado", unit: "ms", format: ms, logToggle: true,
+    title: L("Latency", "Latencia"), subtitle: L("all steps, from the planned instant", "todos los pasos, desde el instante planificado"), unit: "ms", format: ms, logToggle: true,
     xs, series: [
       { name: "p50", color: "var(--s1)", values: pts.map((p) => p.p50) },
       { name: "p95", color: "var(--s2)", values: pts.map((p) => p.p95) },
@@ -532,23 +559,23 @@ function chartsSection() {
   if (cmp && cmp.same_load && base && base.length) {
     const byT = new Map(base.map((p) => [p.t, p.p95]));
     grid.append(lineChart({
-      title: "p95: esta corrida y la anterior", subtitle: `misma carga, segundo a segundo; la anterior es ${cmp.base.run_id}`,
+      title: L("p95: this run and the previous one", "p95: esta corrida y la anterior"), subtitle: L(`same load, second by second; the previous one is ${cmp.base.run_id}`, `misma carga, segundo a segundo; la anterior es ${cmp.base.run_id}`),
       unit: "ms", format: ms, logToggle: true, xs, series: [
-        { name: "esta corrida", color: "var(--s1)", values: pts.map((p) => p.p95) },
-        { name: "anterior", color: "var(--muted)", values: xs.map((x) => byT.get(x) ?? null) },
+        { name: L("this run", "esta corrida"), color: "var(--s1)", values: pts.map((p) => p.p95) },
+        { name: L("previous", "anterior"), color: "var(--muted)", values: xs.map((x) => byT.get(x) ?? null) },
       ],
     }));
   }
   if (pts.some((p) => p.errors > 0)) {
-    grid.append(lineChart({ title: "Errores por segundo", subtitle: "sin respuesta, status ≥ 400 o extract fallido", xs, series: [{ name: "errores", color: "var(--s1)", values: pts.map((p) => p.errors) }] }));
+    grid.append(lineChart({ title: L("Errors per second", "Errores por segundo"), subtitle: L("no response, status ≥ 400 or failed extract", "sin respuesta, status ≥ 400 o extract fallido"), xs, series: [{ name: L("errors", "errores"), color: "var(--s1)", values: pts.map((p) => p.errors) }] }));
   }
   if (pts.some((p) => p.bytes_sent || p.bytes_received)) {
     const perSecond = (v) => `${bytes(v)}/s`;
     grid.append(lineChart({
-      title: "Tráfico por segundo", subtitle: "bytes por el socket: headers, body y TLS; ×8 para comparar con un enlace en bits",
+      title: L("Traffic per second", "Tráfico por segundo"), subtitle: L("bytes on the socket: headers, body and TLS; ×8 to compare with a link in bits", "bytes por el socket: headers, body y TLS; ×8 para comparar con un enlace en bits"),
       unit: "B/s", format: perSecond, tick: bytes, xs, series: [
-        { name: "enviados", color: "var(--s1)", values: pts.map((p) => p.bytes_sent ?? null) },
-        { name: "recibidos", color: "var(--s2)", values: pts.map((p) => p.bytes_received ?? null) },
+        { name: L("sent", "enviados"), color: "var(--s1)", values: pts.map((p) => p.bytes_sent ?? null) },
+        { name: L("received", "recibidos"), color: "var(--s2)", values: pts.map((p) => p.bytes_received ?? null) },
       ], bands: bandsFor(null),
     }));
   }
@@ -556,7 +583,7 @@ function chartsSection() {
 
   const steps = (run.series && run.series.steps) || [];
   if (steps.length > 1) {
-    sec.append(el("h2", {}, "p95 por paso"));
+    sec.append(el("h2", {}, L("p95 per step", "p95 por paso")));
     const mult = el("div", { class: "multiples" });
     for (const s of steps) {
       const byT = new Map(s.points.map((p) => [p.t, p]));
@@ -573,9 +600,9 @@ function chartsSection() {
 }
 
 function rawData(pts) {
-  return el("details", {}, el("summary", {}, "Ver los datos por segundo"),
+  return el("details", {}, el("summary", {}, L("Show the per-second data", "Ver los datos por segundo")),
     el("div", { class: "card scroll", style: "margin-top:8px" }, el("table", {},
-      el("thead", {}, el("tr", {}, ["segundo", "iniciadas", "descartadas", "requests", "errores", "p50", "p95", "p99", "enviados", "recibidos"].map((h) => el("th", {}, h)))),
+      el("thead", {}, el("tr", {}, [L("second", "segundo"), L("started", "iniciadas"), L("dropped", "descartadas"), "requests", L("errors", "errores"), "p50", "p95", "p99", L("sent", "enviados"), L("received", "recibidos")].map((h) => el("th", {}, h)))),
       el("tbody", {}, pts.map((p) => el("tr", {},
         el("td", {}, p.t), el("td", {}, num(p.started)), el("td", {}, num(p.dropped)), el("td", {}, num(p.requests)),
         el("td", {}, num(p.errors)), el("td", {}, ms(p.p50)), el("td", {}, ms(p.p95)), el("td", {}, ms(p.p99)),
@@ -585,21 +612,21 @@ function rawData(pts) {
 function vuSetupSection() {
   const v = run.vu_setup;
   if (!v) return null;
-  const state = v.failed ? pill("serious", `${v.failed} de ${v.vus} VUs quedaron afuera`) : pill("good", `${v.vus} VUs listos`);
+  const state = v.failed ? pill("serious", L(`${v.failed} of ${v.vus} VUs left out`, `${v.failed} de ${v.vus} VUs quedaron afuera`)) : pill("good", L(`${v.vus} VUs ready`, `${v.vus} VUs listos`));
   const took = v.duration_ms < 1000 ? `${num(v.duration_ms)} ms` : `${num(v.duration_ms / 1000)} s`;
-  return sessionSection("Setup por VU", state, `antes de la carga, en ${took}; no entra en las métricas de los pasos`, v.steps);
+  return sessionSection(L("Setup per VU", "Setup por VU"), state, L(`before the load, in ${took}; not part of the step metrics`, `antes de la carga, en ${took}; no entra en las métricas de los pasos`), v.steps);
 }
 
 function vuRefreshSection() {
   const v = run.vu_refresh;
   if (!v) return null;
-  const state = v.failed_vus ? pill("serious", `${v.failed_vus} VUs dejaron de iterar`) : pill("good", `${num(v.refreshes)} renovaciones`);
-  return sessionSection("Renovación de sesión", state, `cada ${num(v.every_s)} s por VU, en segundo plano; no entra en las métricas de los pasos`, v.steps);
+  const state = v.failed_vus ? pill("serious", L(`${v.failed_vus} VUs stopped iterating`, `${v.failed_vus} VUs dejaron de iterar`)) : pill("good", L(`${num(v.refreshes)} renewals`, `${num(v.refreshes)} renovaciones`));
+  return sessionSection(L("Session renewal", "Renovación de sesión"), state, L(`every ${num(v.every_s)} s per VU, in the background; not part of the step metrics`, `cada ${num(v.every_s)} s por VU, en segundo plano; no entra en las métricas de los pasos`), v.steps);
 }
 
 /** Tabla de pasos de vu_setup o vu_refresh, con su estado arriba. */
 function sessionSection(title, state, note, steps) {
-  const cols = ["paso", "requests", "fallidos", "p50", "p95", "max", ""];
+  const cols = [L("step", "paso"), "requests", L("failed", "fallidos"), "p50", "p95", "max", ""];
   return el("section", {}, el("h2", {}, title),
     el("div", { class: "card" },
       el("div", { style: "display:flex;gap:8px;align-items:center;flex-wrap:wrap" }, state,
@@ -618,18 +645,18 @@ function sessionSection(title, state, note, steps) {
 function stepsTable() {
   const steps = run.steps || [];
   if (!steps.length) return null;
-  const cols = ["paso", "requests", "fallas", "no-2xx", "p50", "p90", "p95", "p99", "p99.9", "max", "bytes/req"];
+  const cols = [L("step", "paso"), "requests", L("failed", "fallas"), L("non-2xx", "no-2xx"), "p50", "p90", "p95", "p99", "p99.9", "max", "bytes/req"];
   const perRequest = (total, n) => (total == null || !n ? "—" : bytes(total / n));
-  return el("section", {}, el("h2", {}, "Pasos"), el("div", { class: "card scroll" }, el("table", {},
+  return el("section", {}, el("h2", {}, L("Steps", "Pasos")), el("div", { class: "card scroll" }, el("table", {},
     el("thead", {}, el("tr", {}, cols.map((h) => el("th", {}, h)))),
     el("tbody", {}, steps.map((s) => {
       const l = s.latency_ms || {};
       const codes = Object.entries(s.status_codes || {}).map(([c, n]) => `${c}×${n}`).join("  ");
-      return el("tr", { title: codes ? `códigos: ${codes}` : null },
+      return el("tr", { title: codes ? L(`codes: ${codes}`, `códigos: ${codes}`) : null },
         el("td", {}, el("div", {}, s.name), el("div", { class: "mono muted" }, `${s.method} ${s.url}`)),
         el("td", {}, num(s.requests)), el("td", {}, num(s.failed)), el("td", {}, num(s.non_2xx)),
         el("td", {}, ms(l.p50)), el("td", {}, ms(l.p90)), el("td", {}, ms(l.p95)), el("td", {}, ms(l.p99)), el("td", {}, ms(l.p999)), el("td", {}, ms(l.max)),
-        el("td", { title: "enviados / recibidos por request" }, `${perRequest(s.bytes_sent, s.requests)} / ${perRequest(s.bytes_received, s.requests)}`));
+        el("td", { title: L("sent / received per request", "enviados / recibidos por request") }, `${perRequest(s.bytes_sent, s.requests)} / ${perRequest(s.bytes_received, s.requests)}`));
     })))));
 }
 
@@ -637,7 +664,7 @@ function checksSection() {
   const rows = (run.steps || []).flatMap((s) => (s.checks || []).map((c) => ({ step: s.name, ...c })));
   if (!rows.length) return null;
   return el("section", {}, el("h2", {}, "Checks"), el("div", { class: "card scroll" }, el("table", {},
-    el("thead", {}, el("tr", {}, ["paso", "check", "pasaron", "fallaron", ""].map((h, i) => el("th", { class: i === 1 || i === 4 ? "l" : null }, h)))),
+    el("thead", {}, el("tr", {}, [L("step", "paso"), "check", L("passed", "pasaron"), L("failed", "fallaron"), ""].map((h, i) => el("th", { class: i === 1 || i === 4 ? "l" : null }, h)))),
     el("tbody", {}, rows.map((c) => el("tr", {},
       el("td", {}, c.step), el("td", { class: "mono l" }, c.check),
       el("td", {}, num(c.passed)), el("td", {}, num(c.failed)),
@@ -650,22 +677,22 @@ function thresholdsSection() {
   const list = run.thresholds || [];
   if (!list.length) return null;
   return el("section", {}, el("h2", {}, "Thresholds"), el("div", { class: "card scroll" }, el("table", {},
-    el("thead", {}, el("tr", {}, ["criterio", "medido", ""].map((h, i) => el("th", { class: i === 2 ? "l" : null }, h)))),
+    el("thead", {}, el("tr", {}, [L("criterion", "criterio"), L("measured", "medido"), ""].map((h, i) => el("th", { class: i === 2 ? "l" : null }, h)))),
     el("tbody", {}, list.map((x) => el("tr", {},
       el("td", { class: "mono" }, x.threshold),
-      el("td", {}, x.actual == null ? "sin datos" : `${num(x.actual)} ${x.unit}`),
-      el("td", {}, x.passed ? el("span", { class: "status ok" }, "✓ cumple") : el("span", { class: "status", style: "color:var(--critical)" }, "✗ no cumple"))))))));
+      el("td", {}, x.actual == null ? L("no data", "sin datos") : `${num(x.actual)} ${x.unit}`),
+      el("td", {}, x.passed ? el("span", { class: "status ok" }, L("✓ met", "✓ cumple")) : el("span", { class: "status", style: "color:var(--critical)" }, L("✗ not met", "✗ no cumple")))))))));
 }
 
 function warningsSection() {
   const list = [...(run.warnings || [])];
-  if (run.aborted) list.unshift(`Corrida abortada: ${run.aborted}`);
+  if (run.aborted) list.unshift(L(`Run aborted: ${run.aborted}`, `Corrida abortada: ${run.aborted}`));
   if (!list.length) return null;
-  return el("section", {}, el("h2", {}, "Avisos"), el("div", { class: "card" }, el("ul", { class: "plain" }, list.map((w) => el("li", {}, w)))));
+  return el("section", {}, el("h2", {}, L("Warnings", "Avisos")), el("div", { class: "card" }, el("ul", { class: "plain" }, list.map((w) => el("li", {}, w)))));
 }
 
 app.append(header(), tiles(), ...[warningsSection(), findings(), comparison(), chartsSection(), stepsTable(), vuSetupSection(), vuRefreshSection(), checksSection(), thresholdsSection()].filter(Boolean),
-  el("footer", {}, `Generado por Crabfall ${DATA.crabfall_version} desde ${DATA.results_file}. Los datos están dentro de este archivo: se abre sin conexión.`));
+  el("footer", {}, L(`Generated by Crabfall ${DATA.crabfall_version} from ${DATA.results_file}. The data is inside this file: it opens offline.`, `Generado por Crabfall ${DATA.crabfall_version} desde ${DATA.results_file}. Los datos están dentro de este archivo: se abre sin conexión.`)));
 charts.forEach((d) => d());
 let resizeTimer;
 addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => charts.forEach((d) => d()), 100); });

@@ -96,8 +96,14 @@ impl Summary {
     /// `30 requests cada 60 s`, si el servidor la declaró.
     pub fn policy(&self) -> Option<String> {
         match (self.quota, self.window_s) {
-            (Some(q), Some(w)) => Some(format!("{q} requests cada {w} s")),
-            (Some(q), None) => Some(format!("{q} requests por ventana")),
+            (Some(q), Some(w)) => Some(crate::tr!(
+                "{q} requests every {w} s",
+                "{q} requests cada {w} s"
+            )),
+            (Some(q), None) => Some(crate::tr!(
+                "{q} requests per window",
+                "{q} requests por ventana"
+            )),
             _ => None,
         }
     }
@@ -106,7 +112,10 @@ impl Summary {
     pub fn retry_after(&self) -> Option<String> {
         match (self.retry_after_min_s, self.retry_after_max_s) {
             (Some(a), Some(b)) if a == b => Some(format!("Retry-After {a} s")),
-            (Some(a), Some(b)) => Some(format!("Retry-After de {a} a {b} s")),
+            (Some(a), Some(b)) => Some(crate::tr!(
+                "Retry-After from {a} to {b} s",
+                "Retry-After de {a} a {b} s"
+            )),
             _ => None,
         }
     }

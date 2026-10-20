@@ -183,12 +183,20 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente. Al cerrar
 - [x] Tests: el parser con los headers reales de express-rate-limit y los formatos viejos, la patología de rate limit con headers, y el aviso de tamaño (también con corridas sin bytes)
 - Listo: en `market-api`, `rate-limit` (20 it/s contra `/me` durante 45 s) recibió 300 429 desde el segundo 30 (20/s × 30 s = 600). El hallazgo dice "declara 600 requests cada 60 s (`RateLimit-Policy`) y pide esperar con `Retry-After de 16 a 30 s`", y `crabfall run` lo muestra en la línea `límite` (19 oct 2026). La corrida destapó un detalle de formato, ya corregido: con poco tráfico el pico salía "0.0 Mbit/s"; ahora sale en kbit/s.
 
-**16. Frenar y ver en vivo** (motor, para la TUI)
+**16. Idioma** (ADR-016)
+- [x] Inglés por defecto; `--lang` > `CRABFALL_LANG` > `language:` en config.yaml; sin tomar el idioma del sistema
+- [x] Toda la salida en los dos idiomas: terminal, validación, plan, hallazgos, avisos, comparación, ayuda de clap y reporte HTML (con números y fechas según el idioma)
+- [x] Cada mensaje con sus dos versiones juntas (`tr!`, `pick`); la ayuda se traduce con una tabla; el reporte con `L(en, es)`
+- [x] README, skill y documentación del schema en inglés; ADRs y roadmap en español
+- [x] Tests: los existentes en español con `CRABFALL_LANG=es` en `.cargo/config.toml`; los de inglés aparte (prioridad flag > variable > config, ayuda, idioma desconocido, mensajes del core)
+- Listo cuando: en `market-api`, una corrida sin configurar sale en inglés, con `language: es` en el config sale en español, y el reporte acompaña. **Pendiente:** la corrida.
+
+**17. Frenar y ver en vivo** (motor, para la TUI)
 - [ ] Frenar en orden: deja de iniciar iteraciones, espera las que están en curso y guarda resultados y reporte marcados como interrumpidos; Ctrl+C en `crabfall run` (ADR-015)
 - [ ] El colector publica la serie de cada segundo mientras corre (global y por paso)
 - [ ] Tests: frenar en los dos modelos, con `vu_setup` y `vu_refresh`, y la serie en vivo igual a la final
 
-**17. TUI** (ADR-015)
+**18. TUI** (ADR-015)
 - [ ] `crabfall` sin argumentos abre la TUI si hay terminal; el hook la bloquea para Claude
 - [ ] Elegir escenario y entorno, con el estado de la aprobación y la última corrida
 - [ ] Ajustes con los `Overrides` de la CLI, validados en el campo, y el comando equivalente
@@ -247,3 +255,4 @@ Regla de diagnóstico para el ancho de banda (los bytes por segundo se estancan 
 | 19 oct 2026 | Primera versión v0.1.0: `dev` se mergea a `main`; repo privado en GitHub | — |
 | 19 oct 2026 | Cliente HTTP real por defecto: cookies por VU, redirects hacia `allowed_hosts`, gzip y br; `check` nunca sale de loopback | ADR-014 |
 | 19 oct 2026 | TUI: `crabfall` sin argumentos; aprueba con el host tipeado; frena en orden y guarda; el HTML queda para analizar y compartir | ADR-015 |
+| 19 oct 2026 | Salida en inglés por defecto y en español a pedido; README y skill en inglés, ADRs y roadmap en español | ADR-016 |

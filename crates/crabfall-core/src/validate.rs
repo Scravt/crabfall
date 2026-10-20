@@ -118,7 +118,10 @@ fn find_todos(value: &Value, path: &mut String, todos: &mut Vec<Issue>) {
     match value {
         Value::Object(map) => {
             if let (1, Some(Value::String(what))) = (map.len(), map.get("todo")) {
-                todos.push(Issue::at(path.clone(), format!("valor pendiente: {what}")));
+                todos.push(Issue::at(
+                    path.clone(),
+                    crate::tr!("pending value: {what}", "valor pendiente: {what}"),
+                ));
                 return;
             }
             for (key, child) in map {
@@ -158,8 +161,7 @@ fn check_rules(s: &Scenario, errors: &mut Vec<Issue>) {
     if s.version != FORMAT_VERSION {
         errors.push(Issue::at(
             "version",
-            format!(
-                "versión de formato {} no soportada; esta versión de Crabfall soporta {FORMAT_VERSION}",
+            crate::tr!("format version {} is not supported; this version of Crabfall supports {FORMAT_VERSION}", "versión de formato {} no soportada; esta versión de Crabfall soporta {FORMAT_VERSION}",
                 s.version
             ),
         ));
@@ -167,11 +169,20 @@ fn check_rules(s: &Scenario, errors: &mut Vec<Issue>) {
     if !valid_name(&s.name) {
         errors.push(Issue::at(
             "name",
-            "usá solo letras, números, `_`, `.` y `-`",
+            crate::tr!(
+                "use only letters, digits, `_`, `.` and `-`",
+                "usá solo letras, números, `_`, `.` y `-`"
+            ),
         ));
     }
     if s.flows.is_empty() {
-        errors.push(Issue::at("flows", "tiene que haber al menos un flow"));
+        errors.push(Issue::at(
+            "flows",
+            crate::tr!(
+                "there must be at least one flow",
+                "tiene que haber al menos un flow"
+            ),
+        ));
     }
 
     let mut seen = HashSet::new();
@@ -180,7 +191,10 @@ fn check_rules(s: &Scenario, errors: &mut Vec<Issue>) {
         if step.think.is_some() {
             errors.push(Issue::at(
                 format!("setup[{i}].think"),
-                "`setup` corre una vez antes de la carga: no lleva pausas",
+                crate::tr!(
+                    "`setup` runs once before the load: it takes no pauses",
+                    "`setup` corre una vez antes de la carga: no lleva pausas"
+                ),
             ));
         }
     }
@@ -189,7 +203,10 @@ fn check_rules(s: &Scenario, errors: &mut Vec<Issue>) {
         if step.think.is_some() {
             errors.push(Issue::at(
                 format!("vu_setup[{i}].think"),
-                "`vu_setup` corre antes de la carga: no lleva pausas",
+                crate::tr!(
+                    "`vu_setup` runs before the load: it takes no pauses",
+                    "`vu_setup` corre antes de la carga: no lleva pausas"
+                ),
             ));
         }
     }
@@ -200,25 +217,31 @@ fn check_rules(s: &Scenario, errors: &mut Vec<Issue>) {
     {
         errors.push(Issue::at(
             "defaults.redirects",
-            format!("a lo sumo {MAX_REDIRECTS}"),
+            crate::tr!("at most {MAX_REDIRECTS}", "a lo sumo {MAX_REDIRECTS}"),
         ));
     }
     if let Some(refresh) = &s.vu_refresh {
         if s.vu_setup.is_empty() {
             errors.push(Issue::at(
                 "vu_refresh",
-                "renueva lo que preparó `vu_setup`: sin `vu_setup` no hay sesión que renovar",
+                crate::tr!("it renews what `vu_setup` prepared: without `vu_setup` there is no session to renew", "renueva lo que preparó `vu_setup`: sin `vu_setup` no hay sesión que renovar"),
             ));
         }
         if refresh.every.0.is_zero() {
-            errors.push(Issue::at("vu_refresh.every", "tiene que ser mayor que 0"));
+            errors.push(Issue::at(
+                "vu_refresh.every",
+                crate::tr!("must be greater than 0", "tiene que ser mayor que 0"),
+            ));
         }
         for (i, step) in refresh.steps.iter().enumerate() {
             check_step(step, &format!("vu_refresh.steps[{i}]"), &mut seen, errors);
             if step.think.is_some() {
                 errors.push(Issue::at(
                     format!("vu_refresh.steps[{i}].think"),
-                    "la renovación corre en segundo plano: no lleva pausas",
+                    crate::tr!(
+                        "renewal runs in the background: it takes no pauses",
+                        "la renovación corre en segundo plano: no lleva pausas"
+                    ),
                 ));
             }
         }
@@ -228,13 +251,13 @@ fn check_rules(s: &Scenario, errors: &mut Vec<Issue>) {
         if flow.weight == 0 {
             errors.push(Issue::at(
                 format!("{flow_path}.weight"),
-                "tiene que ser mayor que 0",
+                crate::tr!("must be greater than 0", "tiene que ser mayor que 0"),
             ));
         }
         if flow.steps.is_empty() {
             errors.push(Issue::at(
                 format!("{flow_path}.steps"),
-                "el flow no tiene pasos",
+                crate::tr!("the flow has no steps", "el flow no tiene pasos"),
             ));
         }
         for (i, step) in flow.steps.iter().enumerate() {
@@ -247,14 +270,14 @@ fn check_rules(s: &Scenario, errors: &mut Vec<Issue>) {
         if !valid_var_name(name) || name == "env" {
             errors.push(Issue::at(
                 &path,
-                "el nombre usa letras, números y `_`, no empieza con un número y no puede ser `env`",
+                crate::tr!("the name uses letters, digits and `_`, does not start with a digit and cannot be `env`", "el nombre usa letras, números y `_`, no empieza con un número y no puede ser `env`"),
             ));
         }
         let file = spec.file.to_ascii_lowercase();
         if !(file.ends_with(".csv") || file.ends_with(".json")) {
             errors.push(Issue::at(
                 format!("{path}.file"),
-                "usá un archivo .csv o .json",
+                crate::tr!("use a .csv or .json file", "usá un archivo .csv o .json"),
             ));
         }
     }
@@ -276,12 +299,16 @@ fn check_step<'a>(
     if !valid_name(&step.name) {
         errors.push(Issue::at(
             format!("{path}.name"),
-            "usá solo letras, números, `_`, `.` y `-`",
+            crate::tr!(
+                "use only letters, digits, `_`, `.` and `-`",
+                "usá solo letras, números, `_`, `.` y `-`"
+            ),
         ));
     } else if !seen.insert(step.name.as_str()) {
         errors.push(Issue::at(
             format!("{path}.name"),
-            format!(
+            crate::tr!(
+                "`{}` is repeated: every step name must be unique",
                 "`{}` está repetido: el nombre de cada paso tiene que ser único",
                 step.name
             ),
@@ -291,7 +318,8 @@ fn check_step<'a>(
     if !METHODS.contains(&r.method.as_str()) {
         errors.push(Issue::at(
             format!("{path}.request.method"),
-            format!(
+            crate::tr!(
+                "method `{}` is not supported (use one of {})",
                 "método `{}` no soportado (usá uno de {})",
                 r.method,
                 METHODS.join(", ")
@@ -303,7 +331,10 @@ fn check_step<'a>(
     if !url_ok {
         errors.push(Issue::at(
             format!("{path}.request.url"),
-            "tiene que empezar con `/` (relativa a base_url) o con http:// o https://",
+            crate::tr!(
+                "must start with `/` (relative to base_url) or with http:// or https://",
+                "tiene que empezar con `/` (relativa a base_url) o con http:// o https://"
+            ),
         ));
     }
     let bodies = [
@@ -315,25 +346,31 @@ fn check_step<'a>(
     if bodies.iter().filter(|b| **b).count() > 1 {
         errors.push(Issue::at(
             format!("{path}.request"),
-            "usá uno solo de `json`, `body`, `multipart` o `form`",
+            crate::tr!(
+                "use only one of `json`, `body`, `multipart` or `form`",
+                "usá uno solo de `json`, `body`, `multipart` o `form`"
+            ),
         ));
     }
     for (name, value) in &r.form {
         let at = format!("{path}.request.form.{name}");
         if name.is_empty() {
-            errors.push(Issue::at(&at, "el campo necesita un nombre"));
+            errors.push(Issue::at(
+                &at,
+                crate::tr!("the field needs a name", "el campo necesita un nombre"),
+            ));
         }
         if !matches!(value, Value::String(_) | Value::Number(_) | Value::Bool(_)) {
             errors.push(Issue::at(
                 &at,
-                "un campo de formulario es texto, número o booleano (para listas u objetos, usá `json`)",
+                crate::tr!("a form field is text, a number or a boolean (for lists or objects, use `json`)", "un campo de formulario es texto, número o booleano (para listas u objetos, usá `json`)"),
             ));
         }
     }
     if r.redirects.is_some_and(|n| n > MAX_REDIRECTS) {
         errors.push(Issue::at(
             format!("{path}.request.redirects"),
-            format!("a lo sumo {MAX_REDIRECTS}"),
+            crate::tr!("at most {MAX_REDIRECTS}", "a lo sumo {MAX_REDIRECTS}"),
         ));
     }
     if !r.multipart.is_empty() {
@@ -343,13 +380,16 @@ fn check_step<'a>(
         {
             errors.push(Issue::at(
                 format!("{path}.request.headers"),
-                "con `multipart`, el `content-type` lo pone Crabfall (lleva el boundary): sacalo",
+                crate::tr!("with `multipart`, Crabfall sets the `content-type` (it carries the boundary): remove it", "con `multipart`, el `content-type` lo pone Crabfall (lleva el boundary): sacalo"),
             ));
         }
         for (name, part) in &r.multipart {
             let at = format!("{path}.request.multipart.{name}");
             if name.is_empty() {
-                errors.push(Issue::at(&at, "el campo necesita un nombre"));
+                errors.push(Issue::at(
+                    &at,
+                    crate::tr!("the field needs a name", "el campo necesita un nombre"),
+                ));
             }
             if let crate::scenario::MultipartPart::File(f) = part {
                 let p = std::path::Path::new(&f.file);
@@ -360,7 +400,10 @@ fn check_step<'a>(
                 {
                     errors.push(Issue::at(
                         format!("{at}.file"),
-                        "usá una ruta relativa a .crabfall/, sin `..`",
+                        crate::tr!(
+                            "use a path relative to .crabfall/, without `..`",
+                            "usá una ruta relativa a .crabfall/, sin `..`"
+                        ),
                     ));
                 }
             }
@@ -369,14 +412,14 @@ fn check_step<'a>(
     if r.timeout.is_some_and(|t| t.0.is_zero()) {
         errors.push(Issue::at(
             format!("{path}.request.timeout"),
-            "tiene que ser mayor que 0",
+            crate::tr!("must be greater than 0", "tiene que ser mayor que 0"),
         ));
     }
     for (name, spec) in &step.extract {
         if !valid_var_name(name) {
             errors.push(Issue::at(
                 format!("{path}.extract.{name}"),
-                "el nombre de la variable usa letras, números y `_`, y no empieza con un número",
+                crate::tr!("the variable name uses letters, digits and `_`, and does not start with a digit", "el nombre de la variable usa letras, números y `_`, y no empieza con un número"),
             ));
         }
         if let Err(e) = Extractor::parse(spec) {
@@ -432,13 +475,17 @@ fn check_load(l: &Load, errors: &mut Vec<Issue>) {
         if required.contains(&field) && !is_present {
             errors.push(Issue::at(
                 format!("load.{field}"),
-                format!("falta `{field}` (obligatorio en {executor})"),
+                crate::tr!(
+                    "`{field}` is missing (required by {executor})",
+                    "falta `{field}` (obligatorio en {executor})"
+                ),
             ));
         }
         if is_present && !required.contains(&field) && !allowed.contains(&field) {
             errors.push(Issue::at(
                 format!("load.{field}"),
-                format!(
+                crate::tr!(
+                    "`{field}` does not apply to {executor} (use: {})",
                     "`{field}` no aplica a {executor} (usá: {})",
                     [required, allowed].concat().join(", ")
                 ),
@@ -446,16 +493,22 @@ fn check_load(l: &Load, errors: &mut Vec<Issue>) {
         }
     }
     if l.rate.is_some_and(|r| r.count == 0) {
-        errors.push(Issue::at("load.rate", "tiene que ser mayor que 0"));
+        errors.push(Issue::at(
+            "load.rate",
+            crate::tr!("must be greater than 0", "tiene que ser mayor que 0"),
+        ));
     }
     if l.duration.is_some_and(|d| d.0.is_zero()) {
-        errors.push(Issue::at("load.duration", "tiene que ser mayor que 0"));
+        errors.push(Issue::at(
+            "load.duration",
+            crate::tr!("must be greater than 0", "tiene que ser mayor que 0"),
+        ));
     }
     for (field, value) in [("max_vus", l.max_vus), ("vus", l.vus)] {
         if value == Some(0) {
             errors.push(Issue::at(
                 format!("load.{field}"),
-                "tiene que ser mayor que 0",
+                crate::tr!("must be greater than 0", "tiene que ser mayor que 0"),
             ));
         }
     }
@@ -463,14 +516,17 @@ fn check_load(l: &Load, errors: &mut Vec<Issue>) {
         if stages.is_empty() {
             errors.push(Issue::at(
                 "load.stages",
-                "tiene que haber al menos una etapa",
+                crate::tr!(
+                    "there must be at least one stage",
+                    "tiene que haber al menos una etapa"
+                ),
             ));
         }
         for (i, s) in stages.iter().enumerate() {
             if s.duration.0.is_zero() {
                 errors.push(Issue::at(
                     format!("load.stages[{i}].duration"),
-                    "tiene que ser mayor que 0",
+                    crate::tr!("must be greater than 0", "tiene que ser mayor que 0"),
                 ));
             }
         }
@@ -478,7 +534,10 @@ fn check_load(l: &Load, errors: &mut Vec<Issue>) {
         if start == 0 && stages.iter().all(|s| s.target.count == 0) {
             errors.push(Issue::at(
                 "load.stages",
-                "todas las tasas son 0: no se generaría carga",
+                crate::tr!(
+                    "every rate is 0: no load would be generated",
+                    "todas las tasas son 0: no se generaría carga"
+                ),
             ));
         }
     }

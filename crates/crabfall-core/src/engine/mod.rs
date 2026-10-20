@@ -144,11 +144,16 @@ pub async fn run_step(
 fn step_problem(step: &StepPlan, run: &StepRun) -> Option<String> {
     match (&run.result, &run.extract_error) {
         (Err(f), _) => Some(f.message.clone()),
-        (Ok(r), _) if r.status >= 400 => Some(format!("respondió {}", r.status)),
+        (Ok(r), _) if r.status >= 400 => Some(crate::tr!("responded {}", "respondió {}", r.status)),
         (_, Some(e)) => Some(e.clone()),
         _ => step.checks.iter().zip(&run.checks).find_map(|(c, r)| {
-            r.as_ref()
-                .map(|why| format!("el check `{}` falló: {why}", c.label))
+            r.as_ref().map(|why| {
+                crate::tr!(
+                    "check `{}` failed: {why}",
+                    "el check `{}` falló: {why}",
+                    c.label
+                )
+            })
         }),
     }
 }
@@ -446,7 +451,11 @@ pub async fn run_setup(
             return (
                 vars,
                 steps,
-                Some(format!("el setup falló en `{}`: {problem}", step.name)),
+                Some(crate::tr!(
+                    "setup failed at `{}`: {problem}",
+                    "el setup falló en `{}`: {problem}",
+                    step.name
+                )),
             );
         }
         vars.extend(run.extracted);
@@ -511,7 +520,10 @@ pub async fn run(plan: Arc<Plan>, progress: Arc<Progress>) -> RunResult {
             let mut aborted = RunResult::aborted(
                 &plan,
                 setup,
-                format!("el vu_setup falló en los {concurrency} VUs; {why}"),
+                crate::tr!(
+                    "vu_setup failed in all {concurrency} VUs; {why}",
+                    "el vu_setup falló en los {concurrency} VUs; {why}"
+                ),
             );
             aborted.vu_setup = Some(result);
             return aborted;
@@ -599,7 +611,8 @@ pub async fn run(plan: Arc<Plan>, progress: Arc<Progress>) -> RunResult {
     let scheduler_lag = dispatch.lag.as_ref().and_then(Percentiles::from);
     let mut warnings = warnings(&totals, scheduler_lag.as_ref());
     if let Some(v) = vu_setup.as_ref().filter(|v| v.failed > 0) {
-        warnings.push(format!(
+        warnings.push(crate::tr!(
+            "{} of {} VUs did not complete vu_setup and were left out: the load ran with {}.",
             "{} de {} VUs no completaron vu_setup y quedaron afuera: la carga corrió con {}.",
             v.failed,
             v.vus,
@@ -608,7 +621,8 @@ pub async fn run(plan: Arc<Plan>, progress: Arc<Progress>) -> RunResult {
     }
     let vu_refresh = refresh.map(|r| r.result(&plan));
     if let Some(r) = vu_refresh.as_ref().filter(|r| r.failed_vus > 0) {
-        warnings.push(format!(
+        warnings.push(crate::tr!(
+            "{} VUs failed to renew their session (vu_refresh) and stopped iterating.",
             "{} VUs fallaron al renovar la sesión (vu_refresh) y dejaron de iterar.",
             r.failed_vus
         ));
@@ -621,8 +635,7 @@ pub async fn run(plan: Arc<Plan>, progress: Arc<Progress>) -> RunResult {
         .iter()
         .any(|p| p.requests as f64 >= 0.9 * cap * f64::from(series.window_s));
     if dispatch.paced > 0 && near_cap {
-        warnings.push(format!(
-            "{} iteraciones esperaron para no superar limits.max_rps ({}/s): la carga quedó limitada por el entorno.",
+        warnings.push(crate::tr!("{} iterations waited so as not to exceed limits.max_rps ({}/s): the load was limited by the environment.", "{} iteraciones esperaron para no superar limits.max_rps ({}/s): la carga quedó limitada por el entorno.",
             dispatch.paced,
             plan.request_cap.unwrap_or_default()
         ));
@@ -880,21 +893,23 @@ fn warnings(t: &Totals, lag: Option<&Percentiles>) -> Vec<String> {
     let mut out = Vec::new();
     if t.dropped > 0 {
         let pct = 100.0 * t.dropped as f64 / t.planned.max(1) as f64;
-        out.push(format!(
-            "{} iteraciones descartadas ({pct:.1}%) por falta de VUs libres: el servidor no da abasto \
+        out.push(crate::tr!("{} iterations dropped ({pct:.1}%) for lack of free VUs: the server cannot keep up \
+             at this rate or max_vus is low. The measured latencies underestimate the real one.", "{} iteraciones descartadas ({pct:.1}%) por falta de VUs libres: el servidor no da abasto \
              a esta tasa o max_vus es bajo. Las latencias medidas subestiman la real.",
             t.dropped
         ));
     }
     if lag.is_some_and(|l| l.p99 > 5.0) {
-        out.push(
+        out.push(crate::tr!(
+            "the scheduler was late (p99 > 5 ms): the generator may be the bottleneck; \
+             the results are not reliable.",
             "el scheduler llegó tarde (p99 > 5 ms): el generador puede ser el cuello de botella; \
              los resultados no son confiables."
-                .into(),
-        );
+        ));
     }
     if t.interrupted > 0 {
-        out.push(format!(
+        out.push(crate::tr!(
+            "{} iterations cut by graceful_stop.",
             "{} iteraciones cortadas por graceful_stop.",
             t.interrupted
         ));
@@ -982,7 +997,10 @@ async fn follow(
         let next = url.join(&location).map_err(|e| {
             Failure::new(
                 FailureKind::Redirect,
-                format!("redirect a `{location}`: URL inválida ({e})"),
+                crate::tr!(
+                    "redirect to `{location}`: invalid URL ({e})",
+                    "redirect a `{location}`: URL inválida ({e})"
+                ),
             )
         })?;
         let https = match next.scheme() {
@@ -991,7 +1009,10 @@ async fn follow(
             other => {
                 return Err(Failure::new(
                     FailureKind::Redirect,
-                    format!("redirect a `{next}`: esquema `{other}` no soportado"),
+                    crate::tr!(
+                        "redirect to `{next}`: scheme `{other}` is not supported",
+                        "redirect a `{next}`: esquema `{other}` no soportado"
+                    ),
                 ));
             }
         };
@@ -999,7 +1020,10 @@ async fn follow(
         if !plan.allowed_hosts.contains(&host) {
             return Err(Failure::new(
                 FailureKind::Redirect,
-                format!("redirect a `{host}`, que no está en allowed_hosts del entorno"),
+                crate::tr!(
+                    "redirect to `{host}`, which is not in the allowed_hosts of the environment",
+                    "redirect a `{host}`, que no está en allowed_hosts del entorno"
+                ),
             ));
         }
         let next_origin = Origin {
@@ -1028,7 +1052,12 @@ fn url_of(origin: &Origin, uri: &hyper::Uri) -> Result<url::Url, Failure> {
         "{scheme}://{}:{}{target}",
         origin.host, origin.port
     ))
-    .map_err(|e| Failure::new(FailureKind::Protocol, format!("URL inválida: {e}")))
+    .map_err(|e| {
+        Failure::new(
+            FailureKind::Protocol,
+            crate::tr!("invalid URL: {e}", "URL inválida: {e}"),
+        )
+    })
 }
 
 /// El request que sigue a un redirect. 303, y 301 o 302 después de un POST, pasan a GET
@@ -1048,9 +1077,12 @@ fn redirected(
         *request.body_mut() = Body::default();
         request.headers_mut().remove(CONTENT_TYPE);
     }
-    *request.uri_mut() = next[url::Position::BeforePath..]
-        .parse()
-        .map_err(|e| Failure::new(FailureKind::Redirect, format!("redirect a `{next}`: {e}")))?;
+    *request.uri_mut() = next[url::Position::BeforePath..].parse().map_err(|e| {
+        Failure::new(
+            FailureKind::Redirect,
+            crate::tr!("redirect to `{next}`: {e}", "redirect a `{next}`: {e}"),
+        )
+    })?;
     let host = next.host_str().unwrap_or_default();
     let authority = match next.port() {
         Some(port) => format!("{host}:{port}"),
@@ -1089,7 +1121,8 @@ pub async fn send_step(
         Ok(result) => result,
         Err(_) => Err(Failure::new(
             FailureKind::Timeout,
-            format!(
+            crate::tr!(
+                "no response within {}",
                 "sin respuesta en {}",
                 crate::units::HumanDuration(step.timeout)
             ),

@@ -10,7 +10,13 @@ pub fn cmd_findings(run: Option<&str>, as_json: bool) -> u8 {
         .ok()
         .and_then(|cwd| Project::discover(&cwd))
     else {
-        eprintln!("✗ no encontré .crabfall/ en este directorio ni en los superiores");
+        eprintln!(
+            "{}",
+            crabfall_core::tr!(
+                "✗ no .crabfall/ found in this directory or its parents",
+                "✗ no encontré .crabfall/ en este directorio ni en los superiores"
+            )
+        );
         return exit::INVALID;
     };
     let file = match runs::file(&project, run) {
@@ -103,10 +109,16 @@ fn pick(v: &Value, keys: &[&str]) -> Value {
 pub fn print_findings(findings: &Value) {
     let list = findings.as_array().map(Vec::as_slice).unwrap_or_default();
     if list.is_empty() {
-        println!("Sin hallazgos: no se detectó ningún patrón conocido.");
+        println!(
+            "{}",
+            crabfall_core::tr!(
+                "No findings: no known pattern was detected.",
+                "Sin hallazgos: no se detectó ningún patrón conocido."
+            )
+        );
         return;
     }
-    println!("Hallazgos:");
+    println!("{}", crabfall_core::i18n::pick("Findings:", "Hallazgos:"));
     for f in list {
         let mark = match f["severity"].as_str() {
             Some("high") => "✗✗",
@@ -120,7 +132,10 @@ pub fn print_findings(findings: &Value) {
             .filter_map(|k| source[*k].as_str())
             .collect();
         if !location.is_empty() {
-            println!("   código: {}", location.join(" · "));
+            println!(
+                "{}",
+                crabfall_core::tr!("   code: {}", "   código: {}", location.join(" · "))
+            );
         }
         for cause in f["causes"].as_array().into_iter().flatten().take(3) {
             println!("   - {}", cause.as_str().unwrap_or_default());
