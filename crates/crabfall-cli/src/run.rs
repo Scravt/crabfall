@@ -120,11 +120,15 @@ pub fn cmd_run(target: &crate::Target, as_json: bool) -> u8 {
             .is_terminal()
             .then(|| tokio::spawn(show_progress(progress.clone(), duration + graceful_stop)));
         let stopper = tokio::spawn(stop_on_ctrl_c(progress.clone()));
-        let result = engine::run(plan.clone(), progress).await;
+        let result = engine::run(plan.clone(), progress.clone()).await;
+        // El aviso de Ctrl+C ya terminó la línea de progreso.
+        let progress_line_closed = progress.stop_requested();
         stopper.abort();
         if let Some(t) = ticker {
             t.abort();
-            eprintln!();
+            if !progress_line_closed {
+                eprintln!();
+            }
         }
         result
     });
@@ -213,6 +217,10 @@ async fn show_progress(p: Arc<Progress>, total: Duration) {
     let mut start = Instant::now();
     loop {
         tokio::time::sleep(Duration::from_secs(1)).await;
+        // Al frenar, el aviso ya cerró la línea: no se vuelve a escribir encima.
+        if p.stop_requested() {
+            return;
+        }
         // Mientras los VUs hacen su vu_setup, la carga todavía no empezó.
         let total_vus = p.vus_total.load(Relaxed);
         if total_vus > 0 && p.started.load(Relaxed) == 0 && p.dropped.load(Relaxed) == 0 {
@@ -407,7 +415,7 @@ fn print_summary(r: &RunResult) {
         crabfall_core::i18n::pick("step", "paso"),
         "req",
         crabfall_core::i18n::pick("failed", "fallas"),
-        "no-2xx",
+        crabfall_core::i18n::pick("non-2xx", "no-2xx"),
         "p50",
         "p90",
         "p95",

@@ -198,7 +198,7 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente. Al cerrar
 - [x] Ctrl+C en `crabfall run`: el primero frena en orden, el segundo corta
 - [x] En vivo: fase (setup, vu_setup, carga, drenando, terminada), VUs ocupados, renovaciones fallidas y cada segundo cerrado de la serie (global y por paso), publicado medio segundo después de cerrar; la serie final y la publicada salen de la misma función
 - [x] Tests: frenar en los dos modelos, dos veces (corta lo que está en curso), durante `vu_setup`, y la serie en vivo igual a la final
-- Listo cuando: Ctrl+C en una corrida real de `market-api` guarda los resultados y el reporte con el aviso. **Pendiente:** la corrida.
+- Listo: en `market-api`, `browse --duration 2m` frenado con Ctrl+C a los 20 s terminó en 20,8 s (sin iteraciones largas que esperar), con 416 de 416 iteraciones y 1.248 checks pasados, y guardó resultados y reporte con el aviso "Stopped by the person at second 20.8". La corrida destapó dos detalles ya corregidos: la columna `no-2xx` sin traducir y dos líneas en blanco después del aviso (20 oct 2026).
 
 **18. TUI** (ADR-015)
 - [ ] `crabfall` sin argumentos abre la TUI si hay terminal; el hook la bloquea para Claude
