@@ -8,6 +8,7 @@ mod prepare;
 mod report;
 mod run;
 mod runs;
+mod tui;
 
 use std::{path::Path, process::ExitCode};
 
@@ -48,8 +49,9 @@ struct Cli {
     /// Language of the output: en (default) or es. Also CRABFALL_LANG or `language:` in .crabfall/config.yaml.
     #[arg(long, global = true, value_name = "en|es")]
     lang: Option<Lang>,
+    /// Sin subcomando, en una terminal, abre la TUI (ADR-015).
     #[command(subcommand)]
-    command: Command,
+    command: Option<Command>,
 }
 
 /// Qué escenario, contra qué entorno y con qué variables.
@@ -220,7 +222,20 @@ fn main() -> ExitCode {
         Ok(cli) => cli,
         Err(e) => e.exit(),
     };
-    let code = match cli.command {
+    let Some(command) = cli.command else {
+        // Sin subcomando: la TUI si hay una persona en una terminal; si no, la ayuda.
+        use std::io::IsTerminal;
+        if std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
+            return ExitCode::from(tui::run());
+        }
+        let mut help = Cli::command();
+        if i18n::is_es() {
+            help = spanish_help(help);
+        }
+        let _ = help.print_help();
+        return ExitCode::from(exit::INVALID);
+    };
+    let code = match command {
         Command::Validate { target, json } => cmd_validate(&target, json),
         Command::Claude {
             action: ClaudeAction::Install,

@@ -9,6 +9,7 @@ use crate::{
 
 pub const DIR: &str = ".crabfall";
 
+#[derive(Debug, Clone)]
 pub struct Project {
     /// Carpeta `.crabfall/`.
     pub dir: PathBuf,

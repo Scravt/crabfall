@@ -23,6 +23,16 @@ pub fn cmd_pre_tool_use() -> u8 {
     }
     let command = event["tool_input"]["command"].as_str().unwrap_or_default();
     match blocked_subcommand(command) {
+        Some("tui") => {
+            eprintln!(
+                "{}",
+                crabfall_core::tr!(
+                    "crabfall without a subcommand opens the interactive TUI, which approves and runs load: only a person uses it (ADR-004, ADR-015).                  You can use `crabfall validate` and `crabfall check`.",
+                    "crabfall sin subcomando abre la TUI interactiva, que aprueba y corre carga: la usa solo una persona (ADR-004, ADR-015).                  Vos podés usar `crabfall validate` y `crabfall check`."
+                )
+            );
+            2
+        }
         Some(sub) => {
             eprintln!(
                 "{}",
@@ -71,8 +81,27 @@ pub fn blocked_subcommand(command: &str) -> Option<&'static str> {
                             .map_or(words.len(), |i| i + 1)
                     })
                 })?;
-            let sub = words[start..].iter().find(|w| !w.starts_with('-'))?;
-            HUMAN_ONLY.iter().find(|h| *h == sub).copied()
+            let mut rest = words[start..].iter();
+            while let Some(w) = rest.next() {
+                match *w {
+                    // La ayuda y la versión no hacen nada.
+                    "--help" | "-h" | "--version" | "-V" => return None,
+                    "--lang" => {
+                        rest.next();
+                    }
+                    w if w.starts_with('-') => {}
+                    sub => return HUMAN_ONLY.iter().find(|h| **h == sub).copied(),
+                }
+            }
+            // Sin subcomando, `crabfall` abre la TUI (ADR-015), que también aprueba y corre.
+            // Solo si es el comando del segmento: `which crabfall` no la abre.
+            let invoked = words
+                .iter()
+                .take_while(|w| w.contains('=') && !w.starts_with('-'))
+                .count()
+                + 1
+                == start;
+            invoked.then_some("tui")
         })
 }
 
@@ -126,5 +155,18 @@ mod tests {
         assert_eq!(blocked_subcommand("npm run dev"), None);
         assert_eq!(blocked_subcommand("cargo run -p lab-server"), None);
         assert_eq!(blocked_subcommand("cat crabfall-run.txt"), None);
+        assert_eq!(blocked_subcommand("crabfall --help"), None);
+        assert_eq!(blocked_subcommand("crabfall --version"), None);
+        assert_eq!(blocked_subcommand("which crabfall"), None);
+        assert_eq!(blocked_subcommand("crabfall --lang es validate x"), None);
+    }
+
+    #[test]
+    fn blocks_the_tui() {
+        assert_eq!(blocked_subcommand("crabfall"), Some("tui"));
+        assert_eq!(blocked_subcommand("crabfall --lang es"), Some("tui"));
+        assert_eq!(blocked_subcommand("CRABFALL_LANG=es crabfall"), Some("tui"));
+        assert_eq!(blocked_subcommand("cd api && crabfall"), Some("tui"));
+        assert_eq!(blocked_subcommand("crabfall --lang es run x"), Some("run"));
     }
 }

@@ -201,12 +201,15 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente. Al cerrar
 - Listo: en `market-api`, `browse --duration 2m` frenado con Ctrl+C a los 20 s terminó en 20,8 s (sin iteraciones largas que esperar), con 416 de 416 iteraciones y 1.248 checks pasados, y guardó resultados y reporte con el aviso "Stopped by the person at second 20.8". La corrida destapó dos detalles ya corregidos: la columna `no-2xx` sin traducir y dos líneas en blanco después del aviso (20 oct 2026).
 
 **18. TUI** (ADR-015)
-- [ ] `crabfall` sin argumentos abre la TUI si hay terminal; el hook la bloquea para Claude
-- [ ] Elegir escenario y entorno, con el estado de la aprobación y la última corrida
-- [ ] Ajustes con los `Overrides` de la CLI, validados en el campo, y el comando equivalente
-- [ ] Check, aprobar (mismo resumen, diff y host tipeado) y correr
-- [ ] Vista en vivo: indicadores del último segundo, sparklines de p95 y errores, pasos con p95 de los últimos 5 s, avisos; `q` frena
-- [ ] Resultados en pestañas; `o` abre el HTML, `r` repite
+- [x] `crabfall` sin argumentos abre la TUI si hay terminal (si no, la ayuda); el hook la bloquea para Claude (`crabfall` sin subcomando, sin bloquear `--help` ni `which crabfall`)
+- [x] Inicio: escenarios con su descripción, el estado de la aprobación en el entorno elegido (también si se aprobó con ajustes) y la última corrida; `e` cambia de entorno
+- [x] Detalle: el resumen de riesgo de `approve` y un formulario de ajustes con los mismos parsers que los flags; el plan se rearma al aplicar y el error queda en el campo; el comando equivalente
+- [x] Check en segundo plano, aprobar tipeando el host (mismo resumen y diff) y correr con `run::execute`, que guarda resultados y reporte como `crabfall run`
+- [x] Vista en vivo: fase y avance, indicadores del último segundo, sparklines de p95 y errores, pasos (p50 del último segundo y peor p95 de los últimos 5), avisos; `q` o Ctrl+C frenan con confirmación
+- [x] Resultados en pestañas (resumen con comparación contra la anterior, hallazgos, pasos, checks); `o` abre el HTML, `r` repite
+- [x] La CLI se reordenó para compartir piezas: `prepare_in`, `approve::{summary, verify, sign}`, `run::execute`
+- [x] Tests con `TestBackend`: lista, ajustes válidos e inválidos, correr sin aprobación, host equivocado, check, pantalla de corrida; y dos tests ignorados que imprimen las pantallas (uno con una corrida real)
+- Listo cuando: en `market-api`, desde la TUI, abro `browse`, le bajo la duración, lo apruebo, lo corro mirando en vivo, lo freno con `q` y abro el reporte con `o`. **Pendiente:** la prueba (la hace una persona).
 - Después: historial y comparación en la TUI
 
 ## Primera versión

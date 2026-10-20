@@ -38,8 +38,14 @@ pub fn cmd_report(run: Option<&str>, open: bool) -> u8 {
     match write(&project, &file) {
         Ok(report) => {
             println!("{}", display(&report));
-            if open {
-                open_in_browser(&report);
+            if open && !open_in_browser(&report) {
+                eprintln!(
+                    "{}",
+                    crabfall_core::tr!(
+                        "WARNING: could not open the browser; open the file by hand.",
+                        "AVISO: no se pudo abrir el navegador; abrí el archivo a mano."
+                    )
+                );
             }
             exit::OK
         }
@@ -103,7 +109,8 @@ fn render(doc: &Value, comparison: Option<(Value, Value)>, results_file: &str) -
     TEMPLATE.replacen(PLACEHOLDER, &data, 1)
 }
 
-fn open_in_browser(path: &Path) {
+/// Abre el archivo en el navegador. Devuelve si pudo.
+pub fn open_in_browser(path: &Path) -> bool {
     let path = path.to_string_lossy().into_owned();
     let result = if cfg!(windows) {
         std::process::Command::new("cmd")
@@ -114,15 +121,7 @@ fn open_in_browser(path: &Path) {
     } else {
         std::process::Command::new("xdg-open").arg(&path).status()
     };
-    if !result.is_ok_and(|s| s.success()) {
-        eprintln!(
-            "{}",
-            crabfall_core::tr!(
-                "WARNING: could not open the browser; open the file by hand.",
-                "AVISO: no se pudo abrir el navegador; abrí el archivo a mano."
-            )
-        );
-    }
+    result.is_ok_and(|s| s.success())
 }
 
 #[cfg(test)]

@@ -113,6 +113,8 @@ You can freely use: `crabfall validate`, `crabfall check` (only against loopback
    ```
    Any later change to the scenario or the environment invalidates the approval: if you fix something, say that it has to be approved again.
 
+   The person can also do it from the terminal UI: `crabfall` without a subcommand opens it (pick the scenario, approve, run and watch it live). You cannot use it: a hook blocks it.
+
    **Tweaks by flag.** To vary a run without touching the YAML ("the same at twice the rate", "try it with 20 users", "with other users"), use flags instead of editing the scenario: `--rate`, `--duration`, `--vus`, `--max-vus`, `--start-rate`, `--stages 100/s:1m,0/s:30s`, `--graceful-stop`, `--executor`, `--think 1s-3s`, `--refresh-every 4m`, `--data users=data/others.csv`, `--pick users=random` and `--threshold "http.latency.p95<300ms"` (list in `crabfall run --help`; `--threshold` replaces the YAML ones and needs no new approval). Validate them with `crabfall validate <name> <flags> --json`: the error says which flag is missing or extra. The same flags go in `crabfall approve` and in `crabfall run`, because the approval signs them. Hand over both commands with the full flags. If a tweak will always be used, it belongs in the YAML.
 
 ## Analyzing results
