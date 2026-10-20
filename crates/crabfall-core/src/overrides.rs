@@ -235,9 +235,10 @@ impl FromStr for Pick {
         match s.trim() {
             "sequential" => Ok(Self::Sequential),
             "random" => Ok(Self::Random),
+            "unique" => Ok(Self::Unique),
             _ => Err(crate::tr!(
-                "unknown pick `{s}` (use sequential or random)",
-                "pick `{s}` desconocido (usá sequential o random)"
+                "unknown pick `{s}` (use sequential, random or unique)",
+                "pick `{s}` desconocido (usá sequential, random o unique)"
             )),
         }
     }

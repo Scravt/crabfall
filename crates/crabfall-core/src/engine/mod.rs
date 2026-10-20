@@ -57,6 +57,8 @@ pub struct Progress {
     live: std::sync::Mutex<Vec<LiveSecond>>,
     /// 0: sigue; 1: frenar en orden; 2: cortar ya.
     stop: tokio::sync::watch::Sender<u8>,
+    /// El dataset `unique` que se quedó sin filas, si pasó.
+    exhausted: std::sync::Mutex<Option<String>>,
 }
 
 impl Default for Progress {
@@ -74,6 +76,7 @@ impl Default for Progress {
             load_start: std::sync::OnceLock::new(),
             live: std::sync::Mutex::new(Vec::new()),
             stop: tokio::sync::watch::Sender::new(0),
+            exhausted: std::sync::Mutex::new(None),
         }
     }
 }
@@ -127,6 +130,24 @@ impl Progress {
     /// (`graceful_stop`). Una segunda vez corta en el acto.
     pub fn stop(&self) {
         self.stop.send_modify(|level| *level = (*level + 1).min(2));
+    }
+
+    /// Un dataset `unique` se quedó sin filas: la carga termina en orden, como al frenar,
+    /// pero no la frenó la persona. Varios VUs pueden llegar a la vez: cuenta el primero.
+    fn exhaust(&self, dataset: String) {
+        self.exhausted.lock().unwrap().get_or_insert(dataset);
+        self.stop.send_if_modified(|level| {
+            let first = *level == 0;
+            if first {
+                *level = 1;
+            }
+            first
+        });
+    }
+
+    /// El dataset `unique` que se quedó sin filas, si pasó.
+    pub fn exhausted(&self) -> Option<String> {
+        self.exhausted.lock().unwrap().clone()
     }
 
     /// Si alguien pidió frenar.
@@ -399,7 +420,8 @@ async fn prepare_vus(
                 &plan,
                 &plan.vu_setup,
                 &setup,
-                plan.vu_row_vars(),
+                // El plan ya verificó que un dataset `unique` alcanza para todos los VUs.
+                plan.vu_row_vars().unwrap_or_default(),
                 &jar,
             )
             .await;
@@ -568,9 +590,15 @@ struct Shared {
 }
 
 impl Shared {
-    async fn iteration(&self, flow: usize, intended: Instant, vu: &Session) {
+    async fn iteration(
+        &self,
+        flow: usize,
+        intended: Instant,
+        vu: &Session,
+        rows: HashMap<String, Value>,
+    ) {
         self.progress.busy.fetch_add(1, Relaxed);
-        iteration(self, flow, &vu.vars(), &vu.cookies, intended).await;
+        iteration(self, flow, &vu.vars(), rows, &vu.cookies, intended).await;
         self.progress.busy.fetch_sub(1, Relaxed);
     }
 }
@@ -709,9 +737,19 @@ async fn run_load(plan: Arc<Plan>, progress: Arc<Progress>) -> RunResult {
         LoadPlan::Open { .. } => open_model(shared, start, vus).await,
         LoadPlan::Closed { duration, .. } => closed_model(shared, start, vus, *duration).await,
     };
-    let stopped_at_s = dispatch
-        .stopped_at
-        .map(|t| round1(t.saturating_duration_since(start).as_secs_f64()));
+    let at_s = |t: Instant| round1(t.saturating_duration_since(start).as_secs_f64());
+    // Terminar porque se acabaron las filas no es que la frenó la persona.
+    let exhausted = progress.exhausted();
+    let (stopped_at_s, data_exhausted) = match (&exhausted, dispatch.stopped_at) {
+        (Some(dataset), at) => (
+            None,
+            Some(crate::metrics::DataExhausted {
+                dataset: dataset.clone(),
+                at_s: at_s(at.unwrap_or_else(Instant::now)),
+            }),
+        ),
+        (None, at) => (at.map(at_s), None),
+    };
     // Tiene una copia del canal de eventos: el colector no termina mientras siga viva.
     if let Some(r) = refresher {
         r.abort();
@@ -778,6 +816,17 @@ async fn run_load(plan: Arc<Plan>, progress: Arc<Progress>) -> RunResult {
         ));
     }
 
+    if let Some(d) = &data_exhausted {
+        warnings.insert(
+            0,
+            crate::tr!(
+                "Dataset `{}` (pick: unique) ran out of rows at second {}: the load ended there.",
+                "El dataset `{}` (pick: unique) se quedó sin filas en el segundo {}: la carga terminó ahí.",
+                d.dataset,
+                d.at_s
+            ),
+        );
+    }
     if let Some(at) = stopped_at_s {
         warnings.insert(
             0,
@@ -791,6 +840,7 @@ async fn run_load(plan: Arc<Plan>, progress: Arc<Progress>) -> RunResult {
     let mut result = RunResult {
         passed: stopped_at_s.is_none() && thresholds.iter().all(|t| t.passed),
         stopped_at_s,
+        data_exhausted,
         duration_s: round1(elapsed),
         aborted: None,
         setup,
@@ -850,11 +900,21 @@ async fn open_model(shared: Shared, start: Instant, vus: Vec<Vu>) -> Dispatch {
             let _ = shared.tx.send(Event::Dropped(intended));
             continue;
         };
+        // Las filas se toman al despachar: si un dataset `unique` se acabó, la carga termina.
+        let rows = match plan.row_vars(&plan.flows[flow]) {
+            Ok(rows) => rows,
+            Err(dataset) => {
+                free.lock().unwrap().push(vu);
+                shared.progress.exhaust(dataset);
+                stopped_at = Some(Instant::now());
+                break;
+            }
+        };
         shared.progress.started.fetch_add(1, Relaxed);
         let _ = shared.tx.send(Event::Started(intended));
         let (shared, free) = (shared.clone(), free.clone());
         tasks.spawn(async move {
-            shared.iteration(flow, intended, &vu).await;
+            shared.iteration(flow, intended, &vu, rows).await;
             free.lock().unwrap().push(vu);
         });
     }
@@ -916,9 +976,16 @@ async fn closed_model(
                     break;
                 }
                 let flow = picker.lock().unwrap().next();
+                let rows = match shared.plan.row_vars(&shared.plan.flows[flow]) {
+                    Ok(rows) => rows,
+                    Err(dataset) => {
+                        shared.progress.exhaust(dataset);
+                        break;
+                    }
+                };
                 shared.progress.started.fetch_add(1, Relaxed);
                 let _ = shared.tx.send(Event::Started(Instant::now()));
-                shared.iteration(flow, Instant::now(), &vu).await;
+                shared.iteration(flow, Instant::now(), &vu, rows).await;
             }
         });
     }
@@ -1024,6 +1091,7 @@ async fn iteration(
     shared: &Shared,
     flow: usize,
     vu: &HashMap<String, Value>,
+    rows: HashMap<String, Value>,
     jar: &Jar,
     intended: Instant,
 ) {
@@ -1037,7 +1105,7 @@ async fn iteration(
     let mut from = intended;
     // Lo del VU (su `vu_setup`) y las filas de esta iteración; lo extraído después lo pisa.
     let mut locals = vu.clone();
-    locals.extend(plan.row_vars(&plan.flows[flow]));
+    locals.extend(rows);
     for step in &plan.flows[flow].steps {
         let run = run_step(client, plan, step, setup, &locals, jar).await;
         let done = Instant::now();

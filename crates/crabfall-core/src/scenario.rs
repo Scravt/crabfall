@@ -111,7 +111,7 @@ pub struct VuRefresh {
 pub struct DataSpec {
     /// File relative to `.crabfall/`. `.csv` with a header row (every cell is a string) or `.json` with an array of objects (keeps types). Column names use letters, digits and `_`.
     pub file: String,
-    /// `sequential` (default): rows in order, starting over at the end. `random`: a random row in each iteration.
+    /// `sequential` (default): rows in order, starting over at the end. `random`: a random row in each iteration. `unique`: each row only once in the whole run (for example, to register users); when they run out, the load ends there.
     #[serde(default)]
     pub pick: Pick,
 }
@@ -122,6 +122,8 @@ pub enum Pick {
     #[default]
     Sequential,
     Random,
+    /// Cada fila una sola vez en toda la corrida; al acabarse, la carga termina.
+    Unique,
 }
 
 impl Pick {
@@ -129,6 +131,7 @@ impl Pick {
         match self {
             Self::Sequential => "sequential",
             Self::Random => "random",
+            Self::Unique => "unique",
         }
     }
 }

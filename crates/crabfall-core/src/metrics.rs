@@ -573,6 +573,9 @@ pub struct RunResult {
     /// El segundo en que la persona frenó la corrida, si la frenó (ADR-015).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stopped_at_s: Option<f64>,
+    /// La carga terminó porque un dataset `unique` se quedó sin filas.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data_exhausted: Option<DataExhausted>,
     pub duration_s: f64,
     /// Por qué no se generó carga, si el `setup` falló.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -595,6 +598,13 @@ pub struct RunResult {
     pub findings: Vec<crate::diagnose::Finding>,
     /// Serie por segundo: la materia prima del diagnóstico.
     pub series: Series,
+}
+
+/// Un dataset `unique` que se quedó sin filas, y en qué segundo.
+#[derive(Debug, Clone, Serialize)]
+pub struct DataExhausted {
+    pub dataset: String,
+    pub at_s: f64,
 }
 
 /// Cómo les fue a los VUs con `vu_setup`. No entra en las métricas de carga.
@@ -651,6 +661,7 @@ impl RunResult {
             passed: false,
             duration_s: 0.0,
             stopped_at_s: None,
+            data_exhausted: None,
             aborted: Some(reason),
             setup,
             vu_setup: None,

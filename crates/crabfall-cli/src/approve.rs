@@ -400,6 +400,12 @@ pub fn summary(
         let label = if i == 0 { pick("Data", "Datos") } else { "" };
         out.push(format!("{label:<11} {}", d.dataset.describe()));
     }
+    for (name, rows, planned) in plan.unique_shortfalls() {
+        out.push(tr!(
+            "            {name}: unique, {rows} rows for ≈{planned} iterations: the load ends when they run out",
+            "            {name}: unique, {rows} filas para ≈{planned} iteraciones: la carga termina cuando se acaben"
+        ));
+    }
 
     let writes: Vec<String> = plan
         .all_steps()

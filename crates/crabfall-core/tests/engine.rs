@@ -624,14 +624,14 @@ fn datasets_hand_rows_in_order_only_to_flows_that_use_them() {
     let (s, inputs) = data_scenario("", "");
     let plan = Plan::build(&s, &environment("http://127.0.0.1:1"), &inputs).unwrap();
     let ids: Vec<Value> = (0..3)
-        .map(|_| plan.row_vars(&plan.flows[0])["users.id"].clone())
+        .map(|_| plan.row_vars(&plan.flows[0]).unwrap()["users.id"].clone())
         .collect();
     assert_eq!(ids, [json!("1"), json!("2"), json!("1")]);
     assert_eq!(
-        plan.row_vars(&plan.flows[0])["users.email"],
+        plan.row_vars(&plan.flows[0]).unwrap()["users.email"],
         json!("beto@x.com")
     );
-    assert!(plan.row_vars(&plan.flows[1]).is_empty());
+    assert!(plan.row_vars(&plan.flows[1]).unwrap().is_empty());
 }
 
 #[test]
@@ -1380,4 +1380,113 @@ async fn the_live_series_is_the_final_one() {
         );
     }
     assert!(progress.load_start().is_some());
+}
+
+/// Un servidor que anota los ids que le llegan en `/u/{id}`.
+async fn id_recorder() -> (String, Arc<std::sync::Mutex<Vec<String>>>) {
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let log = seen.clone();
+    let app = Router::new().route(
+        "/u/{id}",
+        get(
+            move |axum::extract::Path(id): axum::extract::Path<String>| {
+                let log = log.clone();
+                async move {
+                    log.lock().unwrap().push(id);
+                    "ok"
+                }
+            },
+        ),
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    (format!("http://127.0.0.1:{}", addr.port()), seen)
+}
+
+fn unique_plan(base: &str, root: &str, load: &str, rows: usize) -> Result<Plan, Vec<String>> {
+    let yaml = format!(
+        "version: 1\nname: unique\ndata:\n  users: {{ file: data/users.csv, pick: unique }}\n{root}flows:\n  main:\n    steps:\n      - name: a\n        request: {{ method: GET, url: \"/u/{{{{users.id}}}}\" }}\nload: {load}\n"
+    );
+    let s = parse_scenario(&yaml).unwrap_or_else(|r| panic!("{r:?}"));
+    let csv: String = std::iter::once("id".to_string())
+        .chain((1..=rows).map(|i| i.to_string()))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let users =
+        crabfall_core::data::Dataset::parse("users", &s.data["users"], csv.as_bytes()).unwrap();
+    let inputs = Inputs {
+        data: [("users".to_string(), users)].into(),
+        ..Default::default()
+    };
+    Plan::build(&s, &environment(base), &inputs)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn unique_rows_are_used_once_and_end_the_open_model() {
+    let (base, seen) = id_recorder().await;
+    let plan = unique_plan(
+        &base,
+        "",
+        "{ executor: constant_rate, rate: 20/s, duration: 30s, max_vus: 5 }",
+        5,
+    )
+    .unwrap();
+    assert_eq!(plan.unique_shortfalls(), [("users".to_string(), 5, 600)]);
+    let r = engine::run(Arc::new(plan), Arc::new(Progress::default())).await;
+    let d = r.data_exhausted.as_ref().expect("se acabaron las filas");
+    assert_eq!(d.dataset, "users");
+    assert!(d.at_s < 1.0, "terminó en {}", d.at_s);
+    assert!(r.stopped_at_s.is_none(), "no la frenó la persona");
+    assert_eq!(r.totals.started, 5);
+    assert!(
+        r.warnings[0].contains("se quedó sin filas"),
+        "{:?}",
+        r.warnings
+    );
+    let mut ids = seen.lock().unwrap().clone();
+    ids.sort();
+    assert_eq!(ids, ["1", "2", "3", "4", "5"]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn unique_rows_end_the_closed_model_too() {
+    let (base, seen) = id_recorder().await;
+    let plan = unique_plan(
+        &base,
+        "",
+        "{ executor: constant_vus, vus: 3, duration: 30s }",
+        7,
+    )
+    .unwrap();
+    let r = engine::run(Arc::new(plan), Arc::new(Progress::default())).await;
+    assert!(r.data_exhausted.is_some());
+    assert!(r.duration_s < 3.0, "duró {}", r.duration_s);
+    let mut ids = seen.lock().unwrap().clone();
+    ids.sort_by_key(|i| i.parse::<u32>().unwrap());
+    assert_eq!(ids, ["1", "2", "3", "4", "5", "6", "7"]);
+}
+
+#[test]
+fn unique_rows_must_cover_every_vu_in_vu_setup() {
+    let root =
+        "vu_setup:\n  - name: login\n    request: { method: GET, url: \"/u/{{users.id}}\" }\n";
+    let errors = unique_plan(
+        "http://127.0.0.1:1",
+        root,
+        "{ executor: constant_vus, vus: 4, duration: 5s }",
+        3,
+    )
+    .err()
+    .expect("faltan filas");
+    assert!(errors[0].contains("3 filas para 4 VUs"), "{errors:?}");
+    assert!(
+        unique_plan(
+            "http://127.0.0.1:1",
+            root,
+            "{ executor: constant_vus, vus: 3, duration: 5s }",
+            3
+        )
+        .is_ok()
+    );
 }

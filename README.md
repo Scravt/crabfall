@@ -3,7 +3,7 @@
 A load testing tool in Rust, built to be used together with Claude Code:
 Claude designs the scenario and analyzes the results; a person approves and runs the load.
 
-Status: **slice 19** (history and comparison in the TUI), after v0.1.0. Already working: design with Claude, signed approval, scenarios with `setup`, `extract`, checks and thresholds, three executors, diagnosis, run comparison, datasets, pauses between steps, per-run tweaks by flag, an HTML report per run, login per virtual user (`vu_setup`), token renewal during the load (`vu_refresh`), file uploads (`multipart`), bytes sent and received per second, an HTTP client with cookies, redirects, compression and forms, and output in English or Spanish. See the [roadmap](docs/roadmap.md) (in Spanish).
+Status: **slice 21** (`pick: unique`), after v0.1.0. Already working: design with Claude, signed approval, scenarios with `setup`, `extract`, checks and thresholds, three executors, diagnosis, run comparison, datasets, pauses between steps, per-run tweaks by flag, an HTML report per run, login per virtual user (`vu_setup`), token renewal during the load (`vu_refresh`), file uploads (`multipart`), bytes sent and received per second, an HTTP client with cookies, redirects, compression and forms, and output in English or Spanish. See the [roadmap](docs/roadmap.md) (in Spanish).
 
 ## Usage
 
@@ -98,7 +98,7 @@ flows:
         think: 1s-3s                  # pause after the step, like a person
 ```
 
-Each iteration takes a row, in order or at random (`pick: random`). Editing the file invalidates the approval ([ADR-007](docs/adr/ADR-007-datasets.md)). `think` also goes in `defaults` for every step; it does not count in the latency and `crabfall check` ignores it.
+Each iteration takes a row, in order, at random (`pick: random`) or each row only once (`pick: unique`, for example to register users; when the rows run out, the load ends there). Editing the file invalidates the approval ([ADR-007](docs/adr/ADR-007-datasets.md)). `think` also goes in `defaults` for every step; it does not count in the latency and `crabfall check` ignores it.
 
 ### Sessions
 
