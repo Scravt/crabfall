@@ -2,12 +2,13 @@
 
 use std::{
     io::IsTerminal,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{Arc, atomic::Ordering::Relaxed},
     time::{Duration, Instant},
 };
 
 use crabfall_core::{
+    approval::Approval,
     engine::{self, Progress, plan::Plan},
     metrics::{CheckResult, RunResult},
     project::Project,
@@ -21,18 +22,20 @@ use crate::{
 };
 
 pub fn cmd_run(target: &crate::Target, as_json: bool) -> u8 {
+    let prepared = match prepare(target) {
+        Ok(p) => p,
+        Err(code) => return code,
+    };
     let Prepared {
         project,
         env_name,
         env,
-        path,
         plan,
         tweaks,
-    } = match prepare(target) {
-        Ok(p) => p,
-        Err(code) => return code,
-    };
-    let violations = plan.limit_violations(&env);
+        ..
+    } = &prepared;
+    let (env_name, plan) = (env_name.as_str(), plan.clone());
+    let violations = plan.limit_violations(env);
     if !violations.is_empty() {
         eprintln!(
             "{}",
@@ -47,8 +50,6 @@ pub fn cmd_run(target: &crate::Target, as_json: bool) -> u8 {
         }
         return exit::REFUSED;
     }
-    let plan = Arc::new(plan);
-
     let hosts: Vec<&str> = plan.hosts.iter().map(String::as_str).collect();
     eprintln!("{} → {env_name} ({})", plan.scenario, hosts.join(", "));
     eprintln!("  {} · {}", plan.load.describe(), plan.rate_summary());
@@ -97,8 +98,7 @@ pub fn cmd_run(target: &crate::Target, as_json: bool) -> u8 {
     }
     let (duration, graceful_stop) = (plan.load.duration(), plan.load.graceful_stop());
 
-    let Ok(approval) = crate::approve::verify_for_run(&project, &plan, &env, &env_name, &tweaks)
-    else {
+    let Ok(approval) = crate::approve::verify_for_run(project, &plan, env, env_name, tweaks) else {
         return exit::REFUSED;
     };
     eprintln!(
@@ -111,16 +111,14 @@ pub fn cmd_run(target: &crate::Target, as_json: bool) -> u8 {
         )
     );
 
-    timer::high_resolution();
-    let started_at = jiff::Zoned::now();
     let progress = Arc::new(Progress::default());
     let runtime = tokio::runtime::Runtime::new().expect("runtime de tokio");
-    let result = runtime.block_on(async {
+    let finished = runtime.block_on(async {
         let ticker = std::io::stderr()
             .is_terminal()
             .then(|| tokio::spawn(show_progress(progress.clone(), duration + graceful_stop)));
         let stopper = tokio::spawn(stop_on_ctrl_c(progress.clone()));
-        let result = engine::run(plan.clone(), progress.clone()).await;
+        let finished = execute(&prepared, &approval, progress.clone()).await;
         // El aviso de Ctrl+C ya terminó la línea de progreso.
         let progress_line_closed = progress.stop_requested();
         stopper.abort();
@@ -130,61 +128,101 @@ pub fn cmd_run(target: &crate::Target, as_json: bool) -> u8 {
                 eprintln!();
             }
         }
-        result
+        finished
     });
-
-    let run_id = started_at.strftime("%Y%m%d-%H%M%S").to_string();
-    let mut doc = results_document(&run_id, &started_at, &path, &env_name, &plan, &result);
-    if !tweaks.is_empty() {
-        doc["tweaks"] = json!(tweaks);
-    }
-    doc["approval"] = json!({
-        "hash": approval.hash,
-        "approved_by": approval.approved_by,
-        "approved_at": approval.approved_at,
-    });
-    let saved = save(&project, &run_id, &doc);
 
     if as_json {
-        println!("{}", serde_json::to_string_pretty(&doc).unwrap());
+        println!("{}", serde_json::to_string_pretty(&finished.doc).unwrap());
     } else {
-        print_summary(&result);
+        print_summary(&finished.result);
     }
-    match saved {
+    match &finished.results {
         Ok(file) => {
             eprintln!(
                 "{}",
-                crabfall_core::tr!("results: {}", "resultados: {}", display(&file))
+                crabfall_core::tr!("results: {}", "resultados: {}", display(file))
             );
-            match crate::report::write(&project, &file) {
-                Ok(report) => eprintln!(
+            match &finished.report {
+                Some(Ok(report)) => eprintln!(
                     "{}",
-                    crabfall_core::tr!("report:  {}", "reporte:    {}", display(&report))
+                    crabfall_core::tr!("report:  {}", "reporte:    {}", display(report))
                 ),
-                Err(e) => eprintln!(
+                Some(Err(e)) => eprintln!(
                     "{}",
                     crabfall_core::tr!(
                         "WARNING: the report was not generated: {e}",
                         "AVISO: no se generó el reporte: {e}"
                     )
                 ),
+                None => {}
             }
-            if result.passed {
+            if finished.result.passed {
                 exit::OK
             } else {
                 exit::FAILED
             }
         }
         Err(e) => {
-            eprintln!(
-                "{}",
-                crabfall_core::tr!(
-                    "✗ could not save the results: {e}",
-                    "✗ no se pudieron guardar los resultados: {e}"
-                )
-            );
+            eprintln!("✗ {e}");
             exit::RUNTIME
         }
+    }
+}
+
+/// Una corrida terminada y dónde quedó.
+pub struct Finished {
+    pub result: RunResult,
+    /// `results.json` tal como se guardó.
+    pub doc: Value,
+    /// El archivo de resultados, o por qué no se pudo guardar.
+    pub results: Result<PathBuf, String>,
+    /// El reporte, o por qué no se generó; `None` si no se guardaron los resultados.
+    pub report: Option<Result<PathBuf, String>>,
+}
+
+/// Corre un plan aprobado y guarda resultados y reporte. La usan `crabfall run` y la TUI;
+/// `progress` muestra la corrida y permite frenarla.
+pub async fn execute(
+    prepared: &Prepared,
+    approval: &Approval,
+    progress: Arc<Progress>,
+) -> Finished {
+    timer::high_resolution();
+    let started_at = jiff::Zoned::now();
+    let result = engine::run(prepared.plan.clone(), progress).await;
+
+    let run_id = started_at.strftime("%Y%m%d-%H%M%S").to_string();
+    let mut doc = results_document(
+        &run_id,
+        &started_at,
+        &prepared.path,
+        &prepared.env_name,
+        &prepared.plan,
+        &result,
+    );
+    if !prepared.tweaks.is_empty() {
+        doc["tweaks"] = json!(prepared.tweaks);
+    }
+    doc["approval"] = json!({
+        "hash": approval.hash,
+        "approved_by": approval.approved_by,
+        "approved_at": approval.approved_at,
+    });
+    let results = save(&prepared.project, &run_id, &doc).map_err(|e| {
+        crabfall_core::tr!(
+            "could not save the results: {e}",
+            "no se pudieron guardar los resultados: {e}"
+        )
+    });
+    let report = results
+        .as_ref()
+        .ok()
+        .map(|file| crate::report::write(&prepared.project, file));
+    Finished {
+        result,
+        doc,
+        results,
+        report,
     }
 }
 

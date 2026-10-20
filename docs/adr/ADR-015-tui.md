@@ -54,6 +54,14 @@ La TUI no copia los gráficos del HTML: lo abre con una tecla. Lo que aporta es 
 
 `ratatui` con `crossterm`: es la opción estándar en Rust y funciona en Windows, Linux y macOS.
 
+## Cómo quedó (rebanada 18)
+
+- **Código:** `crates/crabfall-cli/src/tui/` (estado y teclas en `mod.rs`, dibujo en `view.rs`). Usa `prepare_in`, `approve::{summary, verify, sign}` y `run::execute`, que también usan los comandos: no hay lógica duplicada.
+- **Formulario:** executor, tasa, duración, VUs, max VUs, tasa inicial, etapas, graceful stop, pausa, renovación y thresholds. `--data`, `--pick` y `--var` siguen solo por CLI. Un escenario aprobado con ajustes se abre con esos ajustes cargados, así se puede correr sin volver a aprobar.
+- **En vivo:** el p95 de "los últimos 5 s" de cada paso es el peor p95 por segundo de esos cinco (no hay histograma de la ventana). Los checks no se muestran en vivo: el colector no los publica por segundo.
+- **Frenar:** `q` (o Ctrl+C) pregunta y frena en orden; durante el drenaje, `q` pregunta si cortar ya. Salir de la TUI con una corrida en curso la corta y espera a que guarde.
+- **Tests:** la TUI se dibuja en un terminal en memoria (`TestBackend`): la lista, el detalle con ajustes válidos e inválidos, correr sin aprobación, aprobar con el host equivocado, el check en segundo plano y la pantalla de la corrida. La firma no se prueba ahí porque usa el keyring del sistema.
+
 ## Consecuencias
 
 - **A favor:** un flujo completo sin recordar flags, y la corrida en vivo, que hoy no existe. Frenar con resultados también mejora `crabfall run`.
