@@ -212,8 +212,28 @@ struct ResultsView {
     comparison: Vec<String>,
 }
 
+/// Una corrida guardada del escenario, para el historial.
+struct HistoryRow {
+    id: String,
+    doc: serde_json::Value,
+}
+
+struct HistoryView {
+    /// De la más reciente a la más vieja.
+    rows: Vec<HistoryRow>,
+    selected: usize,
+    /// La corrida marcada como base (Espacio), si hay.
+    base: Option<usize>,
+}
+
+struct CompareView {
+    comparison: crabfall_core::compare::Comparison,
+}
+
 enum Screen {
     Home,
+    History(Box<Detail>, HistoryView),
+    Compare(Box<Detail>, HistoryView, Box<CompareView>),
     Detail(Box<Detail>),
     Check(Box<Detail>, CheckView),
     Approve(Box<Detail>, ApproveView),
@@ -402,6 +422,11 @@ impl App {
                 _ => Screen::Check(d, c),
             },
             Screen::Approve(d, a) => self.on_approve(d, a, key),
+            Screen::History(d, h) => self.on_history(d, h, key),
+            Screen::Compare(d, h, c) => match key.code {
+                KeyCode::Esc | KeyCode::Char('q') => Screen::History(d, h),
+                _ => Screen::Compare(d, h, c),
+            },
             Screen::Running(d, r) => self.on_running(d, r, key),
             Screen::Results(d, r) => self.on_results(d, r, key),
         };
@@ -506,6 +531,7 @@ impl App {
                 let Detail { name, form, .. } = *d;
                 return Screen::Detail(Box::new(self.open(name, form)));
             }
+            KeyCode::Char('h') => return self.open_history(d),
             KeyCode::Char('c') => return self.start_check(d),
             KeyCode::Char('a') => return self.start_approve(d),
             KeyCode::Char('r') => return self.start_run(d),
@@ -671,11 +697,14 @@ impl App {
                 let Detail { name, form, .. } = *d;
                 return Screen::Detail(Box::new(self.open(name, form)));
             }
-            KeyCode::Right | KeyCode::Tab | KeyCode::Char('l') => r.tab = (r.tab + 1) % view::TABS,
-            KeyCode::Left | KeyCode::BackTab | KeyCode::Char('h') => {
-                r.tab = (r.tab + view::TABS - 1) % view::TABS
-            }
+            KeyCode::Right | KeyCode::Tab => r.tab = (r.tab + 1) % view::TABS,
+            KeyCode::Left | KeyCode::BackTab => r.tab = (r.tab + view::TABS - 1) % view::TABS,
             KeyCode::Char(c @ '1'..='4') => r.tab = c as usize - '1' as usize,
+            KeyCode::Char('h') => {
+                let Detail { name, form, .. } = *d;
+                let fresh = Box::new(self.open(name, form));
+                return self.open_history(fresh);
+            }
             KeyCode::Char('o') => match &r.finished.report {
                 Some(Ok(path)) => self.open_report(path),
                 _ => self.error(tr!("there is no report", "no hay reporte")),
@@ -688,6 +717,104 @@ impl App {
             _ => {}
         }
         Screen::Results(d, r)
+    }
+
+    /// Las corridas de este escenario en este entorno, de la más reciente a la más vieja.
+    fn open_history(&mut self, d: Box<Detail>) -> Screen {
+        let env = self.env_name().to_string();
+        let mut ids: Vec<String> = std::fs::read_dir(self.project.runs_dir())
+            .into_iter()
+            .flatten()
+            .filter_map(Result::ok)
+            .filter(|e| e.path().join("results.json").is_file())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        ids.sort_unstable_by(|a, b| b.cmp(a));
+        let rows: Vec<HistoryRow> = ids
+            .into_iter()
+            .filter_map(|id| {
+                let file = self.project.runs_dir().join(&id).join("results.json");
+                let doc = crate::runs::read(&file).ok()?;
+                (doc["scenario"] == d.name.as_str() && doc["environment"] == env.as_str())
+                    .then_some(HistoryRow { id, doc })
+            })
+            .collect();
+        if rows.is_empty() {
+            self.error(tr!(
+                "this scenario has no runs in this environment yet",
+                "este escenario todavía no tiene corridas en este entorno"
+            ));
+            return Screen::Detail(d);
+        }
+        Screen::History(
+            d,
+            HistoryView {
+                rows,
+                selected: 0,
+                base: None,
+            },
+        )
+    }
+
+    fn on_history(&mut self, d: Box<Detail>, mut h: HistoryView, key: KeyEvent) -> Screen {
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => return Screen::Detail(d),
+            KeyCode::Up | KeyCode::Char('k') => h.selected = h.selected.saturating_sub(1),
+            KeyCode::Down | KeyCode::Char('j') => {
+                h.selected = (h.selected + 1).min(h.rows.len() - 1)
+            }
+            KeyCode::Char(' ') => {
+                h.base = if h.base == Some(h.selected) {
+                    None
+                } else {
+                    Some(h.selected)
+                }
+            }
+            KeyCode::Char('o') => {
+                let path = self
+                    .project
+                    .runs_dir()
+                    .join(&h.rows[h.selected].id)
+                    .join("report.html");
+                self.open_report(&path);
+            }
+            KeyCode::Enter => {
+                // Con una base marcada, contra ella; si no, contra la corrida anterior.
+                let base = match h.base {
+                    Some(b) if b != h.selected => b,
+                    Some(_) => {
+                        self.error(tr!(
+                            "pick a different run than the base",
+                            "elegí una corrida distinta de la base"
+                        ));
+                        return Screen::History(d, h);
+                    }
+                    None if h.selected + 1 < h.rows.len() => h.selected + 1,
+                    None => {
+                        self.error(tr!(
+                            "there is no earlier run to compare with: mark a base with Space",
+                            "no hay una corrida anterior para comparar: marcá una base con Espacio"
+                        ));
+                        return Screen::History(d, h);
+                    }
+                };
+                let parse = |row: &HistoryRow| {
+                    serde_json::from_value::<crabfall_core::compare::Run>(row.doc.clone())
+                        .map_err(|e| e.to_string())
+                };
+                let result = parse(&h.rows[base]).and_then(|b| {
+                    parse(&h.rows[h.selected]).and_then(|n| crabfall_core::compare::compare(&b, &n))
+                });
+                match result {
+                    Ok(comparison) => {
+                        return Screen::Compare(d, h, Box::new(CompareView { comparison }));
+                    }
+                    Err(e) => self.error(e),
+                }
+            }
+            _ => {}
+        }
+        Screen::History(d, h)
     }
 
     fn open_report(&mut self, path: &std::path::Path) {
@@ -1102,5 +1229,76 @@ mod look_live {
             press(&mut app, KeyCode::Char(tab));
             println!("{}\n", screen(&app));
         }
+    }
+}
+
+#[cfg(test)]
+mod history_tests {
+    use super::tests_support::*;
+
+    /// Una corrida guardada del escenario `s` con un p95 constante por segundo.
+    fn save_run(project: &Project, id: &str, p95: f64) {
+        let points: Vec<serde_json::Value> = (0..8)
+            .map(|t| serde_json::json!({ "t": t, "requests": 10, "errors": 0, "p50": p95 / 2.0, "p95": p95, "p99": p95 }))
+            .collect();
+        let global: Vec<serde_json::Value> = (0..8)
+            .map(|t| serde_json::json!({ "t": t, "started": 10, "dropped": 0, "requests": 10, "errors": 0, "p50": 1.0, "p95": 1.0, "p99": 1.0 }))
+            .collect();
+        let doc = serde_json::json!({
+            "run_id": id, "scenario": "s", "environment": "local", "passed": true, "duration_s": 8.0,
+            "load": { "executor": "constant_rate", "rate": "10/s" },
+            "totals": { "planned": 80, "started": 80, "dropped": 0, "interrupted": 0, "requests": 80,
+                        "failed": 0, "non_2xx": 0, "checks_passed": 0, "checks_failed": 0,
+                        "iteration_rate": 10.0, "request_rate": 10.0 },
+            "steps": [{ "name": "a", "requests": 80, "failed": 0, "non_2xx": 0,
+                        "latency_ms": { "count": 80, "mean": p95, "p50": p95 / 2.0, "p90": p95, "p95": p95, "p99": p95, "p999": p95, "max": p95 } }],
+            "findings": [],
+            "series": { "window_s": 1, "points": global, "steps": [{ "name": "a", "points": points }] },
+        });
+        let dir = project.runs_dir().join(id);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("results.json"), doc.to_string()).unwrap();
+    }
+
+    #[test]
+    fn history_lists_runs_and_compares_them() {
+        let p = project("history");
+        save_run(&p, "20261020-100000", 10.0);
+        save_run(&p, "20261020-110000", 40.0);
+        let mut app = App::with_project(p).unwrap();
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Char('h'));
+        let s = screen(&app);
+        // La más reciente primero.
+        let newer = s.find("20261020-110000").expect("corrida nueva");
+        let older = s.find("20261020-100000").expect("corrida vieja");
+        assert!(newer < older, "{s}");
+
+        // Enter: la seleccionada (la más reciente) contra la anterior.
+        press(&mut app, KeyCode::Enter);
+        let s = screen(&app);
+        assert!(s.contains("20261020-100000 → 20261020-110000"), "{s}");
+        assert!(s.contains("empeoró"), "{s}");
+
+        // Con base marcada: la vieja contra la nueva, al revés.
+        press(&mut app, KeyCode::Esc);
+        press(&mut app, KeyCode::Char(' '));
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Enter);
+        let s = screen(&app);
+        assert!(s.contains("20261020-110000 → 20261020-100000"), "{s}");
+        assert!(s.contains("mejoró"), "{s}");
+    }
+
+    #[test]
+    fn history_without_runs_says_so() {
+        let mut app = App::with_project(project("no-history")).unwrap();
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Char('h'));
+        assert!(matches!(app.screen, Screen::Detail(_)));
+        let (_, message) = app.message.clone().expect("aviso");
+        assert!(message.contains("todavía no tiene corridas"), "{message}");
     }
 }

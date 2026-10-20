@@ -30,7 +30,7 @@ La TUI no copia los gráficos del HTML: lo abre con una tecla. Lo que aporta es 
 - **Aprobar:** el mismo resumen de riesgo que `crabfall approve` (con el diff si cambió) y se tipea el host. La TUI es una terminal con una persona, así que cumple el ADR-004; Claude no puede usarla.
 - **Correr y frenar:** la vista en vivo de abajo, con `q` para frenar con confirmación.
 - **Resultados:** el resumen al terminar, con `o` para abrir el `report.html`.
-- **Después:** el historial de corridas y la comparación entre dos, en una segunda rebanada. Mientras tanto están `crabfall compare` y el HTML.
+- **Historial (`h`):** las corridas del escenario en el entorno, de la más reciente a la más vieja, con el resultado, la duración, las requests, el peor p95 y los hallazgos. Enter compara la elegida con la anterior; con una base marcada (Espacio), contra la base. La comparación es la de `crabfall compare`: veredicto, avisos, regresiones, mejoras, pasos y hallazgos (rebanada 19).
 
 ### Durante la corrida
 
