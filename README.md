@@ -190,3 +190,4 @@ Para probar contra APIs más realistas: [shop-api](../shop-api) (local, con prob
 - [ADR-012 — Subir archivos (multipart)](docs/adr/ADR-012-multipart.md)
 - [ADR-013 — Bytes enviados y recibidos](docs/adr/ADR-013-trafico.md)
 - [ADR-014 — Cookies, redirects, compresión y formularios](docs/adr/ADR-014-cliente-http-real.md)
+- [ADR-015 — TUI en la terminal](docs/adr/ADR-015-tui.md)
