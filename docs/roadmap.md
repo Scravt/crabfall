@@ -209,7 +209,7 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente. Al cerrar
 - [x] Resultados en pestañas (resumen con comparación contra la anterior, hallazgos, pasos, checks); `o` abre el HTML, `r` repite
 - [x] La CLI se reordenó para compartir piezas: `prepare_in`, `approve::{summary, verify, sign}`, `run::execute`
 - [x] Tests con `TestBackend`: lista, ajustes válidos e inválidos, correr sin aprobación, host equivocado, check, pantalla de corrida; y dos tests ignorados que imprimen las pantallas (uno con una corrida real)
-- Listo cuando: en `market-api`, desde la TUI, abro `browse`, le bajo la duración, lo apruebo, lo corro mirando en vivo, lo freno con `q` y abro el reporte con `o`. **Pendiente:** la prueba (la hace una persona).
+- Listo: probada por el usuario en `market-api` (20 oct 2026): "es fantástica… buen diseño". Quedan detalles para pulir, a definir con el usuario.
 - Después: historial y comparación en la TUI
 
 ## Primera versión
