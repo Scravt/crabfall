@@ -131,7 +131,7 @@ pub async fn check(plan: &Plan) -> Result<CheckResult, String> {
     }
 
     // vu_setup: un solo VU, que después recorre los flows.
-    let mut vu_vars = plan.vu_row_vars();
+    let mut vu_vars = plan.vu_row_vars().unwrap_or_default();
     let mut vu_failed = setup_failed;
     for step in &plan.vu_setup {
         if vu_failed {
@@ -147,7 +147,7 @@ pub async fn check(plan: &Plan) -> Result<CheckResult, String> {
 
     for flow in &plan.flows {
         let mut locals = vu_vars.clone();
-        locals.extend(plan.row_vars(flow));
+        locals.extend(plan.row_vars(flow).unwrap_or_default());
         let mut flow_failed = vu_failed;
         for step in &flow.steps {
             if flow_failed || steps.len() >= MAX_REQUESTS {

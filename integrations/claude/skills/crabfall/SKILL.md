@@ -88,7 +88,7 @@ You can freely use: `crabfall validate`, `crabfall check` (only against loopback
        users: { file: data/users.csv }                     # CSV with a header row: all strings
        products: { file: data/products.json, pick: random } # array of objects: keeps types
      ```
-     `pick: sequential` (default) goes through the rows in order and starts over; `random` picks one at random. Columns cannot be used in `setup`, but they can in `vu_setup` (one row per VU) and in the flows. Do not invent users or credentials: if there is no test data, leave a `todo` and ask the person. Editing the file invalidates the approval.
+     `pick: sequential` (default) goes through the rows in order and starts over; `random` picks one at random. `unique` uses each row only once in the whole run: use it when a row can only be used once (registering users, consuming coupons). When the rows run out, the load ends there (`data_exhausted` in the results); size the file for the planned iterations, and in `vu_setup` it needs at least one row per VU. Columns cannot be used in `setup`, but they can in `vu_setup` (one row per VU) and in the flows. Do not invent users or credentials: if there is no test data, leave a `todo` and ask the person. Editing the file invalidates the approval.
    - **Checks** (in each step, non-blocking): `- status: 201`, `- status_in: [200, 201]`, `- { json: $.id, exists: true }`, `- { json: $.status, equals: paid }` (accepts `"{{variable}}"`), `- { json: $.name, matches: "^a" }`, `- { header: content-type, contains: json }`, `- body_contains: ok`, `- body_matches: "regex"`. If a step has status checks, `crabfall check` does not require 2xx.
    - **Thresholds** (at the root; if any fails, `crabfall run` exits with code 1):
      ```yaml

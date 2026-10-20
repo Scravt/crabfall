@@ -114,12 +114,13 @@ pub struct DataPlan {
 }
 
 impl DataPlan {
-    /// Fila de la próxima iteración.
-    fn pick(&self) -> usize {
+    /// Fila de la próxima iteración; `None` si es `unique` y ya se usaron todas.
+    fn pick(&self) -> Option<usize> {
         let rows = self.dataset.rows.len();
         match self.dataset.pick {
-            Pick::Sequential => self.next.fetch_add(1, Relaxed) % rows,
-            Pick::Random => fastrand::usize(..rows),
+            Pick::Sequential => Some(self.next.fetch_add(1, Relaxed) % rows),
+            Pick::Random => Some(fastrand::usize(..rows)),
+            Pick::Unique => Some(self.next.fetch_add(1, Relaxed)).filter(|i| *i < rows),
         }
     }
 }
@@ -416,6 +417,20 @@ impl Plan {
             .chain(vu_refresh.iter().flat_map(|r| &r.steps))
             .collect();
         let vu_data = datasets_used(&data, vu_steps.iter().copied());
+        // Con `unique`, cada VU toma una fila distinta en su `vu_setup`: tienen que alcanzar.
+        let vus = scenario.load.plan().concurrency() as usize;
+        let mut unique_errors = Vec::new();
+        for &i in &vu_data {
+            let d = &data[i].dataset;
+            if d.pick == Pick::Unique && d.rows.len() < vus {
+                unique_errors.push(crate::tr!(
+                    "data.{}: pick unique has {} rows for {vus} VUs in vu_setup: add rows or lower the VUs",
+                    "data.{}: pick unique tiene {} filas para {vus} VUs en vu_setup: agregá filas o bajá los VUs",
+                    d.name,
+                    d.rows.len()
+                ));
+            }
+        }
         let flows: Vec<FlowPlan> = scenario
             .flows
             .iter()
@@ -465,6 +480,7 @@ impl Plan {
             thresholds: Vec::new(),
         };
         errors.extend(data_errors);
+        errors.extend(unique_errors);
         let mut plan = plan;
         for (i, t) in scenario.thresholds.iter().enumerate() {
             match ThresholdPlan::parse(t) {
@@ -607,7 +623,9 @@ impl Plan {
     }
 
     /// Variables de las filas que toma una iteración de `flow`: `dataset.columna` → valor.
-    pub fn row_vars(&self, flow: &FlowPlan) -> HashMap<String, Value> {
+    /// Las filas de una iteración del flow. `Err` con el nombre del dataset `unique` que
+    /// se quedó sin filas.
+    pub fn row_vars(&self, flow: &FlowPlan) -> Result<HashMap<String, Value>, String> {
         self.rows(&flow.data)
     }
 
@@ -707,18 +725,32 @@ impl Plan {
         ))
     }
 
-    /// Variables de las filas que toma un VU para su `vu_setup`.
-    pub fn vu_row_vars(&self) -> HashMap<String, Value> {
+    /// Variables de las filas que toma un VU para su `vu_setup`. Con `unique`, el plan ya
+    /// verificó que alcanzan para todos los VUs.
+    pub fn vu_row_vars(&self) -> Result<HashMap<String, Value>, String> {
         self.rows(&self.vu_data)
     }
 
-    fn rows(&self, datasets: &[usize]) -> HashMap<String, Value> {
-        datasets
+    fn rows(&self, datasets: &[usize]) -> Result<HashMap<String, Value>, String> {
+        let mut vars = HashMap::new();
+        for &i in datasets {
+            let d = &self.data[i];
+            let row = d.pick().ok_or_else(|| d.dataset.name.clone())?;
+            vars.extend(d.dataset.vars(row));
+        }
+        Ok(vars)
+    }
+
+    /// Datasets `unique` con menos filas que las iteraciones del plan: la corrida termina
+    /// cuando se acaban. (nombre, filas, iteraciones).
+    pub fn unique_shortfalls(&self) -> Vec<(String, usize, u64)> {
+        let Some(planned) = self.load.planned_iterations() else {
+            return vec![];
+        };
+        self.data
             .iter()
-            .flat_map(|&i| {
-                let d = &self.data[i];
-                d.dataset.vars(d.pick())
-            })
+            .filter(|d| d.dataset.pick == Pick::Unique && (d.dataset.rows.len() as u64) < planned)
+            .map(|d| (d.dataset.name.clone(), d.dataset.rows.len(), planned))
             .collect()
     }
 
