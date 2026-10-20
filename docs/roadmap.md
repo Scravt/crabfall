@@ -183,13 +183,25 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente. Al cerrar
 - [x] Tests: el parser con los headers reales de express-rate-limit y los formatos viejos, la patología de rate limit con headers, y el aviso de tamaño (también con corridas sin bytes)
 - Listo: en `market-api`, `rate-limit` (20 it/s contra `/me` durante 45 s) recibió 300 429 desde el segundo 30 (20/s × 30 s = 600). El hallazgo dice "declara 600 requests cada 60 s (`RateLimit-Policy`) y pide esperar con `Retry-After de 16 a 30 s`", y `crabfall run` lo muestra en la línea `límite` (19 oct 2026). La corrida destapó un detalle de formato, ya corregido: con poco tráfico el pico salía "0.0 Mbit/s"; ahora sale en kbit/s.
 
+**16. Frenar y ver en vivo** (motor, para la TUI)
+- [ ] Frenar en orden: deja de iniciar iteraciones, espera las que están en curso y guarda resultados y reporte marcados como interrumpidos; Ctrl+C en `crabfall run` (ADR-015)
+- [ ] El colector publica la serie de cada segundo mientras corre (global y por paso)
+- [ ] Tests: frenar en los dos modelos, con `vu_setup` y `vu_refresh`, y la serie en vivo igual a la final
+
+**17. TUI** (ADR-015)
+- [ ] `crabfall` sin argumentos abre la TUI si hay terminal; el hook la bloquea para Claude
+- [ ] Elegir escenario y entorno, con el estado de la aprobación y la última corrida
+- [ ] Ajustes con los `Overrides` de la CLI, validados en el campo, y el comando equivalente
+- [ ] Check, aprobar (mismo resumen, diff y host tipeado) y correr
+- [ ] Vista en vivo: indicadores del último segundo, sparklines de p95 y errores, pasos con p95 de los últimos 5 s, avisos; `q` frena
+- [ ] Resultados en pestañas; `o` abre el HTML, `r` repite
+- Después: historial y comparación en la TUI
+
 ## Primera versión
 
 **v0.1.0** (19 oct 2026): las rebanadas 0 a 13 con el nombre Crabfall (binario `crabfall`, carpeta `.crabfall/`), en `main` y en GitHub (privado). Lo que queda abierto de esas rebanadas: TLS contra un servidor real (1), la skill en una sesión nueva de Claude Code (2). La rebanada 13 se cerró después, con la corrida de `upload`.
 
 ## Backlog (sin orden)
-
-**TUI en la terminal** en lugar de la GUI con Tauri, al menos por ahora: elegir escenario y entorno, aprobar, ver la corrida en vivo y los resultados, con los mismos `Overrides` que los flags.
 
 **Al final: modelos de carga nuevos** (`ramping_vus`, iteraciones fijas, arrival por VU). Hoy alcanzan `constant_rate`, `ramping_rate` y `constant_vus`.
 
@@ -234,3 +246,4 @@ Regla de diagnóstico para el ancho de banda (los bytes por segundo se estancan 
 | 19 oct 2026 | TUI en la terminal en lugar de la GUI con Tauri, por ahora; los modelos de carga nuevos van al final | Este documento |
 | 19 oct 2026 | Primera versión v0.1.0: `dev` se mergea a `main`; repo privado en GitHub | — |
 | 19 oct 2026 | Cliente HTTP real por defecto: cookies por VU, redirects hacia `allowed_hosts`, gzip y br; `check` nunca sale de loopback | ADR-014 |
+| 19 oct 2026 | TUI: `crabfall` sin argumentos; aprueba con el host tipeado; frena en orden y guarda; el HTML queda para analizar y compartir | ADR-015 |
