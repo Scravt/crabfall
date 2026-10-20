@@ -191,10 +191,14 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente. Al cerrar
 - [x] Tests: los existentes en español con `CRABFALL_LANG=es` en `.cargo/config.toml`; los de inglés aparte (prioridad flag > variable > config, ayuda, idioma desconocido, mensajes del core)
 - Listo cuando: en `market-api`, una corrida sin configurar sale en inglés, con `language: es` en el config sale en español, y el reporte acompaña. **Pendiente:** la corrida.
 
-**17. Frenar y ver en vivo** (motor, para la TUI)
-- [ ] Frenar en orden: deja de iniciar iteraciones, espera las que están en curso y guarda resultados y reporte marcados como interrumpidos; Ctrl+C en `crabfall run` (ADR-015)
-- [ ] El colector publica la serie de cada segundo mientras corre (global y por paso)
-- [ ] Tests: frenar en los dos modelos, con `vu_setup` y `vu_refresh`, y la serie en vivo igual a la final
+**17. Frenar y ver en vivo** (motor, para la TUI; ADR-015)
+- [x] `Progress` lleva un pedido de freno de dos niveles: el primero deja de iniciar iteraciones y espera a las que están en curso (`graceful_stop`); el segundo corta ya
+- [x] Frenar antes de la carga (en `setup` o `vu_setup`) aborta la corrida; durante `vu_setup` corta los logins en curso
+- [x] La corrida frenada guarda `results.json` y el reporte con `stopped_at_s`, un aviso al principio y `passed: false`; el diagnóstico corre sobre lo que hubo; `crabfall compare` avisa que cubre menos
+- [x] Ctrl+C en `crabfall run`: el primero frena en orden, el segundo corta
+- [x] En vivo: fase (setup, vu_setup, carga, drenando, terminada), VUs ocupados, renovaciones fallidas y cada segundo cerrado de la serie (global y por paso), publicado medio segundo después de cerrar; la serie final y la publicada salen de la misma función
+- [x] Tests: frenar en los dos modelos, dos veces (corta lo que está en curso), durante `vu_setup`, y la serie en vivo igual a la final
+- Listo cuando: Ctrl+C en una corrida real de `market-api` guarda los resultados y el reporte con el aviso. **Pendiente:** la corrida.
 
 **18. TUI** (ADR-015)
 - [ ] `crabfall` sin argumentos abre la TUI si hay terminal; el hook la bloquea para Claude

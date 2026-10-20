@@ -3,7 +3,7 @@
 A load testing tool in Rust, built to be used together with Claude Code:
 Claude designs the scenario and analyzes the results; a person approves and runs the load.
 
-Status: **slice 16 in progress** (output language), after v0.1.0. Already working: design with Claude, signed approval, scenarios with `setup`, `extract`, checks and thresholds, three executors, diagnosis, run comparison, datasets, pauses between steps, per-run tweaks by flag, an HTML report per run, login per virtual user (`vu_setup`), token renewal during the load (`vu_refresh`), file uploads (`multipart`), bytes sent and received per second, an HTTP client with cookies, redirects, compression and forms, and output in English or Spanish. See the [roadmap](docs/roadmap.md) (in Spanish).
+Status: **slice 17** (stop a run and watch it live), after v0.1.0. Already working: design with Claude, signed approval, scenarios with `setup`, `extract`, checks and thresholds, three executors, diagnosis, run comparison, datasets, pauses between steps, per-run tweaks by flag, an HTML report per run, login per virtual user (`vu_setup`), token renewal during the load (`vu_refresh`), file uploads (`multipart`), bytes sent and received per second, an HTTP client with cookies, redirects, compression and forms, and output in English or Spanish. See the [roadmap](docs/roadmap.md) (in Spanish).
 
 ## Usage
 
@@ -46,6 +46,8 @@ crabfall check smoke                 # each flow once, only against loopback
 crabfall approve smoke --env local   # risk summary; asks you to type the host
 crabfall run smoke --env local       # results in .crabfall/runs/<id>/results.json
 ```
+
+To stop a run, press Ctrl+C: it stops starting iterations, waits for the ones in progress and saves what ran, marked as stopped. A second Ctrl+C cuts them right away.
 
 `crabfall run` only runs approved scenarios. The approval signs the scenario together with the resolved environment: any change in the traffic invalidates it, and `crabfall run` shows what changed. Approval happens in an interactive terminal; the signing key lives in the system keyring ([ADR-004](docs/adr/ADR-004-aprobacion.md)).
 

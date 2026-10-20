@@ -119,7 +119,7 @@ You can freely use: `crabfall validate`, `crabfall check` (only against loopback
 
 Always start with `crabfall findings --json` (the most recent run; `crabfall findings <id> --json` for another one). It is a compact summary: totals, thresholds, findings and metrics per step. Open `.crabfall/runs/<id>/results.json` only if you need the per-second series (`series`). For the person there is a graphical report in `.crabfall/runs/<id>/report.html` (`crabfall run` generates it; `crabfall report <id>` regenerates it): mention it when you wrap up the analysis. You read the JSON, not the HTML.
 
-1. **Is the result valid?** If there is an `invalid_result` finding, say so first and draw no conclusions from that run.
+1. **Is the result valid?** If there is an `invalid_result` finding, say so first and draw no conclusions from that run. If `stopped_at_s` is set, the person stopped the run at that second: say it is incomplete and that its numbers only cover what ran.
 2. **Findings (`findings[]`)**, from most to least severe. Each one has `title`, `step`, `source`, `window`, `evidence` (the numbers) and `causes` (probable causes, not conclusions):
    - `breaking_point`: with `ramping_rate`, from which rate it degrades and which step worsens most.
    - `capacity_exceeded`: the requested rate exceeds what the system sustains.

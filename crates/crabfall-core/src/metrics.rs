@@ -305,6 +305,29 @@ impl Collector {
 
     /// Serie por segundo, global y por paso.
     pub fn series(&self, plan: &Plan) -> Series {
+        let seconds: Vec<LiveSecond> = (0..self.windows.len()).map(|t| self.second(t)).collect();
+        let steps = plan
+            .steps()
+            .map(|p| StepSeries {
+                name: p.name.clone(),
+                points: seconds.iter().map(|s| s.steps[p.id].clone()).collect(),
+            })
+            .collect();
+        Series {
+            window_s: 1,
+            points: seconds.into_iter().map(|s| s.point).collect(),
+            steps,
+        }
+    }
+
+    /// Segundos con datos hasta ahora.
+    pub fn seconds(&self) -> usize {
+        self.windows.len()
+    }
+
+    /// El segundo `t` de la serie, global y por paso (en el orden de `plan.steps()`).
+    /// Un segundo sin eventos sale en cero.
+    pub fn second(&self, t: usize) -> LiveSecond {
         let quantiles = |h: &Option<Histogram<u64>>| match h {
             Some(h) if !h.is_empty() => {
                 let ms = |q: f64| Some(round(h.value_at_quantile(q) as f64 / 1000.0));
@@ -312,53 +335,37 @@ impl Collector {
             }
             _ => (None, None, None),
         };
-        let points = self
-            .windows
-            .iter()
-            .enumerate()
-            .map(|(t, w)| {
-                let (p50, p95, p99) = quantiles(&w.latency);
-                Point {
-                    t: t as u32,
-                    started: w.started,
-                    dropped: w.dropped,
-                    requests: w.requests,
-                    errors: w.errors,
-                    bytes_sent: w.traffic.sent,
-                    bytes_received: w.traffic.received,
-                    p50,
-                    p95,
-                    p99,
-                }
-            })
-            .collect();
-        let steps = plan
-            .steps()
-            .map(|p| StepSeries {
-                name: p.name.clone(),
-                points: self
-                    .windows
-                    .iter()
-                    .enumerate()
-                    .map(|(t, w)| {
-                        let s = &w.steps[p.id];
-                        let (p50, p95, p99) = quantiles(&s.latency);
-                        StepPoint {
-                            t: t as u32,
-                            requests: s.requests,
-                            errors: s.errors,
-                            p50,
-                            p95,
-                            p99,
-                        }
-                    })
-                    .collect(),
-            })
-            .collect();
-        Series {
-            window_s: 1,
-            points,
-            steps,
+        let empty = Window::new(self.steps.len());
+        let w = self.windows.get(t).unwrap_or(&empty);
+        let (p50, p95, p99) = quantiles(&w.latency);
+        LiveSecond {
+            point: Point {
+                t: t as u32,
+                started: w.started,
+                dropped: w.dropped,
+                requests: w.requests,
+                errors: w.errors,
+                bytes_sent: w.traffic.sent,
+                bytes_received: w.traffic.received,
+                p50,
+                p95,
+                p99,
+            },
+            steps: w
+                .steps
+                .iter()
+                .map(|s| {
+                    let (p50, p95, p99) = quantiles(&s.latency);
+                    StepPoint {
+                        t: t as u32,
+                        requests: s.requests,
+                        errors: s.errors,
+                        p50,
+                        p95,
+                        p99,
+                    }
+                })
+                .collect(),
         }
     }
 
@@ -563,6 +570,9 @@ pub struct Totals {
 pub struct RunResult {
     /// Verdadero si la corrida terminó y pasaron todos los thresholds.
     pub passed: bool,
+    /// El segundo en que la persona frenó la corrida, si la frenó (ADR-015).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stopped_at_s: Option<f64>,
     pub duration_s: f64,
     /// Por qué no se generó carga, si el `setup` falló.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -640,6 +650,7 @@ impl RunResult {
         Self {
             passed: false,
             duration_s: 0.0,
+            stopped_at_s: None,
             aborted: Some(reason),
             setup,
             vu_setup: None,
@@ -655,6 +666,14 @@ impl RunResult {
     }
 }
 
+/// Un segundo cerrado de la corrida, global y por paso: lo que se publica en vivo.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct LiveSecond {
+    pub point: Point,
+    /// En el orden de `Plan::steps`.
+    pub steps: Vec<StepPoint>,
+}
+
 /// Serie por segundo. `t` es el segundo desde el inicio de la carga.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Series {
@@ -663,7 +682,7 @@ pub struct Series {
     pub steps: Vec<StepSeries>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Point {
     pub t: u32,
     /// Iteraciones iniciadas en la ventana.
@@ -690,7 +709,7 @@ pub struct StepSeries {
     pub points: Vec<StepPoint>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StepPoint {
     pub t: u32,
     pub requests: u64,
