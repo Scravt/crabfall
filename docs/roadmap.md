@@ -240,6 +240,15 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente. Al cerrar
 - [x] Tests: fijar, comparar contra la base aunque haya corridas en el medio, sin base, argumentos de más, y la tecla `b`
 - Listo cuando: en `market-api`, fijo como base la corrida de `search-ramp` con índice y una corrida sin índice da "empeoró" contra la base. **Pendiente:** la prueba.
 
+**23. Ayuda en la TUI** (ADR-015)
+- [x] `?` en cualquier pantalla abre su ayuda (qué es, cómo se usa, cada tecla); cualquier tecla la cierra; editando un valor, `?` se escribe
+- [x] En el escenario, una línea con los tres pasos (check → aprobar → correr), cuál está hecho y qué sigue, según el estado: errores, ajuste inválido, check pendiente o fallido, cambió desde la aprobación, aprobado
+- [x] Debajo de los ajustes, qué significa el elegido y un ejemplo
+- [x] En la lista, la descripción entera del escenario elegido (y el error entero si no se puede armar), en lugar de una columna cortada
+- [x] En el historial, Enter elige una corrida y Enter en otra las compara; `c` compara con la anterior; Esc suelta la elegida
+- [x] El pie muestra `? ayuda` y `j/k`
+- Listo cuando: alguien que abre la TUI por primera vez llega a correr y comparar sin que le expliquen. **Pendiente:** la prueba.
+
 ## Primera versión
 
 **v0.1.0** (19 oct 2026): las rebanadas 0 a 13 con el nombre Crabfall (binario `crabfall`, carpeta `.crabfall/`), en `main` y en GitHub (privado). Lo que queda abierto de esas rebanadas: TLS contra un servidor real (1), la skill en una sesión nueva de Claude Code (2). La rebanada 13 se cerró después, con la corrida de `upload`.

@@ -66,3 +66,12 @@ La TUI no copia los gráficos del HTML: lo abre con una tecla. Lo que aporta es 
 
 - **A favor:** un flujo completo sin recordar flags, y la corrida en vivo, que hoy no existe. Frenar con resultados también mejora `crabfall run`.
 - **En contra:** una segunda interfaz para mantener al día con cada ajuste nuevo; por eso usa los mismos `Overrides` y el mismo resumen de aprobación que la CLI, no copias.
+
+## Ayuda para quien la abre por primera vez (20 oct 2026)
+
+Probándola, el pie con las teclas no alcanzaba: decía qué teclas hay, pero no qué conviene hacer ni por qué, y la descripción del escenario se cortaba.
+
+- **Qué sigue:** el escenario muestra arriba los tres pasos (check → aprobar → correr), cuál está hecho y una línea "Siguiente" con la tecla y el motivo. El check se marca como "no aplica" si el destino no es loopback, porque `check` no corre ahí. El estado del check vive en la sesión de la TUI: no se guarda.
+- **`?`:** una ayuda por pantalla, en frases. Cualquier tecla la cierra y no hace nada más (así `q` no sale por accidente). Mientras se escribe un valor o el host, `?` es un carácter.
+- **Enter en el historial:** antes comparaba con la anterior y Espacio marcaba la base; Enter es lo que uno prueba primero para elegir. Ahora Enter elige una corrida y Enter en otra las compara (la primera es el "antes"); `c` compara con la anterior. Espacio sigue funcionando igual que Enter.
+- **No hay pantalla de bienvenida:** con "Siguiente" y `?` no hace falta, y molestaría a quien ya la usa.

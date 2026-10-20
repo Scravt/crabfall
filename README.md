@@ -3,7 +3,7 @@
 A load testing tool in Rust, built to be used together with Claude Code:
 Claude designs the scenario and analyzes the results; a person approves and runs the load.
 
-Status: **slice 22** (fixed baseline), after v0.1.0. Already working: design with Claude, signed approval, scenarios with `setup`, `extract`, checks and thresholds, three executors, diagnosis, run comparison, datasets, pauses between steps, per-run tweaks by flag, an HTML report per run, login per virtual user (`vu_setup`), token renewal during the load (`vu_refresh`), file uploads (`multipart`), bytes sent and received per second, an HTTP client with cookies, redirects, compression and forms, and output in English or Spanish. See the [roadmap](docs/roadmap.md) (in Spanish).
+Status: **slice 23** (help in the TUI), after v0.1.0. Already working: design with Claude, signed approval, scenarios with `setup`, `extract`, checks and thresholds, three executors, diagnosis, run comparison, datasets, pauses between steps, per-run tweaks by flag, an HTML report per run, login per virtual user (`vu_setup`), token renewal during the load (`vu_refresh`), file uploads (`multipart`), bytes sent and received per second, an HTTP client with cookies, redirects, compression and forms, and output in English or Spanish. See the [roadmap](docs/roadmap.md) (in Spanish).
 
 ## Usage
 
@@ -51,12 +51,13 @@ crabfall run smoke --env local       # results in .crabfall/runs/<id>/results.js
 
 Run `crabfall` without a subcommand, in a terminal, to open the TUI ([ADR-015](docs/adr/ADR-015-tui.md)):
 
-- **Pick** a scenario and the environment (`e`), with each scenario's approval state and its last run.
+- **Pick** a scenario and the environment (`e`), with each scenario's approval state, its last run and its full description.
 - **Tweak** rate, duration, VUs, pauses, renewal and thresholds; the plan is rebuilt as you type, and it shows the equivalent `crabfall` command.
-- **Check** (`c`), **approve** (`a`, typing the host) and **run** (`r`).
+- **Check** (`c`), **approve** (`a`, typing the host) and **run** (`r`). A line at the top shows these three steps and what to do next; below the tweaks, what the selected one means, with an example.
 - **Watch it live**: the last second against what you asked for, p95 and errors per second, the steps, and warnings as they happen. `q` stops it, the same way Ctrl+C does.
 - **Results** in tabs, and `o` opens the HTML report.
-- **History** (`h`): the scenario's runs, newest first; Enter compares one with the previous one, or with a base marked with Space.
+- **History** (`h`): the scenario's runs, newest first. Enter chooses a run and Enter on another compares them; `c` compares the selected one with the previous run; `b` sets it as the baseline.
+- **Help**: `?` on any screen explains it; the bottom line always shows its keys.
 
 The HTML report is still the place to analyze and share a run; the TUI is for operating it.
 
