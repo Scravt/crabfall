@@ -26,7 +26,8 @@ pub const TABS: usize = 4;
 const GOOD: Color = Color::Green;
 const BAD: Color = Color::Red;
 const WARN: Color = Color::Yellow;
-const MUTED: Color = Color::DarkGray;
+/// Texto secundario. Gris claro: el gris oscuro casi no se lee en terminales oscuras.
+const MUTED: Color = Color::Gray;
 
 pub fn draw(frame: &mut Frame, app: &App) {
     let [top, body, bottom] = Layout::vertical([
@@ -69,18 +70,21 @@ pub fn draw(frame: &mut Frame, app: &App) {
             "? help · ↑↓ or j/k tweak · Enter edit it · Del clear it · c check · a approve · r run · h history · o last report · Esc back",
             "? ayuda · ↑↓ o j/k ajuste · Enter editarlo · Supr borrarlo · c check · a aprobar · r correr · h historial · o último reporte · Esc volver",
         ),
-        Screen::Check(..) => pick("? help · Esc back", "? ayuda · Esc volver"),
+        Screen::Check(..) => pick(
+            "? help · Esc back · m menu",
+            "? ayuda · Esc volver · m menú",
+        ),
         Screen::History(_, h) if h.base.is_some() => pick(
             "? help · ↑↓ or j/k move · Enter on another run: compare them · Enter on the same one or Esc: release it",
             "? ayuda · ↑↓ o j/k moverse · Enter en otra corrida: compararlas · Enter en la misma o Esc: soltarla",
         ),
         Screen::History(..) => pick(
-            "? help · ↑↓ or j/k move · Enter choose to compare · c compare with the previous one · b set as baseline · o report · Esc back",
-            "? ayuda · ↑↓ o j/k moverse · Enter elegir para comparar · c comparar con la anterior · b fijar como base · o reporte · Esc volver",
+            "? help · ↑↓ or j/k move · Enter choose to compare · c compare with the previous one · b set as baseline · o report · Esc back · m menu",
+            "? ayuda · ↑↓ o j/k moverse · Enter elegir para comparar · c comparar con la anterior · b fijar como base · o reporte · Esc volver · m menú",
         ),
         Screen::Compare(..) => pick(
-            "? help · Esc back to the history",
-            "? ayuda · Esc volver al historial",
+            "? help · Esc back to the history · m menu",
+            "? ayuda · Esc volver al historial · m menú",
         ),
         Screen::Approve(..) => pick(
             "type the host and Enter to approve · Esc cancel",
@@ -88,8 +92,8 @@ pub fn draw(frame: &mut Frame, app: &App) {
         ),
         Screen::Running(..) => pick("? help · q stop", "? ayuda · q frenar"),
         Screen::Results(..) => pick(
-            "? help · ←→ or 1-4 tabs · o open the HTML report · r run again · h history · Esc back",
-            "? ayuda · ←→ o 1-4 pestañas · o abrir el reporte HTML · r correr de nuevo · h historial · Esc volver",
+            "? help · ←→ or 1-4 tabs · r run again · Esc back to the scenario · m menu · h history · o HTML report",
+            "? ayuda · ←→ o 1-4 pestañas · r correr de nuevo · Esc volver al escenario · m menú · h historial · o reporte HTML",
         ),
     };
     let message = app
@@ -175,11 +179,11 @@ fn help(frame: &mut Frame, area: Rect, screen: &Screen) {
                 "Left: what the scenario will do (flows, load, limits). Right: tweaks, and what to do next.\n\n\
                  The line at the top shows the three steps and which one comes next: check (c), approve (a), run (r).\n\n\
                  Tweaks change the load without touching the YAML, only for this run: move with ↑↓ or j/k, Enter to type a value, Enter again to apply it, Del to clear it. Empty means \"as in the scenario\". Below the list you see what the selected tweak means and an example. Changing a tweak changes the plan: it must be approved again.\n\n\
-                 Other keys: h history of runs · o open the last report in the browser · Esc back to the list.",
+                 Other keys: h history of runs · o open the last report in the browser · Esc or m back to the list.",
                 "Izquierda: qué va a hacer el escenario (flows, carga, límites). Derecha: ajustes, y qué hacer después.\n\n\
                  La línea de arriba muestra los tres pasos y cuál sigue: check (c), aprobar (a), correr (r).\n\n\
                  Los ajustes cambian la carga sin tocar el YAML, solo para esta corrida: moverse con ↑↓ o j/k, Enter para escribir un valor, Enter de nuevo para aplicarlo, Supr para borrarlo. Vacío es \"como en el escenario\". Debajo de la lista ves qué significa el ajuste elegido y un ejemplo. Cambiar un ajuste cambia el plan: hay que aprobar de nuevo.\n\n\
-                 Otras teclas: h historial de corridas · o abrir el último reporte en el navegador · Esc volver a la lista.",
+                 Otras teclas: h historial de corridas · o abrir el último reporte en el navegador · Esc o m volver a la lista.",
             ),
         ),
         Screen::Check(..) => (
@@ -211,9 +215,9 @@ fn help(frame: &mut Frame, area: Rect, screen: &Screen) {
             pick(" Help · results ", " Ayuda · resultados "),
             pick(
                 "1 Summary: whether it passed, totals, thresholds and the comparison with the previous run. 2 Findings: problems Crabfall recognized (saturation, slow queries…) and their likely causes. 3 Steps: latency per step. 4 Checks: which response checks failed and examples.\n\n\
-                 ←→ or 1-4 switch tabs · o open the HTML report (charts) · r run again · h history · Esc back to the scenario.",
+                 ←→ or 1-4 switch tabs · r run again · Esc back to the scenario, to change the tweaks · m back to the menu, to pick another scenario · h history · o open the HTML report (charts).",
                 "1 Resumen: si pasó, totales, thresholds y la comparación con la corrida anterior. 2 Hallazgos: problemas que Crabfall reconoció (saturación, consultas lentas…) y sus causas probables. 3 Pasos: latencia por paso. 4 Checks: qué chequeos de respuesta fallaron y ejemplos.\n\n\
-                 ←→ o 1-4 cambiar de pestaña · o abrir el reporte HTML (gráficos) · r correr de nuevo · h historial · Esc volver al escenario.",
+                 ←→ o 1-4 cambiar de pestaña · r correr de nuevo · Esc volver al escenario, para cambiar los ajustes · m volver al menú, para elegir otro escenario · h historial · o abrir el reporte HTML (gráficos).",
             ),
         ),
         Screen::History(..) => (
@@ -1176,6 +1180,54 @@ fn results(frame: &mut Frame, area: Rect, d: &Detail, r: &ResultsView) {
                     ),
                     Style::new().fg(MUTED),
                 ));
+            }
+            lines.push(Line::default());
+            lines.push(Line::styled(
+                pick("What now?", "¿Y ahora?"),
+                Style::new().bold().fg(Color::Cyan),
+            ));
+            for (key, what) in [
+                (
+                    "r",
+                    pick("run it again, as it is", "correrlo de nuevo, igual"),
+                ),
+                (
+                    "Esc",
+                    pick(
+                        "back to the scenario: change the tweaks and try other values",
+                        "volver al escenario: cambiar los ajustes y probar otros valores",
+                    ),
+                ),
+                (
+                    "m",
+                    pick(
+                        "back to the menu: pick another scenario or environment",
+                        "volver al menú: elegir otro escenario o entorno",
+                    ),
+                ),
+                (
+                    "h",
+                    pick(
+                        "history: compare with earlier runs",
+                        "historial: comparar con corridas anteriores",
+                    ),
+                ),
+                (
+                    "o",
+                    pick(
+                        "open the HTML report, with charts",
+                        "abrir el reporte HTML, con gráficos",
+                    ),
+                ),
+                (
+                    "2-4",
+                    pick("findings, steps and checks", "hallazgos, pasos y checks"),
+                ),
+            ] {
+                lines.push(Line::from(vec![
+                    Span::styled(format!("  {key:<4}"), Style::new().bold()),
+                    Span::raw(what),
+                ]));
             }
         }
         1 => {

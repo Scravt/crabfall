@@ -57,7 +57,7 @@ Run `crabfall` without a subcommand, in a terminal, to open the TUI ([ADR-015](d
 - **Watch it live**: the last second against what you asked for, p95 and errors per second, the steps, and warnings as they happen. `q` stops it, the same way Ctrl+C does.
 - **Results** in tabs, and `o` opens the HTML report.
 - **History** (`h`): the scenario's runs, newest first. Enter chooses a run and Enter on another compares them; `c` compares the selected one with the previous run; `b` sets it as the baseline.
-- **Help**: `?` on any screen explains it; the bottom line always shows its keys.
+- **Help**: `?` on any screen explains it; the bottom line always shows its keys. After a run, the summary lists what to do next; `m` goes back to the menu from any screen.
 
 The HTML report is still the place to analyze and share a run; the TUI is for operating it.
 
