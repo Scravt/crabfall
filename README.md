@@ -209,7 +209,7 @@ cargo run --release -p lab-server -- --port 3999   # lab server
 
 The tests check the Spanish messages, so `.cargo/config.toml` sets `CRABFALL_LANG=es` for processes started by cargo in this workspace; English has its own tests (`tests/english.rs` in both crates). An installed `crabfall` still defaults to English.
 
-CI (`.github/workflows/ci.yml`) runs `cargo fmt --check` and `clippy` on Linux, and the tests on Linux and Windows, on every push to `main` or `dev` and on every pull request. Warnings count as errors. On Windows the diagnosis pathologies are skipped (`CRABFALL_SKIP_TIMING_TESTS=1`): they measure real time and that 2-core runner cannot keep the load schedule.
+CI (`.github/workflows/ci.yml`) runs `cargo fmt --check` and `clippy` on Linux, and the tests on Linux and Windows, on every push to `main` or `dev` and on every pull request. Warnings count as errors. On Windows the diagnosis pathologies are skipped (`CRABFALL_SKIP_TIMING_TESTS=1`): they measure real time and that 2-core runner cannot keep the load schedule. The engine tests still run there, without requiring the absence of the "scheduler fell behind" warning.
 
 To test against more realistic APIs: [shop-api](../shop-api) (local, with planted performance problems) and [market-api](../market-api) (Postgres, JWT, rate limit and uploads), separate repos with scenarios in their `.crabfall/`.
 

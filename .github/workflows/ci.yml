@@ -44,7 +44,8 @@ jobs:
       # Los tests que tocan el keyring del sistema están marcados #[ignore]: no corren acá.
       # Las patologías del diagnóstico miden tiempos reales: el runner de Windows (2 núcleos)
       # no sostiene el calendario de la carga y el diagnóstico da, con razón, `invalid_result`.
-      # Corren en Linux y en las máquinas de desarrollo.
+      # Corren en Linux y en las máquinas de desarrollo. Los tests del motor corren igual, pero sin
+      # exigir que no haya avisos de que el scheduler llegó tarde.
       - run: cargo test --workspace
         env:
           CRABFALL_SKIP_TIMING_TESTS: ${{ matrix.os == 'windows-latest' && '1' || '0' }}

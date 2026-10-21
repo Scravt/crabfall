@@ -18,6 +18,16 @@ use crabfall_core::{
 use serde_json::{Value, json};
 use tokio::net::TcpListener;
 
+/// Sin avisos, salvo con `CRABFALL_SKIP_TIMING_TESTS=1`: el runner de Windows del CI (2 núcleos)
+/// a veces no sostiene el calendario y el motor avisa, con razón, que el scheduler llegó tarde.
+/// Las cuentas se verifican igual; solo se saltea el aviso.
+fn assert_no_warnings(warnings: &[String]) {
+    if std::env::var("CRABFALL_SKIP_TIMING_TESTS").is_ok_and(|v| v == "1") {
+        return;
+    }
+    assert!(warnings.is_empty(), "{warnings:?}");
+}
+
 /// Devuelve lo que recibió: target, header Authorization y body.
 async fn echo(request: axum::extract::Request) -> Json<Value> {
     let (parts, body) = request.into_parts();
@@ -100,7 +110,7 @@ async fn keeps_rate_and_splits_flows_by_weight() {
     assert_eq!(r.totals.planned, 200);
     assert_eq!(r.totals.started, 200);
     assert_eq!(r.totals.dropped, 0);
-    assert!(r.warnings.is_empty(), "{:?}", r.warnings);
+    assert_no_warnings(&r.warnings);
 
     let by_name = |n: &str| r.steps.iter().find(|s| s.name == n).unwrap();
     assert_eq!(by_name("ok").requests, 150);
@@ -526,7 +536,7 @@ async fn ramping_rate_follows_its_stages() {
         (r.totals.planned, r.totals.started, r.totals.dropped),
         (100, 100, 0)
     );
-    assert!(r.warnings.is_empty(), "{:?}", r.warnings);
+    assert_no_warnings(&r.warnings);
 }
 
 #[tokio::test(flavor = "multi_thread")]
