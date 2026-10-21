@@ -247,6 +247,8 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente. Al cerrar
 - [x] En la lista, la descripción entera del escenario elegido (y el error entero si no se puede armar), en lugar de una columna cortada
 - [x] En el historial, Enter elige una corrida y Enter en otra las compara; `c` compara con la anterior; Esc suelta la elegida
 - [x] El pie muestra `? ayuda` y `j/k`
+- [x] Gris más claro para el texto secundario (el oscuro casi no se leía)
+- [x] Al terminar, el resumen dice "¿Y ahora?": correr de nuevo, cambiar ajustes, volver al menú (`m`, desde cualquier pantalla), historial, reporte
 - Listo cuando: alguien que abre la TUI por primera vez llega a correr y comparar sin que le expliquen. **Pendiente:** la prueba.
 
 ## Primera versión

@@ -434,6 +434,15 @@ impl App {
             return;
         }
         self.message = None;
+        // m vuelve al menú (la lista de escenarios) desde donde sea, salvo durante una
+        // corrida (se frena con q) o un check que no terminó.
+        let busy = matches!(&self.screen, Screen::Running(..))
+            || matches!(&self.screen, Screen::Check(_, c) if c.result.is_none());
+        if key.code == KeyCode::Char('m') && !self.typing() && !busy {
+            self.screen = Screen::Home;
+            self.reload();
+            return;
+        }
         let screen = std::mem::replace(&mut self.screen, Screen::Home);
         self.screen = match screen {
             Screen::Home => self.on_home(key),
@@ -1434,6 +1443,29 @@ mod history_tests {
         let s = screen(&app);
         let row = s.lines().find(|l| l.contains("20261020-100000")).unwrap();
         assert!(row.contains("base fija"), "{row}");
+    }
+
+    #[test]
+    fn m_goes_back_to_the_menu_from_anywhere() {
+        let p = project("menu");
+        save_run(&p, "20261020-100000", 10.0);
+        save_run(&p, "20261020-110000", 40.0);
+        let mut app = App::with_project(p).unwrap();
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Char('h'));
+        press(&mut app, KeyCode::Char('c'));
+        assert!(matches!(app.screen, Screen::Compare(..)));
+        press(&mut app, KeyCode::Char('m'));
+        assert!(matches!(app.screen, Screen::Home));
+        // Editando un ajuste, m se escribe.
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Char('m'));
+        let Screen::Detail(d) = &app.screen else {
+            panic!("se fue del escenario")
+        };
+        assert_eq!(d.form.fields[0].value, "m");
     }
 
     #[test]
