@@ -1042,7 +1042,11 @@ mod tests_support {
     }
 
     pub fn screen(app: &App) -> String {
-        let mut terminal = Terminal::new(TestBackend::new(160, 45)).unwrap();
+        screen_sized(app, 160, 45)
+    }
+
+    pub fn screen_sized(app: &App, width: u16, height: u16) -> String {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
         terminal.draw(|f| view::draw(f, app)).unwrap();
         let buffer = terminal.backend().buffer();
         let width = buffer.area.width as usize;
@@ -1443,6 +1447,54 @@ mod history_tests {
         let s = screen(&app);
         let row = s.lines().find(|l| l.contains("20261020-100000")).unwrap();
         assert!(row.contains("base fija"), "{row}");
+    }
+
+    #[test]
+    fn key_lines_wrap_between_keys() {
+        let keys = "? ayuda · c comparar con la anterior · b fijar como base · m menú";
+        assert_eq!(view::key_lines(keys, 200), vec![keys.to_string()]);
+        assert_eq!(
+            view::key_lines(keys, 40),
+            vec![
+                "? ayuda · c comparar con la anterior",
+                "b fijar como base · m menú"
+            ]
+        );
+        // Una parte más larga que el ancho queda sola en su línea, sin partirse.
+        assert_eq!(
+            view::key_lines(keys, 10),
+            vec![
+                "? ayuda",
+                "c comparar con la anterior",
+                "b fijar como base",
+                "m menú"
+            ]
+        );
+    }
+
+    /// En una terminal angosta el pie se cortaba justo en "· b" y no se veía `b` (22 oct 2026).
+    #[test]
+    fn a_narrow_terminal_shows_every_history_key() {
+        let p = project("narrow");
+        save_run(&p, "20261020-100000", 10.0);
+        save_run(&p, "20261020-110000", 40.0);
+        let mut app = App::with_project(p).unwrap();
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Char('h'));
+        let s = screen_sized(&app, 90, 30);
+        for key in ["b fijar como base", "o reporte", "Esc volver", "m menú"] {
+            assert!(s.contains(key), "falta `{key}`:\n{s}");
+        }
+        // Y la tabla no corta el id ni los encabezados (pasaba igual: `20261022-2029`).
+        for text in [
+            "20261020-110000",
+            "20261020-100000",
+            "peor p95 ms",
+            "hallazgos",
+        ] {
+            assert!(s.contains(text), "falta `{text}`:\n{s}");
+        }
     }
 
     #[test]

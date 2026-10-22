@@ -248,8 +248,9 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente. Al cerrar
 - [x] En el historial, Enter elige una corrida y Enter en otra las compara; `c` compara con la anterior; Esc suelta la elegida
 - [x] El pie muestra `? ayuda` y `j/k`
 - [x] Gris más claro para el texto secundario (el oscuro casi no se leía)
+- [x] El pie se parte entre teclas cuando no entra en el ancho (antes se cortaba y no se veía `b` en el historial); el historial entra en 90 columnas sin cortar el id
 - [x] Al terminar, el resumen dice "¿Y ahora?": correr de nuevo, cambiar ajustes, volver al menú (`m`, desde cualquier pantalla), historial, reporte
-- Listo cuando: alguien que abre la TUI por primera vez llega a correr y comparar sin que le expliquen. Primera prueba con el usuario (22 oct 2026): llegó a correr, ver el historial, comparar y fijar la base, pero no encontró `b`: el pie del historial no entra en el ancho y se corta justo en "· b". **Pendiente:** que el pie no se corte, y la prueba con alguien que no la conoce.
+- Listo cuando: alguien que abre la TUI por primera vez llega a correr y comparar sin que le expliquen. Primera prueba con el usuario (22 oct 2026): llegó a correr, ver el historial, comparar y fijar la base, pero no encontró `b`: el pie del historial no entra en el ancho y se corta justo en "· b". Arreglado: el pie se parte entre teclas para entrar en el ancho, y las columnas del historial ya no cortan el id de la corrida (`20261022-2029`). **Pendiente:** la prueba con alguien que no la conoce.
 
 ## Primera versión
 

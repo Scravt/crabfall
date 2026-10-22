@@ -30,10 +30,11 @@ const WARN: Color = Color::Yellow;
 const MUTED: Color = Color::Gray;
 
 pub fn draw(frame: &mut Frame, app: &App) {
+    let keys = key_lines(keys(app), frame.area().width);
     let [top, body, bottom] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Min(0),
-        Constraint::Length(2),
+        Constraint::Length(1 + keys.len() as u16),
     ])
     .areas(frame.area());
 
@@ -57,45 +58,6 @@ pub fn draw(frame: &mut Frame, app: &App) {
         top,
     );
 
-    let keys = match &app.screen {
-        Screen::Home => pick(
-            "? help · ↑↓ or j/k move · Enter open the scenario · e change environment · q quit",
-            "? ayuda · ↑↓ o j/k moverse · Enter abrir el escenario · e cambiar de entorno · q salir",
-        ),
-        Screen::Detail(d) if d.form.editing => pick(
-            "type the value · Enter apply · Esc cancel",
-            "escribí el valor · Enter aplicar · Esc cancelar",
-        ),
-        Screen::Detail(_) => pick(
-            "? help · ↑↓ or j/k tweak · Enter edit it · Del clear it · c check · a approve · r run · h history · o last report · Esc back",
-            "? ayuda · ↑↓ o j/k ajuste · Enter editarlo · Supr borrarlo · c check · a aprobar · r correr · h historial · o último reporte · Esc volver",
-        ),
-        Screen::Check(..) => pick(
-            "? help · Esc back · m menu",
-            "? ayuda · Esc volver · m menú",
-        ),
-        Screen::History(_, h) if h.base.is_some() => pick(
-            "? help · ↑↓ or j/k move · Enter on another run: compare them · Enter on the same one or Esc: release it",
-            "? ayuda · ↑↓ o j/k moverse · Enter en otra corrida: compararlas · Enter en la misma o Esc: soltarla",
-        ),
-        Screen::History(..) => pick(
-            "? help · ↑↓ or j/k move · Enter choose to compare · c compare with the previous one · b set as baseline · o report · Esc back · m menu",
-            "? ayuda · ↑↓ o j/k moverse · Enter elegir para comparar · c comparar con la anterior · b fijar como base · o reporte · Esc volver · m menú",
-        ),
-        Screen::Compare(..) => pick(
-            "? help · Esc back to the history · m menu",
-            "? ayuda · Esc volver al historial · m menú",
-        ),
-        Screen::Approve(..) => pick(
-            "type the host and Enter to approve · Esc cancel",
-            "escribí el host y Enter para aprobar · Esc cancelar",
-        ),
-        Screen::Running(..) => pick("? help · q stop", "? ayuda · q frenar"),
-        Screen::Results(..) => pick(
-            "? help · ←→ or 1-4 tabs · r run again · Esc back to the scenario · m menu · h history · o HTML report",
-            "? ayuda · ←→ o 1-4 pestañas · r correr de nuevo · Esc volver al escenario · m menú · h historial · o reporte HTML",
-        ),
-    };
     let message = app
         .message
         .as_ref()
@@ -105,10 +67,12 @@ pub fn draw(frame: &mut Frame, app: &App) {
                 Style::new().fg(if *error { BAD } else { GOOD }),
             )
         });
-    frame.render_widget(
-        Paragraph::new(vec![message, Line::styled(keys, Style::new().fg(MUTED))]),
-        bottom,
+    let mut footer = vec![message];
+    footer.extend(
+        keys.into_iter()
+            .map(|l| Line::styled(l, Style::new().fg(MUTED))),
     );
+    frame.render_widget(Paragraph::new(footer), bottom);
 
     match &app.screen {
         Screen::Home => home(frame, body, app),
@@ -147,6 +111,65 @@ pub fn draw(frame: &mut Frame, app: &App) {
     if app.help {
         help(frame, frame.area(), &app.screen);
     }
+}
+
+/// Las teclas de la pantalla actual, separadas por ` · `.
+fn keys(app: &App) -> &'static str {
+    match &app.screen {
+        Screen::Home => pick(
+            "? help · ↑↓ or j/k move · Enter open the scenario · e change environment · q quit",
+            "? ayuda · ↑↓ o j/k moverse · Enter abrir el escenario · e cambiar de entorno · q salir",
+        ),
+        Screen::Detail(d) if d.form.editing => pick(
+            "type the value · Enter apply · Esc cancel",
+            "escribí el valor · Enter aplicar · Esc cancelar",
+        ),
+        Screen::Detail(_) => pick(
+            "? help · ↑↓ or j/k tweak · Enter edit it · Del clear it · c check · a approve · r run · h history · o last report · Esc back",
+            "? ayuda · ↑↓ o j/k ajuste · Enter editarlo · Supr borrarlo · c check · a aprobar · r correr · h historial · o último reporte · Esc volver",
+        ),
+        Screen::Check(..) => pick(
+            "? help · Esc back · m menu",
+            "? ayuda · Esc volver · m menú",
+        ),
+        Screen::History(_, h) if h.base.is_some() => pick(
+            "? help · ↑↓ or j/k move · Enter on another run: compare them · Enter on the same one or Esc: release it",
+            "? ayuda · ↑↓ o j/k moverse · Enter en otra corrida: compararlas · Enter en la misma o Esc: soltarla",
+        ),
+        Screen::History(..) => pick(
+            "? help · ↑↓ or j/k move · Enter choose to compare · c compare with the previous one · b set as baseline · o report · Esc back · m menu",
+            "? ayuda · ↑↓ o j/k moverse · Enter elegir para comparar · c comparar con la anterior · b fijar como base · o reporte · Esc volver · m menú",
+        ),
+        Screen::Compare(..) => pick(
+            "? help · Esc back to the history · m menu",
+            "? ayuda · Esc volver al historial · m menú",
+        ),
+        Screen::Approve(..) => pick(
+            "type the host and Enter to approve · Esc cancel",
+            "escribí el host y Enter para aprobar · Esc cancelar",
+        ),
+        Screen::Running(..) => pick("? help · q stop", "? ayuda · q frenar"),
+        Screen::Results(..) => pick(
+            "? help · ←→ or 1-4 tabs · r run again · Esc back to the scenario · m menu · h history · o HTML report",
+            "? ayuda · ←→ o 1-4 pestañas · r correr de nuevo · Esc volver al escenario · m menú · h historial · o reporte HTML",
+        ),
+    }
+}
+
+/// Parte las teclas entre sus partes (` · `) para que entren en `width`, nunca en medio de una:
+/// cortadas al final, la tecla que no se ve no existe (pasó con `b` en el historial).
+pub fn key_lines(keys: &str, width: u16) -> Vec<String> {
+    let mut lines: Vec<String> = Vec::new();
+    for part in keys.split(" · ") {
+        match lines.last_mut() {
+            Some(line) if Span::raw(format!("{line} · {part}")).width() <= usize::from(width) => {
+                line.push_str(" · ");
+                line.push_str(part);
+            }
+            _ => lines.push(part.to_string()),
+        }
+    }
+    lines
 }
 
 /// La ayuda de la pantalla actual (`?`), encima de todo.
@@ -1407,7 +1430,7 @@ fn history(frame: &mut Frame, area: Rect, d: &Detail, h: &HistoryView) {
         pick("duration", "duración"),
         "requests",
         "req/s",
-        pick("worst p95 (ms)", "peor p95 (ms)"),
+        pick("worst p95 ms", "peor p95 ms"),
         pick("findings", "hallazgos"),
         "",
     ])
@@ -1416,14 +1439,16 @@ fn history(frame: &mut Frame, area: Rect, d: &Detail, h: &HistoryView) {
         Table::new(
             rows,
             [
-                Constraint::Length(18),
-                Constraint::Length(13),
-                Constraint::Length(10),
-                Constraint::Length(10),
-                Constraint::Length(8),
-                Constraint::Length(16),
-                Constraint::Length(10),
-                Constraint::Min(8),
+                // Lo justo para cada columna (el id mide 15), así la tabla entra en 90 columnas sin
+                // que ratatui achique todas y corte el id.
+                Constraint::Length(15),
+                Constraint::Length(11),
+                Constraint::Length(9),
+                Constraint::Length(9),
+                Constraint::Length(7),
+                Constraint::Length(11),
+                Constraint::Length(9),
+                Constraint::Min(9),
             ],
         )
         .header(header)
