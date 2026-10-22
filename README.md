@@ -3,7 +3,7 @@
 A load testing tool in Rust, built to be used together with Claude Code:
 Claude designs the scenario and analyzes the results; a person approves and runs the load.
 
-Status: **slice 23** (help in the TUI), after v0.1.0. Already working: design with Claude, signed approval, scenarios with `setup`, `extract`, checks and thresholds, three executors, diagnosis, run comparison, datasets, pauses between steps, per-run tweaks by flag, an HTML report per run, login per virtual user (`vu_setup`), token renewal during the load (`vu_refresh`), file uploads (`multipart`), bytes sent and received per second, an HTTP client with cookies, redirects, compression and forms, and output in English or Spanish. See the [roadmap](docs/roadmap.md) (in Spanish).
+Status: **slice 23** (help in the TUI), after v0.1.0. Already working: design with Claude, signed approval (HMAC-SHA256 with the key in the system keyring; see [Approval](#approval-no-load-without-a-person)), scenarios with `setup`, `extract`, checks and thresholds, three executors, diagnosis, run comparison, datasets, pauses between steps, per-run tweaks by flag, an HTML report per run, login per virtual user (`vu_setup`), token renewal during the load (`vu_refresh`), file uploads (`multipart`), bytes sent and received per second, an HTTP client with cookies, redirects, compression and forms, and output in English or Spanish. See the [roadmap](docs/roadmap.md) (in Spanish).
 
 ## Usage
 
