@@ -47,6 +47,41 @@ crabfall approve smoke --env local   # risk summary; asks you to type the host
 crabfall run smoke --env local       # results in .crabfall/runs/<id>/results.json
 ```
 
+### Approval: no load without a person
+
+`crabfall run` only runs a scenario that a person approved, exactly as it is now. The guard lives in the `crabfall` binary, not in Claude Code's permissions, because Claude can edit any file in the repo ([ADR-004](docs/adr/ADR-004-aprobacion.md)).
+
+1. **What gets signed: the canonical plan.** `crabfall approve` resolves the scenario against the environment and the flags, and builds a canonical JSON of the traffic it will send:
+   - each request with its URL already resolved against `base_url`, method, headers, body and timeout; the flow weights; `setup`, `extract`, `vu_setup` and `vu_refresh`;
+   - the resolved load (executor, rate, duration, VUs, stages, pauses), including every tweak by flag;
+   - the environment's `base_url`, `allowed_hosts`, `vars` and `limits`;
+   - the SHA-256 of every dataset and every uploaded file (their content, not just their path);
+   - the `user-agent`, which carries the Crabfall version.
+
+   Secret values never enter, only their names. `description`, `checks`, `thresholds` and `source` are left out: they don't change the traffic. The SHA-256 of that JSON is the plan's **fingerprint**.
+2. **The key.** The first approval generates 32 random bytes and stores them in the system keyring (Windows Credential Manager, macOS Keychain, Secret Service on Linux) as `crabfall` / `approval-key`. The key is never written in the repo.
+3. **The signature.** HMAC-SHA256 with that key over the format version, scenario, environment, fingerprint, date and approver. It goes in `.crabfall/approvals/<scenario>.<env>.json`, together with the approved plan (used for the diff). Approvals are not committed: the key belongs to one machine.
+4. **The person.** `crabfall approve` refuses unless stdin and stderr are an interactive terminal. It shows the risk summary (hosts, rate, VUs, duration, steps that write, data, the diff against the last approval), refuses plans over the environment's `limits`, and asks you to **type the target host**: a `y` is not enough.
+5. **The verification.** Every `crabfall run` recomputes the HMAC with the key from the keyring, checks that the stored plan matches its fingerprint, rebuilds the plan from what is on disk now and compares fingerprints. If anything differs, it refuses with exit code `3` and shows the diff between what was approved and what there is now.
+
+What that stops:
+
+| Attempt | Result |
+| --- | --- |
+| Editing the scenario after approving it (rate, a URL, a body) | The fingerprint changes: refused, with the diff |
+| Leaving the scenario alone and pointing the environment elsewhere (`base_url`, `allowed_hosts`, `limits`, `vars`) | The environment is in the fingerprint: refused |
+| Changing a dataset row or the uploaded file | Their SHA-256 is in the fingerprint: refused |
+| Running with other flags (`--rate 500/s` approved as `--rate 50/s`) | The tweaks are in the fingerprint: refused |
+| Writing or editing an approval file by hand, or copying another scenario's | Without the key there is no valid HMAC; scenario and environment are signed |
+| `yes \| crabfall approve`, `echo host \| crabfall approve` | No interactive terminal: refused |
+| Claude running `crabfall approve` or `crabfall run` | The `PreToolUse` hook from `crabfall claude install` blocks it first (an extra layer, not the guard) |
+
+Updating Crabfall invalidates the approvals too, since the `user-agent` changes: the traffic is different. Approvals do not expire; they last until something changes.
+
+What it does **not** stop: someone acting deliberately with your user account. Any process running as you can read the keyring key, emulate a terminal, or send load without Crabfall (a `curl` loop). `approved_by` is a signed label, not an authentication. The guard prevents accidents and misuse of this tool; it does not replace trust in the agent or the security of the machine. Without a person or a keyring, approving in CI is not supported yet.
+
+The only thing that needs no approval is `crabfall check`: each flow once, in series, at most 50 requests, and only to hosts that resolve to loopback, redirects included.
+
 ### Terminal UI
 
 Run `crabfall` without a subcommand, in a terminal, to open the TUI ([ADR-015](docs/adr/ADR-015-tui.md)):
@@ -62,8 +97,6 @@ Run `crabfall` without a subcommand, in a terminal, to open the TUI ([ADR-015](d
 The HTML report is still the place to analyze and share a run; the TUI is for operating it.
 
 To stop a run, press Ctrl+C: it stops starting iterations, waits for the ones in progress and saves what ran, marked as stopped. A second Ctrl+C cuts them right away.
-
-`crabfall run` only runs approved scenarios. The approval signs the scenario together with the resolved environment: any change in the traffic invalidates it, and `crabfall run` shows what changed. Approval happens in an interactive terminal; the signing key lives in the system keyring ([ADR-004](docs/adr/ADR-004-aprobacion.md)).
 
 ### Language
 

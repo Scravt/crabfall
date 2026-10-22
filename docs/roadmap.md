@@ -189,7 +189,7 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente. Al cerrar
 - [x] Cada mensaje con sus dos versiones juntas (`tr!`, `pick`); la ayuda se traduce con una tabla; el reporte con `L(en, es)`
 - [x] README, skill y documentación del schema en inglés; ADRs y roadmap en español
 - [x] Tests: los existentes en español con `CRABFALL_LANG=es` en `.cargo/config.toml`; los de inglés aparte (prioridad flag > variable > config, ayuda, idioma desconocido, mensajes del core)
-- Listo cuando: en `market-api`, una corrida sin configurar sale en inglés, con `language: es` en el config sale en español, y el reporte acompaña. **Pendiente:** la corrida.
+- Listo: en `market-api`, `register-users` sin configurar salió en inglés; con `language: es` en el config, `smoke` salió en español en `approve`, `run` y el reporte (22 oct 2026).
 
 **17. Frenar y ver en vivo** (motor, para la TUI; ADR-015)
 - [x] `Progress` lleva un pedido de freno de dos niveles: el primero deja de iniciar iteraciones y espera a las que están en curso (`graceful_stop`); el segundo corta ya
@@ -216,7 +216,7 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente. Al cerrar
 - [x] Enter compara la elegida con la anterior; Espacio marca una base y Enter compara contra ella; `o` abre el reporte de la elegida
 - [x] La comparación usa `compare::compare`, como `crabfall compare`: veredicto, avisos, regresiones, mejoras, tabla de pasos y hallazgos nuevos, resueltos y que siguen
 - [x] Tests: el orden del historial, la comparación con la anterior (empeoró) y contra una base (mejoró), y un escenario sin corridas
-- Listo cuando: en `market-api`, el historial de `search-ramp` compara la corrida sin índice con la de después y dice "mejoró". **Pendiente:** la prueba.
+- Listo: en `market-api`, el historial de `search-ramp` comparó la corrida sin índice (18 oct) con la de después y dijo "mejoró": p95 de `search` 3203 → 10,8 ms en 60 de 60 segundos, y el punto de quiebre resuelto (22 oct 2026).
 
 **20. Diagnóstico de ancho de banda** (ADR-005)
 - [x] `bandwidth_limit`: el tráfico se estanca en un techo (85% del pico, 5 segundos o más) mientras la carga pide un 25% más y el p95 se triplica; solo por encima de 1 MB/s
@@ -230,7 +230,7 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente. Al cerrar
 - [x] En `vu_setup`, el plan exige una fila por VU; `approve` avisa si las filas no alcanzan para las iteraciones planificadas
 - [x] `--pick users=unique` por flag; schema, skill y README
 - [x] Tests: los dos modelos usan cada fila una vez y terminan al acabarse; la validación de `vu_setup`
-- Listo cuando: en `market-api`, un escenario que registra usuarios nuevos con `pick: unique` no repite ninguno. **Pendiente:** la corrida.
+- Listo: en `market-api`, `register-users` (25 filas de `data/new-users.csv`, 1/s, 60 iteraciones pedidas) registró 25 usuarios con 25 emails distintos en la base, 50 de 50 checks pasados y todos 201; la carga terminó sola en el segundo 25 con el aviso y `data_exhausted` en `results.json` (22 oct 2026).
 
 **22. Corrida base fija** (ADR-006)
 - [x] `crabfall baseline [corrida]` la guarda en `.crabfall/baselines/<escenario>.<entorno>.json`, versionada; no acepta una corrida abortada
@@ -238,7 +238,7 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente. Al cerrar
 - [x] En la TUI, `b` en el historial fija la base y la fila la marca
 - [x] Ayuda en los dos idiomas, README, skill (Claude la prefiere para preguntar si algo empeoró, pero no la mueve)
 - [x] Tests: fijar, comparar contra la base aunque haya corridas en el medio, sin base, argumentos de más, y la tecla `b`
-- Listo cuando: en `market-api`, fijo como base la corrida de `search-ramp` con índice y una corrida sin índice da "empeoró" contra la base. **Pendiente:** la prueba.
+- Listo cuando: en `market-api`, fijo como base la corrida de `search-ramp` con índice y una corrida sin índice da "empeoró" contra la base. Fijar la base con `b` en el historial funciona (`20261022-202949`, con índice, versionada en `market-api`). **Pendiente:** la corrida sin índice.
 
 **23. Ayuda en la TUI** (ADR-015)
 - [x] `?` en cualquier pantalla abre su ayuda (qué es, cómo se usa, cada tecla); cualquier tecla la cierra; editando un valor, `?` se escribe
@@ -249,7 +249,7 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente. Al cerrar
 - [x] El pie muestra `? ayuda` y `j/k`
 - [x] Gris más claro para el texto secundario (el oscuro casi no se leía)
 - [x] Al terminar, el resumen dice "¿Y ahora?": correr de nuevo, cambiar ajustes, volver al menú (`m`, desde cualquier pantalla), historial, reporte
-- Listo cuando: alguien que abre la TUI por primera vez llega a correr y comparar sin que le expliquen. **Pendiente:** la prueba.
+- Listo cuando: alguien que abre la TUI por primera vez llega a correr y comparar sin que le expliquen. Primera prueba con el usuario (22 oct 2026): llegó a correr, ver el historial, comparar y fijar la base, pero no encontró `b`: el pie del historial no entra en el ancho y se corta justo en "· b". **Pendiente:** que el pie no se corte, y la prueba con alguien que no la conoce.
 
 ## Primera versión
 
