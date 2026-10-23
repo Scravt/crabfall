@@ -5,7 +5,7 @@ description: Designs and verifies load tests with Crabfall (YAML scenarios in .c
 
 # Load testing with Crabfall
 
-You design, verify and analyze. **The person approves and runs the load.** Never run `crabfall approve` or `crabfall run` (a hook blocks them, and `crabfall run` refuses any scenario without a signed approval): when the scenario is ready, ask the person to run them.
+You design, verify and analyze. **A person approves every load.** Never run `crabfall approve`, or `crabfall run` without `--ask` (a hook blocks them, and `crabfall run` refuses any scenario without a signed approval). To run load yourself, use `crabfall run ... --ask`: a person confirms it in a window (see *Running it yourself* below).
 
 You can freely use: `crabfall validate`, `crabfall check` (only against loopback), `crabfall schema`, `crabfall findings` and `crabfall compare`.
 
@@ -112,6 +112,12 @@ You can freely use: `crabfall validate`, `crabfall check` (only against loopback
    crabfall run <name> --env <environment>
    ```
    Any later change to the scenario or the environment invalidates the approval: if you fix something, say that it has to be approved again.
+
+   **Running it yourself (`--ask`).** When the person wants you to iterate (run, compare, change the code, run again), or asks you to run it, use the same command with `--ask`:
+   ```
+   crabfall run <name> --env <environment> <flags> --ask
+   ```
+   It opens a window on the person's screen with the risk summary: they approve it there (typing the host, if the plan is new or changed) or confirm with `y`, and the load runs in that window, where they can stop it. Before running it, tell the person a window is about to appear. Run it in the background and wait for it to finish: the person may take up to 5 minutes to answer, and then the load lasts what the scenario says. Exit code `3` with "nobody answered", "cancelled" or "did not type" means the person did not confirm: do not retry on your own; ask them. When it ends, it prints where the results are: analyze them with `crabfall findings --json` and, if there is a baseline, `crabfall compare --baseline --json`. Every change to the scenario, the flags or the environment makes the window ask again with the diff, so prefer fixing the API's code over editing the scenario between runs. Never try to type into that window, run `--window` or work around the confirmation: if `--ask` refuses (another OS, no desktop), hand the commands to the person. The person can answer with minutes instead of `y` to allow the same plan without asking for that long; the window still opens for each run.
 
    The person can also do it from the terminal UI: `crabfall` without a subcommand opens it (pick the scenario, approve, run and watch it live). You cannot use it: a hook blocks it.
 

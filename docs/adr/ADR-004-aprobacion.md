@@ -1,6 +1,6 @@
 # ADR-004 — Aprobación y modelo de amenaza
 
-Estado: **aceptado** · 12 oct 2026
+Estado: **aceptado** · 12 oct 2026 · ampliado por [ADR-017](ADR-017-confirmacion-en-ventana.md) (el agente pide la corrida con `run --ask` y la persona la confirma en una ventana)
 
 ## Contexto
 

@@ -222,6 +222,66 @@ pub fn diff(before: &Value, after: &Value) -> String {
         .to_string()
 }
 
+/// Permiso para correr de nuevo un plan aprobado sin volver a preguntar, hasta un momento
+/// (ADR-017). Archivo `.crabfall/approvals/<escenario>.<entorno>.allow.json`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Allowance {
+    pub format: u32,
+    pub scenario: String,
+    pub environment: String,
+    /// El hash del plan aprobado: si el plan cambia, el permiso deja de valer.
+    pub hash: String,
+    /// Hasta cuándo, en segundos Unix.
+    pub until: u64,
+    pub signature: String,
+}
+
+pub fn allowance_path(approvals_dir: &Path, scenario: &str, environment: &str) -> PathBuf {
+    approvals_dir.join(format!("{scenario}.{environment}.allow.json"))
+}
+
+/// Firma un permiso para `approval` hasta `until`. Quien llama pidió la confirmación humana.
+pub fn allow(approval: &Approval, until: u64, keys: &dyn KeyStore) -> Result<Allowance, String> {
+    let key = keys.get_or_create()?;
+    let mut allowance = Allowance {
+        format: FORMAT,
+        scenario: approval.scenario.clone(),
+        environment: approval.environment.clone(),
+        hash: approval.hash.clone(),
+        until,
+        signature: String::new(),
+    };
+    allowance.signature = to_hex(&mac(&key, &allowance_message(&allowance)));
+    Ok(allowance)
+}
+
+/// Si `allowance` deja correr `approval` (ya verificada contra el plan actual) en `now`.
+pub fn allows(allowance: &Allowance, approval: &Approval, now: u64, keys: &dyn KeyStore) -> bool {
+    let Ok(Some(key)) = keys.get() else {
+        return false;
+    };
+    let Some(signature) = from_hex(&allowance.signature) else {
+        return false;
+    };
+    let mut check = <Hmac<Sha256> as KeyInit>::new_from_slice(&key)
+        .expect("HMAC acepta cualquier largo de clave");
+    check.update(&allowance_message(allowance));
+    check.verify_slice(&signature).is_ok()
+        && allowance.format == FORMAT
+        && allowance.scenario == approval.scenario
+        && allowance.environment == approval.environment
+        && allowance.hash == approval.hash
+        && now < allowance.until
+}
+
+fn allowance_message(a: &Allowance) -> Vec<u8> {
+    format!(
+        "crabfall-allowance/{}\n{}\n{}\n{}\n{}",
+        a.format, a.scenario, a.environment, a.hash, a.until
+    )
+    .into_bytes()
+}
+
 fn signed_message(a: &Approval) -> Vec<u8> {
     format!(
         "crabfall-approval/{}\n{}\n{}\n{}\n{}\n{}",
@@ -231,9 +291,13 @@ fn signed_message(a: &Approval) -> Vec<u8> {
 }
 
 fn sign(key: &[u8], approval: &Approval) -> Vec<u8> {
+    mac(key, &signed_message(approval))
+}
+
+fn mac(key: &[u8], message: &[u8]) -> Vec<u8> {
     let mut mac = <Hmac<Sha256> as KeyInit>::new_from_slice(key)
         .expect("HMAC acepta cualquier largo de clave");
-    mac.update(&signed_message(approval));
+    mac.update(message);
     mac.finalize().into_bytes().to_vec()
 }
 

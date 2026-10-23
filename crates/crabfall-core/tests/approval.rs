@@ -161,3 +161,37 @@ fn approval_signed_with_another_key_is_rejected() {
     );
     assert!(matches!(result, Err(Rejection::Tampered(_))));
 }
+
+#[test]
+fn an_allowance_lets_the_same_plan_run_until_it_expires() {
+    let a = approved();
+    let allowance = approval::allow(&a, 1_000, &key()).unwrap();
+    assert!(approval::allows(&allowance, &a, 999, &key()));
+    assert!(!approval::allows(&allowance, &a, 1_000, &key()));
+}
+
+#[test]
+fn an_allowance_does_not_survive_a_new_plan_or_an_edit() {
+    let a = approved();
+    let allowance = approval::allow(&a, 1_000, &key()).unwrap();
+
+    let e = env(ENV);
+    let changed = SCENARIO.replace("rate: 10/s", "rate: 20/s");
+    let other = approval::approve(
+        &plan(&changed, &e),
+        &e,
+        "local",
+        "gonzalo",
+        "2026-10-12T00:00:00Z",
+        &key(),
+    )
+    .unwrap();
+    assert!(!approval::allows(&allowance, &other, 0, &key()));
+
+    let mut extended = allowance.clone();
+    extended.until = 9_999;
+    assert!(!approval::allows(&extended, &a, 2_000, &key()));
+
+    let other_key = MemoryKey(b"otra-clave".to_vec());
+    assert!(!approval::allows(&allowance, &a, 0, &other_key));
+}

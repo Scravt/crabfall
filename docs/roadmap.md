@@ -252,6 +252,17 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente. Al cerrar
 - [x] Al terminar, el resumen dice "¿Y ahora?": correr de nuevo, cambiar ajustes, volver al menú (`m`, desde cualquier pantalla), historial, reporte
 - Listo cuando: alguien que abre la TUI por primera vez llega a correr y comparar sin que le expliquen. Primera prueba con el usuario (22 oct 2026): llegó a correr, ver el historial, comparar y fijar la base, pero no encontró `b`: el pie del historial no entra en el ancho y se corta justo en "· b". Arreglado: el pie se parte entre teclas para entrar en el ancho, y las columnas del historial ya no cortan el id de la corrida (`20261022-2029`). **Pendiente:** la prueba con alguien que no la conoce.
 
+**24. El agente pide la corrida, la persona confirma en una ventana** (ADR-017)
+- [x] `crabfall run --ask`: sin terminal, se relanza en una consola nueva, espera y devuelve el código y dónde quedaron los resultados; en una terminal pregunta ahí
+- [x] La ventana muestra el resumen de riesgo; sin aprobación vigente pide el host y firma, con aprobación alcanza `s`; la carga corre en la ventana y Ctrl+C la frena; se cierra sola a los 30 s
+- [x] Permiso por tiempo (1 a 120 min) firmado con la misma clave y atado al hash del plan; se revoca borrando el archivo
+- [x] 5 min sin respuesta cancela; cerrar la ventana también
+- [x] `--window` rechaza si la consola no es nueva y visible (el único proceso en ella)
+- [x] Hook: deja pasar `run --ask`, bloquea `run` sin `--ask` y `run --window`; skill, ayuda en los dos idiomas y README
+- [x] Tests: el permiso (vence, no sobrevive a otro plan, a una edición ni a otra clave), el hook y `--window` fuera de su ventana
+- [x] Investigación sobre agentes maliciosos: qué resiste y qué no, en ADR-017
+- Listo cuando: en `market-api`, Claude corre `search-ramp --ask`, la persona confirma en la ventana, Claude compara contra la base, cambia algo y vuelve a correr. **Pendiente:** la prueba con la persona. macOS y Linux, después.
+
 ## Primera versión
 
 **v0.1.0** (19 oct 2026): las rebanadas 0 a 13 con el nombre Crabfall (binario `crabfall`, carpeta `.crabfall/`), en `main` y en GitHub (privado). Lo que queda abierto de esas rebanadas: TLS contra un servidor real (1), la skill en una sesión nueva de Claude Code (2). La rebanada 13 se cerró después, con la corrida de `upload`.
@@ -260,7 +271,7 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente. Al cerrar
 
 **Al final: modelos de carga nuevos** (`ramping_vus`, iteraciones fijas, arrival por VU). Hoy alcanzan `constant_rate`, `ramping_rate` y `constant_vus`.
 
-más reglas de diagnóstico, aprobar en CI sin una persona (para que la base fija sirva en un pipeline), servidor MCP, importadores (OpenAPI, curl, Postman), HTTP/2, GUI con Tauri (después de la TUI), leer `expires_in` para elegir solo cuándo renovar, GitHub Action, correlación con métricas del servidor (OTLP, Prometheus), WebSockets, gRPC, Kafka.
+contra un agente malicioso (ADR-017): guía para correr el agente con el sandbox de Claude Code y egress restringido, y un token de vida corta exigido por el target (FIDO2 o teléfono, verificado fuera de la máquina); la ventana de `--ask` en macOS y Linux; más reglas de diagnóstico, aprobar en CI sin una persona (para que la base fija sirva en un pipeline), servidor MCP, importadores (OpenAPI, curl, Postman), HTTP/2, GUI con Tauri (después de la TUI), leer `expires_in` para elegir solo cuándo renovar, GitHub Action, correlación con métricas del servidor (OTLP, Prometheus), WebSockets, gRPC, Kafka.
 
 ## Decisiones abiertas
 
@@ -303,3 +314,4 @@ más reglas de diagnóstico, aprobar en CI sin una persona (para que la base fij
 | 19 oct 2026 | Cliente HTTP real por defecto: cookies por VU, redirects hacia `allowed_hosts`, gzip y br; `check` nunca sale de loopback | ADR-014 |
 | 19 oct 2026 | TUI: `crabfall` sin argumentos; aprueba con el host tipeado; frena en orden y guarda; el HTML queda para analizar y compartir | ADR-015 |
 | 19 oct 2026 | Salida en inglés por defecto y en español a pedido; README y skill en inglés, ADRs y roadmap en español | ADR-016 |
+| 23 oct 2026 | El agente puede correr carga con `run --ask`: una persona confirma cada corrida en una ventana aparte, donde corre la carga; permiso por tiempo firmado; el modelo de amenaza sigue siendo el de ADR-004 | ADR-017 |

@@ -1,4 +1,5 @@
 mod approve;
+mod ask;
 mod baseline;
 mod check;
 mod claude;
@@ -218,6 +219,12 @@ enum Command {
         /// Prints the full results as JSON.
         #[arg(long, help_heading = None::<&str>)]
         json: bool,
+        /// Asks a person before running: for agents, it opens a window where the person confirms and the load runs (Windows for now); in a terminal, it asks right there.
+        #[arg(long, help_heading = None::<&str>)]
+        ask: bool,
+        /// The window that `--ask` opens (internal).
+        #[arg(long, hide = true, value_name = "FILE", conflicts_with = "ask")]
+        window: Option<std::path::PathBuf>,
     },
 }
 
@@ -268,7 +275,12 @@ fn main() -> ExitCode {
         }
         Command::Check { target, json } => check::cmd_check(&target, json),
         Command::Approve { target } => approve::cmd_approve(&target),
-        Command::Run { target, json } => run::cmd_run(&target, json),
+        Command::Run {
+            target,
+            json,
+            ask,
+            window,
+        } => run::cmd_run(&target, json, ask, window.as_deref()),
     };
     ExitCode::from(code)
 }
@@ -454,6 +466,9 @@ fn spanish_help(command: clap::Command) -> clap::Command {
             target(c)
                 .about("Ejecuta un escenario aprobado y guarda los resultados")
                 .mut_arg("json", |a| a.help("Imprime los resultados completos en JSON"))
+                .mut_arg("ask", |a| {
+                    a.help("Le pregunta a una persona antes de correr: para agentes, abre una ventana donde la persona confirma y corre la carga (por ahora en Windows); en una terminal, pregunta ahí mismo")
+                })
         })
 }
 
@@ -581,6 +596,6 @@ enum ClaudeAction {
 
 #[derive(Subcommand)]
 enum HookEvent {
-    /// Blocks `crabfall run` and `crabfall approve` invoked by Claude.
+    /// Blocks `crabfall run` (except `--ask`) and `crabfall approve` invoked by Claude.
     PreToolUse,
 }
