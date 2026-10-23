@@ -80,3 +80,28 @@ fn run_with_a_broken_approval_file_is_refused() {
     assert_eq!(out.status.code(), Some(REFUSED), "{}", stderr(&out));
     assert!(stderr(&out).contains("dañado"));
 }
+
+#[test]
+fn the_ask_window_flag_does_not_work_outside_its_own_window() {
+    // La consola de los tests es compartida (o no hay): `--window` no confirma nada en ella.
+    let dir = project("window");
+    let answer = dir.join("answer.json");
+    let out = cli(
+        &dir,
+        &["run", "s", "--window", answer.to_str().unwrap()],
+        "s\n127.0.0.1\n",
+    );
+    assert_eq!(out.status.code(), Some(REFUSED), "{}", stderr(&out));
+    let answer = std::fs::read_to_string(answer).unwrap();
+    assert!(answer.contains("\"code\":3"), "{answer}");
+    assert!(answer.contains("--window"), "{answer}");
+    assert!(!dir.join(".crabfall/approvals").exists());
+    assert!(!dir.join(".crabfall/runs").exists());
+}
+
+#[test]
+fn ask_and_window_do_not_go_together() {
+    let dir = project("ask-window");
+    let out = cli(&dir, &["run", "s", "--ask", "--window", "x.json"], "");
+    assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
+}

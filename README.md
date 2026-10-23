@@ -3,7 +3,7 @@
 A load testing tool in Rust, built to be used together with Claude Code:
 Claude designs the scenario and analyzes the results; a person approves and runs the load.
 
-Status: **slice 23** (help in the TUI), after v0.1.0. Already working: design with Claude, signed approval (HMAC-SHA256 with the key in the system keyring; see [Approval](#approval-no-load-without-a-person)), scenarios with `setup`, `extract`, checks and thresholds, three executors, diagnosis, run comparison, datasets, pauses between steps, per-run tweaks by flag, an HTML report per run, login per virtual user (`vu_setup`), token renewal during the load (`vu_refresh`), file uploads (`multipart`), bytes sent and received per second, an HTTP client with cookies, redirects, compression and forms, and output in English or Spanish. See the [roadmap](docs/roadmap.md) (in Spanish).
+Status: **slice 24** (the agent asks, a person confirms in a window), after v0.1.0. Already working: design with Claude, signed approval (HMAC-SHA256 with the key in the system keyring; see [Approval](#approval-no-load-without-a-person)), runs requested by the agent and confirmed by a person in a window ([`--ask`](#letting-the-agent-ask-for-a-run---ask)), scenarios with `setup`, `extract`, checks and thresholds, three executors, diagnosis, run comparison, datasets, pauses between steps, per-run tweaks by flag, an HTML report per run, login per virtual user (`vu_setup`), token renewal during the load (`vu_refresh`), file uploads (`multipart`), bytes sent and received per second, an HTTP client with cookies, redirects, compression and forms, and output in English or Spanish. See the [roadmap](docs/roadmap.md) (in Spanish).
 
 ## Usage
 
@@ -45,6 +45,7 @@ crabfall validate smoke              # --json for agents
 crabfall check smoke                 # each flow once, only against loopback
 crabfall approve smoke --env local   # risk summary; asks you to type the host
 crabfall run smoke --env local       # results in .crabfall/runs/<id>/results.json
+crabfall run smoke --env local --ask # asks first: what Claude uses, in a window
 ```
 
 ### Approval: no load without a person
@@ -74,11 +75,25 @@ What that stops:
 | Running with other flags (`--rate 500/s` approved as `--rate 50/s`) | The tweaks are in the fingerprint: refused |
 | Writing or editing an approval file by hand, or copying another scenario's | Without the key there is no valid HMAC; scenario and environment are signed |
 | `yes \| crabfall approve`, `echo host \| crabfall approve` | No interactive terminal: refused |
-| Claude running `crabfall approve` or `crabfall run` | The `PreToolUse` hook from `crabfall claude install` blocks it first (an extra layer, not the guard) |
+| Claude running `crabfall approve` or `crabfall run` | The `PreToolUse` hook from `crabfall claude install` blocks it first (an extra layer, not the guard); only `crabfall run --ask` gets through, and a person confirms it in a window |
 
 Updating Crabfall invalidates the approvals too, since the `user-agent` changes: the traffic is different. Approvals do not expire; they last until something changes.
 
 What it does **not** stop: someone acting deliberately with your user account. Any process running as you can read the keyring key, emulate a terminal, or send load without Crabfall (a `curl` loop). `approved_by` is a signed label, not an authentication. The guard prevents accidents and misuse of this tool; it does not replace trust in the agent or the security of the machine. Without a person or a keyring, approving in CI is not supported yet.
+
+### Letting the agent ask for a run: `--ask`
+
+So that Claude can iterate (run, compare against the baseline, change the API's code, run again) without you typing each command, it runs `crabfall run <name> --env <env> --ask` ([ADR-017](docs/adr/ADR-017-confirmacion-en-ventana.md)):
+
+1. Crabfall builds and checks the plan and the `limits` first: errors go back to Claude without bothering you.
+2. It opens a **new console window** with the risk summary. If the plan has no valid approval (first time, or it changed), it shows the diff and asks you to type the host, as `crabfall approve` does. If it is approved, answering `y` is enough.
+3. Instead of `y`, you can answer a number of **minutes (1-120)**: the same plan runs without asking for that long. The allowance is signed with the same key, is tied to the plan's fingerprint (any change asks again) and is revoked by deleting `.crabfall/approvals/<scenario>.<env>.allow.json`.
+4. **The load runs in that window**, with its progress: Ctrl+C stops it, whatever Claude does. At the end it shows the summary and closes after 30 s (or Enter).
+5. Claude's command prints where the results are and exits with the run's code; Claude reads them with `crabfall findings --json` and `crabfall compare --baseline --json`.
+
+Nobody answering in 5 minutes cancels it (exit code `3`), and so does closing the window. `--window`, the flag the window uses internally, refuses unless its console is new and visible, so it cannot confirm anything from Claude's console or a shared terminal. In a terminal, `--ask` asks right there. For now the window only opens on Windows; elsewhere, and without a desktop (SSH, Claude Code on the web), `--ask` refuses and asks you to run the command.
+
+Against a deliberately malicious agent this is no stronger than the rest: same-user processes can type into that window (`SendInput`), read the keyring key or send load without Crabfall. What would resist is keeping the agent away from the target and the key (Claude Code's sandbox with a network allowlist, a container or a VM), or making the target require a short-lived token issued off the agent's machine; ADR-017 compares the options.
 
 The only thing that needs no approval is `crabfall check`: each flow once, in series, at most 50 requests, and only to hosts that resolve to loopback, redirects included.
 
@@ -223,13 +238,13 @@ Full list in `crabfall run --help`. The approval signs the ones that change the 
 crabfall claude install              # in the repo under test: skill, hook and permissions in .claude/
 ```
 
-Then, in a Claude Code session: *"build me a load test of the checkout flow"*. Claude reads the code, writes the scenario, checks it with `crabfall validate` and `crabfall check` (only against loopback) and hands you the `crabfall approve` and `crabfall run` commands to run yourself. It cannot approve or run on its own ([ADR-001](docs/adr/ADR-001-claude-first.md), ADR-004).
+Then, in a Claude Code session: *"build me a load test of the checkout flow"*. Claude reads the code, writes the scenario, checks it with `crabfall validate` and `crabfall check` (only against loopback) and hands you the `crabfall approve` and `crabfall run` commands to run yourself. It cannot approve or run on its own ([ADR-001](docs/adr/ADR-001-claude-first.md), ADR-004): when it wants to run, it uses `crabfall run --ask`, and you confirm each run in a window (or allow the same plan for some minutes) while it compares the results and keeps working on the code ([`--ask`](#letting-the-agent-ask-for-a-run---ask)).
 
 `crabfall findings [--json]` shows the findings of the last run (or of one by id). `crabfall compare [base] [new] [--json]` compares two runs (by default, the last one with the previous one of the same scenario): what improved, what got worse and whether the change is consistent or may be noise ([ADR-006](docs/adr/ADR-006-comparacion.md)). To compare against an accepted reference instead of the previous run, set a baseline with `crabfall baseline [run]` (it goes in `.crabfall/baselines/`; commit it to share it) and use `crabfall compare --baseline`. In the TUI history, `b` sets it. `crabfall schema` prints the JSON Schema of the scenario.
 
 Each `crabfall run` also leaves `report.html` next to `results.json`: a file that opens offline, with per-second charts (iterations, latency, p95 per step, traffic), the findings with their window shaded, the comparison with the previous run and the tables. `crabfall report [run] --open` regenerates it and opens it in the browser ([ADR-009](docs/adr/ADR-009-reporte-html.md)).
 
-Exit codes: `0` ok · `1` `check` with failed steps, thresholds not met, `setup` failed or `compare` with regressions · `2` invalid scenario or configuration · `3` refused (no valid approval, host not allowed, limits, no terminal) · `4` error saving or accessing the keyring.
+Exit codes: `0` ok · `1` `check` with failed steps, thresholds not met, `setup` failed or `compare` with regressions · `2` invalid scenario or configuration · `3` refused (no valid approval, host not allowed, limits, no terminal, or nobody confirmed `--ask`) · `4` error saving or accessing the keyring.
 
 Full scenario format: [ADR-002](docs/adr/ADR-002-formato-escenario.md).
 

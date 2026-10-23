@@ -1,7 +1,8 @@
 //! `crabfall hook pre-tool-use`: hook `PreToolUse` de Claude Code (ADR-001, ADR-004 §5).
 //!
 //! Lee el evento por stdin y bloquea (código 2) los comandos de shell que ejecutarían
-//! `crabfall run` o `crabfall approve`. Es una defensa extra: la guarda real está en el binario.
+//! `crabfall run` (salvo con `--ask`, ADR-017) o `crabfall approve`. Es una defensa extra: la
+//! guarda real está en el binario.
 
 use std::io::Read;
 
@@ -29,6 +30,20 @@ pub fn cmd_pre_tool_use() -> u8 {
                 crabfall_core::tr!(
                     "crabfall without a subcommand opens the interactive TUI, which approves and runs load: only a person uses it (ADR-004, ADR-015).                  You can use `crabfall validate` and `crabfall check`.",
                     "crabfall sin subcomando abre la TUI interactiva, que aprueba y corre carga: la usa solo una persona (ADR-004, ADR-015).                  Vos podés usar `crabfall validate` y `crabfall check`."
+                )
+            );
+            2
+        }
+        Some("run") => {
+            eprintln!(
+                "{}",
+                crabfall_core::tr!(
+                    "crabfall run generates load, and a person has to confirm it (ADR-004, ADR-017). \
+                 Use `crabfall run ... --ask`: it opens a window where the person confirms, and the load runs there. \
+                 Run it in the background and wait: the person may take a few minutes.",
+                    "crabfall run genera carga, y una persona tiene que confirmarla (ADR-004, ADR-017). \
+                 Usá `crabfall run ... --ask`: abre una ventana donde la persona confirma, y la carga corre ahí. \
+                 Correlo en segundo plano y esperá: la persona puede tardar unos minutos."
                 )
             );
             2
@@ -90,6 +105,14 @@ pub fn blocked_subcommand(command: &str) -> Option<&'static str> {
                         rest.next();
                     }
                     w if w.starts_with('-') => {}
+                    // `run --ask` pide la confirmación en una ventana aparte (ADR-017).
+                    // `--window` es la de esa ventana: no lo lanza nadie más.
+                    "run" => {
+                        let flags: Vec<&str> = rest.copied().collect();
+                        let window = flags.iter().any(|f| f.starts_with("--window"));
+                        let ask = flags.contains(&"--ask");
+                        return (window || !ask).then_some("run");
+                    }
                     sub => return HUMAN_ONLY.iter().find(|h| **h == sub).copied(),
                 }
             }
@@ -141,6 +164,31 @@ mod tests {
         assert_eq!(
             blocked_subcommand("cargo run --release --bin crabfall -- approve x"),
             Some("approve")
+        );
+    }
+
+    #[test]
+    fn allows_run_only_with_ask() {
+        assert_eq!(blocked_subcommand("crabfall run checkout --ask"), None);
+        assert_eq!(
+            blocked_subcommand("crabfall run checkout --env local --rate 20/s --ask --json"),
+            None
+        );
+        assert_eq!(
+            blocked_subcommand("crabfall run x --ask --window C:/t.json"),
+            Some("run")
+        );
+        assert_eq!(
+            blocked_subcommand("crabfall run x --window=t.json"),
+            Some("run")
+        );
+        assert_eq!(
+            blocked_subcommand("crabfall approve x --ask"),
+            Some("approve")
+        );
+        assert_eq!(
+            blocked_subcommand("crabfall run x --ask; crabfall run x"),
+            Some("run")
         );
     }
 

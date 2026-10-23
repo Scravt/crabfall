@@ -21,10 +21,59 @@ use crate::{
     prepare::{Prepared, prepare},
 };
 
-pub fn cmd_run(target: &crate::Target, as_json: bool) -> u8 {
+pub fn cmd_run(target: &crate::Target, as_json: bool, ask: bool, window: Option<&Path>) -> u8 {
+    if let Some(file) = window {
+        return crate::ask::in_window(file, || run(target, false, Mode::Confirm));
+    }
+    let mode = match (ask, std::io::stdin().is_terminal()) {
+        (false, _) => Mode::Approved,
+        (true, true) => Mode::Confirm,
+        (true, false) => Mode::Delegate,
+    };
+    run(target, as_json, mode).code
+}
+
+/// Cómo se autoriza esta corrida.
+#[derive(Clone, Copy, PartialEq)]
+enum Mode {
+    /// Con la aprobación firmada, sin preguntar.
+    Approved,
+    /// Preguntándole a la persona en esta terminal (ADR-017).
+    Confirm,
+    /// Lo lanzó un agente con `--ask`: se pregunta en una ventana aparte (ADR-017).
+    Delegate,
+}
+
+/// Cómo terminó una corrida: el código de salida, dónde quedó y, si no corrió, por qué.
+pub struct Outcome {
+    pub code: u8,
+    pub results: Option<PathBuf>,
+    pub report: Option<PathBuf>,
+    pub note: Option<String>,
+}
+
+impl Outcome {
+    fn code(code: u8) -> Self {
+        Self {
+            code,
+            results: None,
+            report: None,
+            note: None,
+        }
+    }
+
+    pub fn refused(note: String) -> Self {
+        Self {
+            note: Some(note),
+            ..Self::code(exit::REFUSED)
+        }
+    }
+}
+
+fn run(target: &crate::Target, as_json: bool, mode: Mode) -> Outcome {
     let prepared = match prepare(target) {
         Ok(p) => p,
-        Err(code) => return code,
+        Err(code) => return Outcome::code(code),
     };
     let Prepared {
         project,
@@ -48,59 +97,30 @@ pub fn cmd_run(target: &crate::Target, as_json: bool) -> u8 {
         for v in violations {
             eprintln!("  {v}");
         }
-        return exit::REFUSED;
+        return Outcome::code(exit::REFUSED);
     }
-    let hosts: Vec<&str> = plan.hosts.iter().map(String::as_str).collect();
-    eprintln!("{} → {env_name} ({})", plan.scenario, hosts.join(", "));
-    eprintln!("  {} · {}", plan.load.describe(), plan.rate_summary());
-    if let Some(think) = plan.think_summary() {
-        eprintln!(
-            "{}",
-            crabfall_core::tr!("  pauses: {think}", "  pausas: {think}")
-        );
-    }
-    if !plan.vu_setup.is_empty() {
-        let names: Vec<&str> = plan.vu_setup.iter().map(|s| s.name.as_str()).collect();
-        eprintln!(
-            "{}",
-            crabfall_core::tr!(
-                "  per VU: {} ({} VUs, before the load)",
-                "  por VU: {} ({} VUs, antes de la carga)",
-                names.join(", "),
-                plan.load.concurrency()
-            )
-        );
-    }
-    if let Some(refresh) = plan.refresh_summary() {
-        eprintln!(
-            "{}",
-            crabfall_core::tr!(
-                "  renewal: {refresh} per VU, in the background",
-                "  renovación: {refresh} por VU, en segundo plano"
-            )
-        );
-    }
-    if !tweaks.is_empty() {
-        eprintln!(
-            "{}",
-            crabfall_core::tr!("  tweaks: {}", "  ajustes: {}", tweaks.join(" "))
-        );
-    }
-    for u in plan.uploads_summary() {
-        eprintln!("{}", crabfall_core::tr!("  file: {u}", "  archivo: {u}"));
-    }
-    eprintln!("  http: {}", plan.http_summary());
-    for d in &plan.data {
-        eprintln!(
-            "{}",
-            crabfall_core::tr!("  data: {}", "  datos: {}", d.dataset.describe())
-        );
-    }
-    let (duration, graceful_stop) = (plan.load.duration(), plan.load.graceful_stop());
-
-    let Ok(approval) = crate::approve::verify_for_run(project, &plan, env, env_name, tweaks) else {
-        return exit::REFUSED;
+    let approval = match mode {
+        Mode::Delegate => {
+            print_plan(&plan, env_name, tweaks);
+            return Outcome::code(crate::ask::delegate(as_json));
+        }
+        Mode::Confirm => match crate::ask::confirm(project, &plan, env, env_name, tweaks) {
+            Ok(a) => a,
+            Err(note) => {
+                eprintln!("{note}");
+                return Outcome::refused(note);
+            }
+        },
+        Mode::Approved => {
+            print_plan(&plan, env_name, tweaks);
+            let Ok(a) = crate::approve::verify_for_run(project, &plan, env, env_name, tweaks)
+            else {
+                return Outcome::code(exit::REFUSED);
+            };
+            a
+        }
     };
+    let (duration, graceful_stop) = (plan.load.duration(), plan.load.graceful_stop());
     eprintln!(
         "{}",
         crabfall_core::tr!(
@@ -156,16 +176,75 @@ pub fn cmd_run(target: &crate::Target, as_json: bool) -> u8 {
                 ),
                 None => {}
             }
-            if finished.result.passed {
-                exit::OK
-            } else {
-                exit::FAILED
+            Outcome {
+                code: if finished.result.passed {
+                    exit::OK
+                } else {
+                    exit::FAILED
+                },
+                results: Some(file.clone()),
+                report: finished
+                    .report
+                    .as_ref()
+                    .and_then(|r| r.as_ref().ok())
+                    .cloned(),
+                note: None,
             }
         }
         Err(e) => {
             eprintln!("✗ {e}");
-            exit::RUNTIME
+            Outcome::code(exit::RUNTIME)
         }
+    }
+}
+
+/// Destino, carga y ajustes de la corrida, en pocas líneas.
+pub fn print_plan(plan: &Plan, env_name: &str, tweaks: &[String]) {
+    let hosts: Vec<&str> = plan.hosts.iter().map(String::as_str).collect();
+    eprintln!("{} → {env_name} ({})", plan.scenario, hosts.join(", "));
+    eprintln!("  {} · {}", plan.load.describe(), plan.rate_summary());
+    if let Some(think) = plan.think_summary() {
+        eprintln!(
+            "{}",
+            crabfall_core::tr!("  pauses: {think}", "  pausas: {think}")
+        );
+    }
+    if !plan.vu_setup.is_empty() {
+        let names: Vec<&str> = plan.vu_setup.iter().map(|s| s.name.as_str()).collect();
+        eprintln!(
+            "{}",
+            crabfall_core::tr!(
+                "  per VU: {} ({} VUs, before the load)",
+                "  por VU: {} ({} VUs, antes de la carga)",
+                names.join(", "),
+                plan.load.concurrency()
+            )
+        );
+    }
+    if let Some(refresh) = plan.refresh_summary() {
+        eprintln!(
+            "{}",
+            crabfall_core::tr!(
+                "  renewal: {refresh} per VU, in the background",
+                "  renovación: {refresh} por VU, en segundo plano"
+            )
+        );
+    }
+    if !tweaks.is_empty() {
+        eprintln!(
+            "{}",
+            crabfall_core::tr!("  tweaks: {}", "  ajustes: {}", tweaks.join(" "))
+        );
+    }
+    for u in plan.uploads_summary() {
+        eprintln!("{}", crabfall_core::tr!("  file: {u}", "  archivo: {u}"));
+    }
+    eprintln!("  http: {}", plan.http_summary());
+    for d in &plan.data {
+        eprintln!(
+            "{}",
+            crabfall_core::tr!("  data: {}", "  datos: {}", d.dataset.describe())
+        );
     }
 }
 
