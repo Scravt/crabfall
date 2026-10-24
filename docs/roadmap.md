@@ -292,7 +292,7 @@ Each slice works end to end before moving on to the next. Closing it updates the
 - [x] Not signed (they don't change the traffic); recorded in `results.json` (`diagnosis`) and shown in the `run` header, the report and `crabfall findings --json`; `compare` warns when two runs used different settings
 - [x] Skill: say when a run had settings, and never turn rules off or loosen them to make a run look healthy
 - [x] Tests: validation with paths, flags added to the scenario and described, the environment and the scenario combined without changing the signature, the compare warning, and the long-tail lab re-diagnosed with each setting
-- Done when: on `market-api`, a run with a rule turned off records it and `compare` warns against one without. **Pending:** that run.
+- Done: on `market-api`, slice 26's 100-VU run repeated with `--diagnosis-off time_split` ran with the same approval (the settings aren't signed: the window only asked for `y`), showed `diagnosis: off time_split` in the header, gave no findings and recorded `"diagnosis": {"off": ["time_split"]}`. `crabfall compare` against the earlier run said "the diagnosis settings differ (the usual → off time_split): findings may appear or disappear because of that", with the same load and no significant changes (995 it/s; 24 Oct 2026).
 
 ## Versions
 
