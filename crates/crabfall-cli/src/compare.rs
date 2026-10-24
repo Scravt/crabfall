@@ -131,6 +131,12 @@ fn print_comparison(c: &Comparison) {
     for w in &c.warnings {
         println!("{}", crabfall_core::tr!("WARNING: {w}", "AVISO: {w}"));
     }
+    if let Some(s) = &c.scaling {
+        println!(
+            "{}",
+            crabfall_core::tr!("Concurrency: {}", "Concurrencia: {}", s.summary)
+        );
+    }
     let verdict = match c.verdict {
         Verdict::Better => pick("better", "mejoró"),
         Verdict::Worse => pick("worse", "empeoró"),

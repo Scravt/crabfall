@@ -1461,7 +1461,11 @@ fn compare(frame: &mut Frame, area: Rect, c: &crabfall_core::compare::Comparison
     use crabfall_core::compare::{Change, FindingState, Verdict};
     let [head, table, findings] = Layout::vertical([
         Constraint::Length(
-            (3 + c.warnings.len() + c.regressions.len() + c.improvements.len()).min(14) as u16,
+            (3 + c.warnings.len()
+                + usize::from(c.scaling.is_some())
+                + c.regressions.len()
+                + c.improvements.len())
+            .min(14) as u16,
         ),
         Constraint::Min(5),
         Constraint::Length((c.findings.len() as u16 + 2).min(8)),
@@ -1506,6 +1510,11 @@ fn compare(frame: &mut Frame, area: Rect, c: &crabfall_core::compare::Comparison
         c.warnings
             .iter()
             .map(|w| Line::styled(format!("! {w}"), Style::new().fg(WARN))),
+    );
+    lines.extend(
+        c.scaling
+            .iter()
+            .map(|s| Line::raw(tr!("concurrency: {}", "concurrencia: {}", s.summary))),
     );
     lines.extend(
         c.regressions

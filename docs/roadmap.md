@@ -276,7 +276,15 @@ Each slice works end to end before moving on to the next. Closing it updates the
 - [x] `fixed_concurrency` (`info`): with `constant_vus` and a step at p50 ≥ 100 ms, the run can't show whether that's the limit; it suggests a rate ramp
 - [x] Readable evidence names in the report, both languages; the skill knows how to read both findings
 - [x] Lab: a body written in pieces (download dominates), a handler that waits (server dominates, plus `fixed_concurrency`), a fast server (neither)
-- Done: on `market-api`, `search-ramp` with fixed VUs (`--executor constant_vus`, 30 s, with the index). With 50 VUs: 992 it/s and `search` at p50 49.7 ms, all of it TTFB, and no finding (under the 50 ms floor, as it should be). With 100 VUs: 1,003 it/s and p50 99.4 ms, and `time_split` said "`search` spends 100% of its time waiting for the server's first byte" (download ~0 ms, 2.8 KB per response). `fixed_concurrency` didn't fire, by 0.6 ms (p50 99.4 against 100); the threshold stays (24 Oct 2026). The two runs together show what neither shows alone: twice the VUs, the same throughput and twice the latency (Little's law), so `market-api` saturates at ~1,000 searches/s on this machine. That suggests detecting closed-model saturation by comparing runs with different VUs, without waiting for `ramping_vus`.
+- Done: on `market-api`, `search-ramp` with fixed VUs (`--executor constant_vus`, 30 s, with the index). With 50 VUs: 992 it/s and `search` at p50 49.7 ms, all of it TTFB, and no finding (under the 50 ms floor, as it should be). With 100 VUs: 1,003 it/s and p50 99.4 ms, and `time_split` said "`search` spends 100% of its time waiting for the server's first byte" (download ~0 ms, 2.8 KB per response). `fixed_concurrency` didn't fire, by 0.6 ms (p50 99.4 against 100); the threshold stays (24 Oct 2026). The two runs together show what neither shows alone: twice the VUs, the same throughput and twice the latency (Little's law), so `market-api` saturates at ~1,000 searches/s on this machine. That suggests detecting closed-model saturation by comparing runs with different VUs, without waiting for `ramping_vus` (slice 27).
+
+**27. Saturation with fixed VUs, by comparing runs** (ADR-018 §5)
+- [x] `crabfall compare` of two `constant_vus` runs that differ only in `vus` (by ×1.25 or more): `scaling` with the rates, each iteration's time (VUs ÷ rate) and the efficiency, and a verdict: `saturated` (≤ 0.25), `near_limit` or `scales` (≥ 0.75)
+- [x] One line in the terminal, the TUI (comparison and the summary after a run) and the report; with ≥ 5% errors, it says part of the throughput failed
+- [x] There, per-step latency changes don't count as regressions or improvements: more VUs are expected to raise it; errors still count
+- [x] Skill: how to probe capacity with fixed VUs (another run with more `--vus`, then compare)
+- [x] Tests: the real `market-api` numbers (saturated, verdict "no change"), a run that scales, one close to the limit going down in VUs, the cases where it doesn't apply (same VUs, another duration, an open model) and the errors caveat
+- Done: on `market-api`, `crabfall compare` of slice 26's two runs says "50 → 100 VUs (×2.0): throughput 992.7 → 1003.5 it/s (+1%) and each iteration 50.4 → 99.7 ms: saturated at ~1004 it/s: more VUs only add queue (Little's law)", with the verdict "no significant changes" instead of the misleading "worse" it gave before (24 Oct 2026).
 
 ## Versions
 
@@ -307,7 +315,6 @@ Each slice works end to end before moving on to the next. Closing it updates the
 - Reading `expires_in` to choose when to renew on its own.
 - A Tauri GUI (after the TUI).
 - Run phases (NeoLoad style) and the trend across many runs (diagnosis study, points 5 and 6).
-- `crabfall compare` across runs with different VUs: if the VUs rise and the throughput doesn't, the closed model is saturated (seen on 24 Oct 2026, slice 26).
 - Run ids come from each machine's clock (WSL in UTC, Windows in local time), so `latest` can pick the wrong run when both run against the same project.
 
 ## Open decisions
@@ -356,4 +363,5 @@ Each slice works end to end before moving on to the next. Closing it updates the
 | 24 Oct 2026 | v0.2.0: slices 14 to 25 to `main`; for v0.3, MCP, importers and diagnosis rules after comparing them with other tools | Versions |
 | 24 Oct 2026 | Diagnosis for v0.3: deterministic rules; they can be turned off and a few margins tuned, recorded in the results; no custom rules | [Study](studies/diagnosis-comparison.md) |
 | 24 Oct 2026 | Diagnosis v0.3: `time_split` and `fixed_concurrency`; saturation in the closed model waits for `ramping_vus`, because with fixed VUs the concurrency never changes | ADR-018 |
+| 24 Oct 2026 | Closed-model saturation by comparing runs with different VUs (`scaling` in `compare`); there, latency changes aren't regressions | ADR-018 §5 |
 | 24 Oct 2026 | All the documentation in English (ADRs, roadmap, studies); the test repos (`market-api`, `shop-api`) public on GitHub; MIT OR Apache-2.0 license files | ADR-016 |
