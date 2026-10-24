@@ -9,6 +9,7 @@ use crate::{
 
 pub const DIR: &str = ".crabfall";
 
+#[derive(Debug, Clone)]
 pub struct Project {
     /// Carpeta `.crabfall/`.
     pub dir: PathBuf,
@@ -40,8 +41,13 @@ impl Project {
 
     pub fn load_config(&self) -> Result<Config, String> {
         let path = self.config_path();
-        let text = std::fs::read_to_string(&path)
-            .map_err(|e| format!("no se pudo leer {}: {e}", path.display()))?;
+        let text = std::fs::read_to_string(&path).map_err(|e| {
+            crate::tr!(
+                "could not read {}: {e}",
+                "no se pudo leer {}: {e}",
+                path.display()
+            )
+        })?;
         parse_yaml::<Config>(&text).map_err(|i| format!("{}: {}", path.display(), describe(&i)))
     }
 
@@ -67,13 +73,13 @@ impl Project {
 /// `ruta (línea L, columna C): mensaje`, para mostrar en terminal.
 pub fn describe(issue: &Issue) -> String {
     let at = match (issue.line, issue.column) {
-        (Some(l), Some(c)) => format!(" (línea {l}, columna {c})"),
+        (Some(l), Some(c)) => crate::tr!(" (line {l}, column {c})", " (línea {l}, columna {c})"),
         _ => String::new(),
     };
     let path = if issue.path.is_empty() {
-        "(raíz)"
+        crate::tr!("(root)", "(raíz)")
     } else {
-        &issue.path
+        issue.path.clone()
     };
     format!("{path}{at}: {}", issue.message)
 }

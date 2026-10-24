@@ -2,12 +2,13 @@
 
 use std::{
     io::IsTerminal,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{Arc, atomic::Ordering::Relaxed},
     time::{Duration, Instant},
 };
 
 use crabfall_core::{
+    approval::Approval,
     engine::{self, Progress, plan::Plan},
     metrics::{CheckResult, RunResult},
     project::Project,
@@ -20,115 +21,312 @@ use crate::{
     prepare::{Prepared, prepare},
 };
 
-pub fn cmd_run(target: &crate::Target, as_json: bool) -> u8 {
+pub fn cmd_run(target: &crate::Target, as_json: bool, ask: bool, window: Option<&Path>) -> u8 {
+    if let Some(file) = window {
+        return crate::ask::in_window(file, || run(target, false, Mode::Confirm));
+    }
+    let mode = match (ask, std::io::stdin().is_terminal()) {
+        (false, _) => Mode::Approved,
+        (true, true) => Mode::Confirm,
+        (true, false) => Mode::Delegate,
+    };
+    run(target, as_json, mode).code
+}
+
+/// Cómo se autoriza esta corrida.
+#[derive(Clone, Copy, PartialEq)]
+enum Mode {
+    /// Con la aprobación firmada, sin preguntar.
+    Approved,
+    /// Preguntándole a la persona en esta terminal (ADR-017).
+    Confirm,
+    /// Lo lanzó un agente con `--ask`: se pregunta en una ventana aparte (ADR-017).
+    Delegate,
+}
+
+/// Cómo terminó una corrida: el código de salida, dónde quedó y, si no corrió, por qué.
+pub struct Outcome {
+    pub code: u8,
+    pub results: Option<PathBuf>,
+    pub report: Option<PathBuf>,
+    pub note: Option<String>,
+}
+
+impl Outcome {
+    fn code(code: u8) -> Self {
+        Self {
+            code,
+            results: None,
+            report: None,
+            note: None,
+        }
+    }
+
+    pub fn refused(note: String) -> Self {
+        Self {
+            note: Some(note),
+            ..Self::code(exit::REFUSED)
+        }
+    }
+}
+
+fn run(target: &crate::Target, as_json: bool, mode: Mode) -> Outcome {
+    let prepared = match prepare(target) {
+        Ok(p) => p,
+        Err(code) => return Outcome::code(code),
+    };
     let Prepared {
         project,
         env_name,
         env,
-        path,
         plan,
         tweaks,
-    } = match prepare(target) {
-        Ok(p) => p,
-        Err(code) => return code,
-    };
-    let violations = plan.limit_violations(&env);
+        ..
+    } = &prepared;
+    let (env_name, plan) = (env_name.as_str(), plan.clone());
+    let violations = plan.limit_violations(env);
     if !violations.is_empty() {
-        eprintln!("✗ {} supera los límites de `{env_name}`:", plan.scenario);
+        eprintln!(
+            "{}",
+            crabfall_core::tr!(
+                "✗ {} exceeds the limits of `{env_name}`:",
+                "✗ {} supera los límites de `{env_name}`:",
+                plan.scenario
+            )
+        );
         for v in violations {
             eprintln!("  {v}");
         }
-        return exit::REFUSED;
+        return Outcome::code(exit::REFUSED);
     }
-    let plan = Arc::new(plan);
+    let approval = match mode {
+        Mode::Delegate => {
+            print_plan(&plan, env_name, tweaks);
+            return Outcome::code(crate::ask::delegate(as_json));
+        }
+        Mode::Confirm => match crate::ask::confirm(project, &plan, env, env_name, tweaks) {
+            Ok(a) => a,
+            Err(note) => {
+                eprintln!("{note}");
+                return Outcome::refused(note);
+            }
+        },
+        Mode::Approved => {
+            print_plan(&plan, env_name, tweaks);
+            let Ok(a) = crate::approve::verify_for_run(project, &plan, env, env_name, tweaks)
+            else {
+                return Outcome::code(exit::REFUSED);
+            };
+            a
+        }
+    };
+    let (duration, graceful_stop) = (plan.load.duration(), plan.load.graceful_stop());
+    eprintln!(
+        "{}",
+        crabfall_core::tr!(
+            "  approved by {} on {}",
+            "  aprobado por {} el {}",
+            approval.approved_by,
+            approval.approved_at
+        )
+    );
 
+    let progress = Arc::new(Progress::default());
+    let runtime = tokio::runtime::Runtime::new().expect("runtime de tokio");
+    let finished = runtime.block_on(async {
+        let ticker = std::io::stderr()
+            .is_terminal()
+            .then(|| tokio::spawn(show_progress(progress.clone(), duration + graceful_stop)));
+        let stopper = tokio::spawn(stop_on_ctrl_c(progress.clone()));
+        let finished = execute(&prepared, &approval, progress.clone()).await;
+        // El aviso de Ctrl+C ya terminó la línea de progreso.
+        let progress_line_closed = progress.stop_requested();
+        stopper.abort();
+        if let Some(t) = ticker {
+            t.abort();
+            if !progress_line_closed {
+                eprintln!();
+            }
+        }
+        finished
+    });
+
+    if as_json {
+        println!("{}", serde_json::to_string_pretty(&finished.doc).unwrap());
+    } else {
+        print_summary(&finished.result);
+    }
+    match &finished.results {
+        Ok(file) => {
+            eprintln!(
+                "{}",
+                crabfall_core::tr!("results: {}", "resultados: {}", display(file))
+            );
+            match &finished.report {
+                Some(Ok(report)) => eprintln!(
+                    "{}",
+                    crabfall_core::tr!("report:  {}", "reporte:    {}", display(report))
+                ),
+                Some(Err(e)) => eprintln!(
+                    "{}",
+                    crabfall_core::tr!(
+                        "WARNING: the report was not generated: {e}",
+                        "AVISO: no se generó el reporte: {e}"
+                    )
+                ),
+                None => {}
+            }
+            Outcome {
+                code: if finished.result.passed {
+                    exit::OK
+                } else {
+                    exit::FAILED
+                },
+                results: Some(file.clone()),
+                report: finished
+                    .report
+                    .as_ref()
+                    .and_then(|r| r.as_ref().ok())
+                    .cloned(),
+                note: None,
+            }
+        }
+        Err(e) => {
+            eprintln!("✗ {e}");
+            Outcome::code(exit::RUNTIME)
+        }
+    }
+}
+
+/// Destino, carga y ajustes de la corrida, en pocas líneas.
+pub fn print_plan(plan: &Plan, env_name: &str, tweaks: &[String]) {
     let hosts: Vec<&str> = plan.hosts.iter().map(String::as_str).collect();
     eprintln!("{} → {env_name} ({})", plan.scenario, hosts.join(", "));
     eprintln!("  {} · {}", plan.load.describe(), plan.rate_summary());
     if let Some(think) = plan.think_summary() {
-        eprintln!("  pausas: {think}");
+        eprintln!(
+            "{}",
+            crabfall_core::tr!("  pauses: {think}", "  pausas: {think}")
+        );
     }
     if !plan.vu_setup.is_empty() {
         let names: Vec<&str> = plan.vu_setup.iter().map(|s| s.name.as_str()).collect();
         eprintln!(
-            "  por VU: {} ({} VUs, antes de la carga)",
-            names.join(", "),
-            plan.load.concurrency()
+            "{}",
+            crabfall_core::tr!(
+                "  per VU: {} ({} VUs, before the load)",
+                "  por VU: {} ({} VUs, antes de la carga)",
+                names.join(", "),
+                plan.load.concurrency()
+            )
         );
     }
     if let Some(refresh) = plan.refresh_summary() {
-        eprintln!("  renovación: {refresh} por VU, en segundo plano");
+        eprintln!(
+            "{}",
+            crabfall_core::tr!(
+                "  renewal: {refresh} per VU, in the background",
+                "  renovación: {refresh} por VU, en segundo plano"
+            )
+        );
     }
     if !tweaks.is_empty() {
-        eprintln!("  ajustes: {}", tweaks.join(" "));
+        eprintln!(
+            "{}",
+            crabfall_core::tr!("  tweaks: {}", "  ajustes: {}", tweaks.join(" "))
+        );
     }
     for u in plan.uploads_summary() {
-        eprintln!("  archivo: {u}");
+        eprintln!("{}", crabfall_core::tr!("  file: {u}", "  archivo: {u}"));
     }
+    eprintln!("  http: {}", plan.http_summary());
     for d in &plan.data {
-        eprintln!("  datos: {}", d.dataset.describe());
+        eprintln!(
+            "{}",
+            crabfall_core::tr!("  data: {}", "  datos: {}", d.dataset.describe())
+        );
     }
-    let (duration, graceful_stop) = (plan.load.duration(), plan.load.graceful_stop());
+}
 
-    let Ok(approval) = crate::approve::verify_for_run(&project, &plan, &env, &env_name, &tweaks)
-    else {
-        return exit::REFUSED;
-    };
-    eprintln!(
-        "  aprobado por {} el {}",
-        approval.approved_by, approval.approved_at
-    );
+/// Una corrida terminada y dónde quedó.
+pub struct Finished {
+    pub result: RunResult,
+    /// `results.json` tal como se guardó.
+    pub doc: Value,
+    /// El archivo de resultados, o por qué no se pudo guardar.
+    pub results: Result<PathBuf, String>,
+    /// El reporte, o por qué no se generó; `None` si no se guardaron los resultados.
+    pub report: Option<Result<PathBuf, String>>,
+}
 
+/// Corre un plan aprobado y guarda resultados y reporte. La usan `crabfall run` y la TUI;
+/// `progress` muestra la corrida y permite frenarla.
+pub async fn execute(
+    prepared: &Prepared,
+    approval: &Approval,
+    progress: Arc<Progress>,
+) -> Finished {
     timer::high_resolution();
     let started_at = jiff::Zoned::now();
-    let progress = Arc::new(Progress::default());
-    let runtime = tokio::runtime::Runtime::new().expect("runtime de tokio");
-    let result = runtime.block_on(async {
-        let ticker = std::io::stderr()
-            .is_terminal()
-            .then(|| tokio::spawn(show_progress(progress.clone(), duration + graceful_stop)));
-        let result = engine::run(plan.clone(), progress).await;
-        if let Some(t) = ticker {
-            t.abort();
-            eprintln!();
-        }
-        result
-    });
+    let result = engine::run(prepared.plan.clone(), progress).await;
 
     let run_id = started_at.strftime("%Y%m%d-%H%M%S").to_string();
-    let mut doc = results_document(&run_id, &started_at, &path, &env_name, &plan, &result);
-    if !tweaks.is_empty() {
-        doc["tweaks"] = json!(tweaks);
+    let mut doc = results_document(
+        &run_id,
+        &started_at,
+        &prepared.path,
+        &prepared.env_name,
+        &prepared.plan,
+        &result,
+    );
+    if !prepared.tweaks.is_empty() {
+        doc["tweaks"] = json!(prepared.tweaks);
     }
     doc["approval"] = json!({
         "hash": approval.hash,
         "approved_by": approval.approved_by,
         "approved_at": approval.approved_at,
     });
-    let saved = save(&project, &run_id, &doc);
-
-    if as_json {
-        println!("{}", serde_json::to_string_pretty(&doc).unwrap());
-    } else {
-        print_summary(&result);
+    let results = save(&prepared.project, &run_id, &doc).map_err(|e| {
+        crabfall_core::tr!(
+            "could not save the results: {e}",
+            "no se pudieron guardar los resultados: {e}"
+        )
+    });
+    let report = results
+        .as_ref()
+        .ok()
+        .map(|file| crate::report::write(&prepared.project, file));
+    Finished {
+        result,
+        doc,
+        results,
+        report,
     }
-    match saved {
-        Ok(file) => {
-            eprintln!("resultados: {}", display(&file));
-            match crate::report::write(&project, &file) {
-                Ok(report) => eprintln!("reporte:    {}", display(&report)),
-                Err(e) => eprintln!("AVISO: no se generó el reporte: {e}"),
-            }
-            if result.passed {
-                exit::OK
-            } else {
-                exit::FAILED
-            }
-        }
-        Err(e) => {
-            eprintln!("✗ no se pudieron guardar los resultados: {e}");
-            exit::RUNTIME
-        }
+}
+
+/// Ctrl+C frena en orden: no se inician más iteraciones, se espera a las que están en curso
+/// y se guarda lo que corrió. Un segundo Ctrl+C corta ya (ADR-015).
+async fn stop_on_ctrl_c(progress: Arc<Progress>) {
+    if tokio::signal::ctrl_c().await.is_err() {
+        return;
+    }
+    progress.stop();
+    eprintln!(
+        "
+{}",
+        crabfall_core::tr!(
+            "  stopping: waiting for the iterations in progress (Ctrl+C again to cut them now)",
+            "  frenando: espero a las iteraciones en curso (Ctrl+C de nuevo para cortarlas ya)"
+        )
+    );
+    if tokio::signal::ctrl_c().await.is_ok() {
+        progress.stop();
+        eprintln!(
+            "
+{}",
+            crabfall_core::tr!("  cutting now", "  cortando ya")
+        );
     }
 }
 
@@ -136,24 +334,36 @@ async fn show_progress(p: Arc<Progress>, total: Duration) {
     let mut start = Instant::now();
     loop {
         tokio::time::sleep(Duration::from_secs(1)).await;
+        // Al frenar, el aviso ya cerró la línea: no se vuelve a escribir encima.
+        if p.stop_requested() {
+            return;
+        }
         // Mientras los VUs hacen su vu_setup, la carga todavía no empezó.
         let total_vus = p.vus_total.load(Relaxed);
         if total_vus > 0 && p.started.load(Relaxed) == 0 && p.dropped.load(Relaxed) == 0 {
             eprint!(
-                "\r  preparando VUs (vu_setup) {}/{total_vus}   ",
-                p.vus_ready.load(Relaxed)
+                "{}",
+                crabfall_core::tr!(
+                    "\r  preparing VUs (vu_setup) {}/{total_vus}   ",
+                    "\r  preparando VUs (vu_setup) {}/{total_vus}   ",
+                    p.vus_ready.load(Relaxed)
+                )
             );
             start = Instant::now();
             continue;
         }
         eprint!(
-            "\r  {:>4}s / {}s  iteraciones {}  descartadas {}  requests {}  fallas {}   ",
-            start.elapsed().as_secs(),
-            total.as_secs(),
-            p.started.load(Relaxed),
-            p.dropped.load(Relaxed),
-            p.requests.load(Relaxed),
-            p.failed.load(Relaxed),
+            "{}",
+            crabfall_core::tr!(
+                "\r  {:>4}s / {}s  iterations {}  dropped {}  requests {}  failures {}   ",
+                "\r  {:>4}s / {}s  iteraciones {}  descartadas {}  requests {}  fallas {}   ",
+                start.elapsed().as_secs(),
+                total.as_secs(),
+                p.started.load(Relaxed),
+                p.dropped.load(Relaxed),
+                p.requests.load(Relaxed),
+                p.failed.load(Relaxed),
+            )
         );
     }
 }
@@ -215,50 +425,88 @@ fn print_summary(r: &RunResult) {
     }
     if let Some(v) = &r.vu_setup {
         let ok = if v.failed == 0 {
-            "todos listos".to_string()
+            crabfall_core::tr!("all ready", "todos listos").to_string()
         } else {
-            format!("{} quedaron afuera", v.failed)
+            crabfall_core::tr!("{} left out", "{} quedaron afuera", v.failed)
         };
         println!(
-            "vu_setup  {} VUs en {}: {ok}",
-            v.vus,
-            elapsed(v.duration_ms)
+            "{}",
+            crabfall_core::tr!(
+                "vu_setup  {} VUs in {}: {ok}",
+                "vu_setup  {} VUs en {}: {ok}",
+                v.vus,
+                elapsed(v.duration_ms)
+            )
         );
         session_steps(&v.steps, "          ");
     }
     if let Some(v) = &r.vu_refresh {
         let lost = if v.failed_vus == 0 {
-            "ningún VU perdido".to_string()
+            crabfall_core::tr!("no VU lost", "ningún VU perdido").to_string()
         } else {
-            format!("{} VUs dejaron de iterar", v.failed_vus)
+            crabfall_core::tr!(
+                "{} VUs stopped iterating",
+                "{} VUs dejaron de iterar",
+                v.failed_vus
+            )
         };
         println!(
-            "vu_refresh  cada {}: {} renovaciones, {lost}",
-            crabfall_core::units::HumanDuration(std::time::Duration::from_secs_f64(v.every_s)),
-            v.refreshes
+            "{}",
+            crabfall_core::tr!(
+                "vu_refresh  every {}: {} renewals, {lost}",
+                "vu_refresh  cada {}: {} renovaciones, {lost}",
+                crabfall_core::units::HumanDuration(std::time::Duration::from_secs_f64(v.every_s)),
+                v.refreshes
+            )
         );
         session_steps(&v.steps, "            ");
     }
     if let Some(reason) = &r.aborted {
-        println!("✗ {reason}. No se generó carga.");
+        println!(
+            "{}",
+            crabfall_core::tr!(
+                "✗ {reason}. No load was generated.",
+                "✗ {reason}. No se generó carga."
+            )
+        );
         return;
     }
     println!(
-        "iteraciones  planificadas {}  iniciadas {}  descartadas {}  interrumpidas {}  ({}/s)",
-        t.planned, t.started, t.dropped, t.interrupted, t.iteration_rate
+        "{}",
+        crabfall_core::tr!(
+            "iterations   planned {}  started {}  dropped {}  interrupted {}  ({}/s)",
+            "iteraciones  planificadas {}  iniciadas {}  descartadas {}  interrumpidas {}  ({}/s)",
+            t.planned,
+            t.started,
+            t.dropped,
+            t.interrupted,
+            t.iteration_rate
+        )
     );
     println!(
-        "requests     {}  fallidos {}  no-2xx {}  ({}/s)  duración {}s",
-        t.requests, t.failed, t.non_2xx, t.request_rate, r.duration_s
+        "{}",
+        crabfall_core::tr!(
+            "requests     {}  failed {}  non-2xx {}  ({}/s)  duration {}s",
+            "requests     {}  fallidos {}  no-2xx {}  ({}/s)  duración {}s",
+            t.requests,
+            t.failed,
+            t.non_2xx,
+            t.request_rate,
+            r.duration_s
+        )
     );
     if t.bytes_sent + t.bytes_received > 0 {
         let points = &r.series.points;
         let peak =
             |f: fn(&crabfall_core::metrics::Point) -> u64| points.iter().map(f).max().unwrap_or(0);
         println!(
-            "tráfico      enviados {}  recibidos {}",
-            traffic(t.bytes_sent, t.send_rate, peak(|p| p.bytes_sent)),
-            traffic(t.bytes_received, t.receive_rate, peak(|p| p.bytes_received))
+            "{}",
+            crabfall_core::tr!(
+                "traffic      sent {}  received {}",
+                "tráfico      enviados {}  recibidos {}",
+                traffic(t.bytes_sent, t.send_rate, peak(|p| p.bytes_sent)),
+                traffic(t.bytes_received, t.receive_rate, peak(|p| p.bytes_received))
+            )
         );
     }
     let checks: Vec<(&str, &CheckResult)> = r
@@ -281,7 +529,16 @@ fn print_summary(r: &RunResult) {
         .max(4);
     println!(
         "{:<width$} {:>7} {:>7} {:>7} {:>8} {:>8} {:>8} {:>8} {:>8} {:>8}",
-        "paso", "req", "fallas", "no-2xx", "p50", "p90", "p95", "p99", "p99.9", "max"
+        crabfall_core::i18n::pick("step", "paso"),
+        "req",
+        crabfall_core::i18n::pick("failed", "fallas"),
+        crabfall_core::i18n::pick("non-2xx", "no-2xx"),
+        "p50",
+        "p90",
+        "p95",
+        "p99",
+        "p99.9",
+        "max"
     );
     for s in &r.steps {
         print!(
@@ -297,8 +554,12 @@ fn print_summary(r: &RunResult) {
         }
     }
     println!(
-        "{:>width$}  latencia en ms, desde el instante planificado",
-        ""
+        "{}",
+        crabfall_core::tr!(
+            "{:>width$}  latency in ms, from the planned instant",
+            "{:>width$}  latencia en ms, desde el instante planificado",
+            ""
+        )
     );
 
     for s in &r.steps {
@@ -309,7 +570,32 @@ fn print_summary(r: &RunResult) {
                 .iter()
                 .map(|(c, n)| format!("{c}×{n}"))
                 .collect();
-            println!("códigos  {}: {}", s.name, codes.join("  "));
+            println!(
+                "{}",
+                crabfall_core::tr!(
+                    "codes    {}: {}",
+                    "códigos  {}: {}",
+                    s.name,
+                    codes.join("  ")
+                )
+            );
+        }
+        if let Some(l) = &s.rate_limit {
+            let said: Vec<String> = [l.policy(), l.retry_after()]
+                .into_iter()
+                .flatten()
+                .collect();
+            if !said.is_empty() {
+                println!(
+                    "{}",
+                    crabfall_core::tr!(
+                        "limit    {}: {}",
+                        "límite   {}: {}",
+                        s.name,
+                        said.join(" · ")
+                    )
+                );
+            }
         }
         if !s.failures.is_empty() {
             let kinds: Vec<_> = s
@@ -317,7 +603,15 @@ fn print_summary(r: &RunResult) {
                 .iter()
                 .map(|(k, n)| format!("{}×{n}", serde_json::to_value(k).unwrap().as_str().unwrap()))
                 .collect();
-            println!("fallas   {}: {}", s.name, kinds.join("  "));
+            println!(
+                "{}",
+                crabfall_core::tr!(
+                    "failures {}: {}",
+                    "fallas   {}: {}",
+                    s.name,
+                    kinds.join("  ")
+                )
+            );
             for e in &s.error_samples {
                 println!("         {e}");
             }
@@ -337,18 +631,32 @@ fn print_summary(r: &RunResult) {
         println!();
         for t in &r.thresholds {
             let mark = if t.passed { '✓' } else { '✗' };
-            let actual = t
-                .actual
-                .map_or("sin datos".to_string(), |a| format!("{a} {}", t.unit));
-            println!("{mark} {}  (medido: {actual})", t.threshold);
+            let actual = t.actual.map_or(
+                crabfall_core::tr!("no data", "sin datos").to_string(),
+                |a| format!("{a} {}", t.unit),
+            );
+            println!(
+                "{}",
+                crabfall_core::tr!(
+                    "{mark} {}  (measured: {actual})",
+                    "{mark} {}  (medido: {actual})",
+                    t.threshold
+                )
+            );
         }
         let failed = r.thresholds.iter().filter(|t| !t.passed).count();
         if failed > 0 {
-            println!("{failed} threshold(s) no se cumplieron.");
+            println!(
+                "{}",
+                crabfall_core::tr!(
+                    "{failed} threshold(s) were not met.",
+                    "{failed} threshold(s) no se cumplieron."
+                )
+            );
         }
     }
     for w in &r.warnings {
-        println!("AVISO: {w}");
+        println!("{}", crabfall_core::tr!("WARNING: {w}", "AVISO: {w}"));
     }
     println!();
 }
@@ -361,7 +669,8 @@ fn check_summary(checks: &[(&str, &CheckResult)]) -> Vec<String> {
     if passed + failed == 0 {
         return vec![];
     }
-    let mut lines = vec![format!(
+    let mut lines = vec![crabfall_core::tr!(
+        "checks       {}  passed {passed}  failed {failed}  ({})",
         "checks       {}  pasados {passed}  fallidos {failed}  ({})",
         passed + failed,
         percent(passed, passed + failed)
@@ -370,11 +679,16 @@ fn check_summary(checks: &[(&str, &CheckResult)]) -> Vec<String> {
     if failing.is_empty() {
         return lines;
     }
-    lines.push(format!("✗ {} check(s) fallaron:", failing.len()));
+    lines.push(crabfall_core::tr!(
+        "✗ {} check(s) failed:",
+        "✗ {} check(s) fallaron:",
+        failing.len()
+    ));
     let width = failing.iter().map(|(s, _)| s.len()).max().unwrap_or(0);
     for (step, c) in failing {
         let total = c.passed + c.failed;
-        lines.push(format!(
+        lines.push(crabfall_core::tr!(
+            "  {step:<width$}  {}  ✗ {} of {total} ({})",
             "  {step:<width$}  {}  ✗ {} de {total} ({})",
             c.check,
             c.failed,
@@ -395,8 +709,14 @@ fn session_steps(steps: &[crabfall_core::metrics::VuSetupStep], indent: &str) {
             .as_ref()
             .map_or("-".into(), |l| format!("{:.2} ms", l.p50));
         println!(
-            "{indent}{}  {} requests  {} fallidos  p50 {p50}",
-            s.name, s.requests, s.failed
+            "{}",
+            crabfall_core::tr!(
+                "{indent}{}  {} requests  {} failed  p50 {p50}",
+                "{indent}{}  {} requests  {} fallidos  p50 {p50}",
+                s.name,
+                s.requests,
+                s.failed
+            )
         );
         for e in &s.errors {
             println!("{indent}  {e}");
@@ -405,22 +725,30 @@ fn session_steps(steps: &[crabfall_core::metrics::VuSetupStep], indent: &str) {
 }
 
 /// `35 ms` o `2.4 s`.
-/// `137.0 MB (2.1 MB/s, pico 4.3 MB/s = 34 Mbit/s)`. El pico va también en bits porque así
+/// `137.0 MB (2.1 MB/s, pico 4.3 MB/s = 36 Mbit/s)`. El pico va también en bits porque así
 /// se miden los enlaces.
 fn traffic(total: u64, rate: f64, peak: u64) -> String {
     use crabfall_core::upload::size;
-    let mbit = peak as f64 * 8.0 / 1_000_000.0;
-    let mbit = if mbit < 10.0 {
-        format!("{mbit:.1}")
-    } else {
-        format!("{mbit:.0}")
-    };
-    format!(
-        "{} ({}/s, pico {}/s = {mbit} Mbit/s)",
+    crabfall_core::tr!(
+        "{} ({}/s, peak {}/s = {})",
+        "{} ({}/s, pico {}/s = {})",
         size(total as usize),
         size(rate as usize),
-        size(peak as usize)
+        size(peak as usize),
+        bits(peak)
     )
+}
+
+/// Bytes por segundo en bits, como se miden los enlaces: `84 Mbit/s`, `1.0 Mbit/s`, `40 kbit/s`.
+fn bits(bytes_per_s: u64) -> String {
+    let bits = bytes_per_s as f64 * 8.0;
+    if bits >= 10_000_000.0 {
+        format!("{:.0} Mbit/s", bits / 1_000_000.0)
+    } else if bits >= 1_000_000.0 {
+        format!("{:.1} Mbit/s", bits / 1_000_000.0)
+    } else {
+        format!("{:.0} kbit/s", bits / 1_000.0)
+    }
 }
 
 fn elapsed(ms: f64) -> String {
@@ -444,6 +772,13 @@ fn percent(part: u64, total: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn link_rates_use_the_unit_that_reads_best() {
+        assert_eq!(bits(10_485_760), "84 Mbit/s");
+        assert_eq!(bits(125_000), "1.0 Mbit/s");
+        assert_eq!(bits(5 * 1024), "41 kbit/s");
+    }
 
     fn check(name: &str, passed: u64, failed: u64, samples: &[&str]) -> CheckResult {
         CheckResult {

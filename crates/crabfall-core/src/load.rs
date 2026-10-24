@@ -98,7 +98,8 @@ impl LoadPlan {
                 segments,
                 max_vus,
                 ..
-            } => format!(
+            } => crate::tr!(
+                "constant_rate {} for {}, max_vus {max_vus}",
                 "constant_rate {} durante {}, max_vus {max_vus}",
                 rate(segments[0].from),
                 HumanDuration(segments[0].duration)
@@ -117,7 +118,11 @@ impl LoadPlan {
                 format!("{text}, max_vus {max_vus}")
             }
             Self::Closed { vus, duration, .. } => {
-                format!("constant_vus {vus} durante {}", HumanDuration(*duration))
+                crate::tr!(
+                    "constant_vus {vus} for {}",
+                    "constant_vus {vus} durante {}",
+                    HumanDuration(*duration)
+                )
             }
         }
     }

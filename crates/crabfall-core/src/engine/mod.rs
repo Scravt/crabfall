@@ -1,5 +1,6 @@
 //! Motor: scheduler de modelo abierto (ADR-003).
 
+pub mod cookies;
 pub mod http;
 pub mod plan;
 
@@ -23,16 +24,20 @@ use tokio::{
 use crate::{
     load::LoadPlan,
     metrics::{
-        Collector, Outcome, Percentiles, RunResult, SetupStep, Totals, VuRefreshResult,
+        Collector, LiveSecond, Outcome, Percentiles, RunResult, SetupStep, Totals, VuRefreshResult,
         VuSetupResult, VuSetupStep, histogram, record,
     },
 };
-use http::{Body, Client, Failure, FailureKind, Meter, Response, Traffic};
-use hyper::Request;
+use cookies::Jar;
+use http::{Body, Client, Failure, FailureKind, Meter, Origin, Response, Traffic};
+use hyper::{
+    Method, Request,
+    header::{AUTHORIZATION, CONTENT_TYPE, COOKIE, HOST, HeaderValue, LOCATION},
+};
 use plan::{Plan, StepPlan, Vars};
 
-/// Contadores en vivo, para mostrar progreso.
-#[derive(Default)]
+/// Lo que se ve de una corrida mientras pasa, y el pedido de frenarla (ADR-015). Lo comparten
+/// el motor y quien mira (la línea de progreso de `crabfall run`, la TUI).
 pub struct Progress {
     pub started: AtomicU64,
     pub dropped: AtomicU64,
@@ -41,6 +46,120 @@ pub struct Progress {
     /// VUs que completaron `vu_setup`, de `vus_total`.
     pub vus_ready: AtomicU64,
     pub vus_total: AtomicU64,
+    /// VUs en medio de una iteración.
+    pub busy: AtomicU64,
+    /// VUs que fallaron al renovar la sesión y dejaron de iterar.
+    pub refresh_failed: AtomicU64,
+    phase: std::sync::atomic::AtomicU8,
+    /// Cuándo arrancó (o arranca) la carga: el segundo 0 de la serie.
+    load_start: std::sync::OnceLock<Instant>,
+    /// Los segundos ya cerrados de la serie, en orden.
+    live: std::sync::Mutex<Vec<LiveSecond>>,
+    /// 0: sigue; 1: frenar en orden; 2: cortar ya.
+    stop: tokio::sync::watch::Sender<u8>,
+    /// El dataset `unique` que se quedó sin filas, si pasó.
+    exhausted: std::sync::Mutex<Option<String>>,
+}
+
+impl Default for Progress {
+    fn default() -> Self {
+        Self {
+            started: AtomicU64::new(0),
+            dropped: AtomicU64::new(0),
+            requests: AtomicU64::new(0),
+            failed: AtomicU64::new(0),
+            vus_ready: AtomicU64::new(0),
+            vus_total: AtomicU64::new(0),
+            busy: AtomicU64::new(0),
+            refresh_failed: AtomicU64::new(0),
+            phase: std::sync::atomic::AtomicU8::new(Phase::Setup as u8),
+            load_start: std::sync::OnceLock::new(),
+            live: std::sync::Mutex::new(Vec::new()),
+            stop: tokio::sync::watch::Sender::new(0),
+            exhausted: std::sync::Mutex::new(None),
+        }
+    }
+}
+
+/// En qué está la corrida.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum Phase {
+    /// `setup`, antes de la carga.
+    Setup,
+    /// Preparando los VUs (`vu_setup`).
+    VuSetup,
+    Load,
+    /// Terminó el calendario (o se frenó): esperando a las iteraciones en curso.
+    Draining,
+    Done,
+}
+
+impl Progress {
+    pub fn phase(&self) -> Phase {
+        match self.phase.load(Relaxed) {
+            0 => Phase::Setup,
+            1 => Phase::VuSetup,
+            2 => Phase::Load,
+            3 => Phase::Draining,
+            _ => Phase::Done,
+        }
+    }
+
+    fn set_phase(&self, phase: Phase) {
+        self.phase.store(phase as u8, Relaxed);
+    }
+
+    /// El segundo 0 de la carga, cuando ya se conoce.
+    pub fn load_start(&self) -> Option<Instant> {
+        self.load_start.get().copied()
+    }
+
+    /// Los segundos cerrados de la serie hasta ahora.
+    pub fn live(&self) -> Vec<LiveSecond> {
+        self.live.lock().unwrap().clone()
+    }
+
+    /// Los segundos cerrados desde el `from` (para leer solo lo nuevo).
+    pub fn live_since(&self, from: usize) -> Vec<LiveSecond> {
+        let live = self.live.lock().unwrap();
+        live.get(from..).map(<[_]>::to_vec).unwrap_or_default()
+    }
+
+    /// Pide frenar: no se inician más iteraciones y se espera a las que están en curso
+    /// (`graceful_stop`). Una segunda vez corta en el acto.
+    pub fn stop(&self) {
+        self.stop.send_modify(|level| *level = (*level + 1).min(2));
+    }
+
+    /// Un dataset `unique` se quedó sin filas: la carga termina en orden, como al frenar,
+    /// pero no la frenó la persona. Varios VUs pueden llegar a la vez: cuenta el primero.
+    fn exhaust(&self, dataset: String) {
+        self.exhausted.lock().unwrap().get_or_insert(dataset);
+        self.stop.send_if_modified(|level| {
+            let first = *level == 0;
+            if first {
+                *level = 1;
+            }
+            first
+        });
+    }
+
+    /// El dataset `unique` que se quedó sin filas, si pasó.
+    pub fn exhausted(&self) -> Option<String> {
+        self.exhausted.lock().unwrap().clone()
+    }
+
+    /// Si alguien pidió frenar.
+    pub fn stop_requested(&self) -> bool {
+        *self.stop.borrow() >= 1
+    }
+
+    /// Termina cuando se pide frenar con al menos `level` (1: en orden, 2: ya).
+    async fn stopped(&self, level: u8) {
+        let mut rx = self.stop.subscribe();
+        let _ = rx.wait_for(|l| *l >= level).await;
+    }
 }
 
 /// Lo que el motor le cuenta al colector, con su instante.
@@ -89,6 +208,7 @@ pub async fn run_step(
     step: &StepPlan,
     setup: &HashMap<String, Value>,
     locals: &HashMap<String, Value>,
+    jar: &Jar,
 ) -> StepRun {
     let request = step.request(&Vars {
         plan,
@@ -96,7 +216,7 @@ pub async fn run_step(
         locals,
     });
     let meter = Arc::new(Meter::default());
-    let result = send_step(client, step, request, &meter).await;
+    let result = send_step(client, plan, step, request, &meter, jar).await;
     let mut extracted = Vec::new();
     let mut extract_error = None;
     let mut checks = Vec::new();
@@ -138,11 +258,16 @@ pub async fn run_step(
 fn step_problem(step: &StepPlan, run: &StepRun) -> Option<String> {
     match (&run.result, &run.extract_error) {
         (Err(f), _) => Some(f.message.clone()),
-        (Ok(r), _) if r.status >= 400 => Some(format!("respondió {}", r.status)),
+        (Ok(r), _) if r.status >= 400 => Some(crate::tr!("responded {}", "respondió {}", r.status)),
         (_, Some(e)) => Some(e.clone()),
         _ => step.checks.iter().zip(&run.checks).find_map(|(c, r)| {
-            r.as_ref()
-                .map(|why| format!("el check `{}` falló: {why}", c.label))
+            r.as_ref().map(|why| {
+                crate::tr!(
+                    "check `{}` failed: {why}",
+                    "el check `{}` falló: {why}",
+                    c.label
+                )
+            })
         }),
     }
 }
@@ -159,16 +284,19 @@ struct Session {
     renew_at: std::sync::Mutex<Option<Instant>>,
     /// Falló al renovar: deja de iterar.
     retired: std::sync::atomic::AtomicBool,
+    /// Sus cookies, desde `vu_setup` hasta la última iteración.
+    cookies: Jar,
 }
 
 type Vu = Arc<Session>;
 
 impl Session {
-    fn new(vars: HashMap<String, Value>, renew_at: Option<Instant>) -> Vu {
+    fn new(vars: HashMap<String, Value>, renew_at: Option<Instant>, cookies: Jar) -> Vu {
         Arc::new(Self {
             vars: std::sync::Mutex::new(Arc::new(vars)),
             renew_at: std::sync::Mutex::new(renew_at),
             retired: false.into(),
+            cookies,
         })
     }
 
@@ -228,6 +356,7 @@ async fn session_steps(
     steps: &[StepPlan],
     setup: &HashMap<String, Value>,
     mut vars: HashMap<String, Value>,
+    jar: &Jar,
 ) -> (
     Option<HashMap<String, Value>>,
     Vec<(usize, Duration, Option<String>)>,
@@ -235,7 +364,7 @@ async fn session_steps(
     let mut samples = Vec::new();
     for (i, step) in steps.iter().enumerate() {
         let t = Instant::now();
-        let run = run_step(client, plan, step, setup, &vars).await;
+        let run = run_step(client, plan, step, setup, &vars, jar).await;
         let problem = step_problem(step, &run);
         samples.push((i, t.elapsed(), problem.clone()));
         if problem.is_some() {
@@ -285,13 +414,22 @@ async fn prepare_vus(
             if let Some(p) = &pacer {
                 p.wait(never).await;
             }
-            let (vars, samples) =
-                session_steps(&client, &plan, &plan.vu_setup, &setup, plan.vu_row_vars()).await;
+            let jar = Jar::new(plan.cookies);
+            let (vars, samples) = session_steps(
+                &client,
+                &plan,
+                &plan.vu_setup,
+                &setup,
+                // El plan ya verificó que un dataset `unique` alcanza para todos los VUs.
+                plan.vu_row_vars().unwrap_or_default(),
+                &jar,
+            )
+            .await;
             if vars.is_some() {
                 progress.vus_ready.fetch_add(1, Relaxed);
             }
             // El token se emitió recién: la cuenta para renovarlo arranca ahora.
-            let vu = vars.map(|vars| Session::new(vars, every.map(|e| Instant::now() + e)));
+            let vu = vars.map(|vars| Session::new(vars, every.map(|e| Instant::now() + e), jar));
             (vu, samples)
         });
     }
@@ -343,6 +481,7 @@ async fn renew(shared: &Shared, refresh: &Refresh, vu: &Session) {
         shared.plan.refresh_steps(),
         &shared.setup,
         (*vu.vars()).clone(),
+        &vu.cookies,
     )
     .await;
     {
@@ -360,6 +499,7 @@ async fn renew(shared: &Shared, refresh: &Refresh, vu: &Session) {
         None => {
             vu.retired.store(true, Relaxed);
             refresh.failed_vus.fetch_add(1, Relaxed);
+            shared.progress.refresh_failed.fetch_add(1, Relaxed);
         }
     }
 }
@@ -409,9 +549,11 @@ pub async fn run_setup(
 ) -> (HashMap<String, Value>, Vec<SetupStep>, Option<String>) {
     let mut vars = HashMap::new();
     let mut steps = Vec::new();
+    // `setup` corre una vez, con sus propias cookies: no son de ningún VU.
+    let jar = Jar::new(plan.cookies);
     for step in &plan.setup {
         let start = Instant::now();
-        let run = run_step(client, plan, step, &vars, &HashMap::new()).await;
+        let run = run_step(client, plan, step, &vars, &HashMap::new(), &jar).await;
         let status = run.result.as_ref().ok().map(|r| r.status);
         let problem = step_problem(step, &run);
         steps.push(SetupStep {
@@ -425,7 +567,11 @@ pub async fn run_setup(
             return (
                 vars,
                 steps,
-                Some(format!("el setup falló en `{}`: {problem}", step.name)),
+                Some(crate::tr!(
+                    "setup failed at `{}`: {problem}",
+                    "el setup falló en `{}`: {problem}",
+                    step.name
+                )),
             );
         }
         vars.extend(run.extracted);
@@ -444,8 +590,16 @@ struct Shared {
 }
 
 impl Shared {
-    async fn iteration(&self, flow: usize, intended: Instant, vu: &HashMap<String, Value>) {
-        iteration(self, flow, vu, intended).await;
+    async fn iteration(
+        &self,
+        flow: usize,
+        intended: Instant,
+        vu: &Session,
+        rows: HashMap<String, Value>,
+    ) {
+        self.progress.busy.fetch_add(1, Relaxed);
+        iteration(self, flow, &vu.vars(), rows, &vu.cookies, intended).await;
+        self.progress.busy.fetch_sub(1, Relaxed);
     }
 }
 
@@ -459,26 +613,58 @@ struct Dispatch {
     interrupted: u64,
     /// Iteraciones que esperaron por `limits.max_rps` (modelo cerrado).
     paced: u64,
+    /// Cuándo pidió frenar la persona, si lo hizo.
+    stopped_at: Option<Instant>,
 }
 
 /// Ejecuta el plan. No verifica aprobación: eso es responsabilidad de quien llama.
+/// `progress` muestra la corrida mientras pasa y permite frenarla (ADR-015).
 pub async fn run(plan: Arc<Plan>, progress: Arc<Progress>) -> RunResult {
+    let result = run_load(plan, progress.clone()).await;
+    progress.set_phase(Phase::Done);
+    result
+}
+
+async fn run_load(plan: Arc<Plan>, progress: Arc<Progress>) -> RunResult {
+    let stopped_before = || {
+        crate::tr!(
+            "stopped by the person before the load",
+            "frenada por la persona antes de la carga"
+        )
+    };
     let client = Arc::new(Client::new());
     let (setup_vars, setup, aborted) = run_setup(&client, &plan).await;
     if let Some(reason) = aborted {
         return RunResult::aborted(&plan, setup, reason);
+    }
+    if progress.stop_requested() {
+        return RunResult::aborted(&plan, setup, stopped_before());
     }
     let setup_vars = Arc::new(setup_vars);
 
     // Un VU por cada lugar de concurrencia; con `vu_setup`, cada uno se prepara antes de la carga.
     let concurrency = plan.load.concurrency();
     let (vus, vu_setup) = if plan.vu_setup.is_empty() {
-        // Sin variables ni renovación, todos pueden compartir la misma sesión vacía.
-        let empty = Session::new(HashMap::new(), None);
-        (vec![empty; concurrency as usize], None)
+        // Sin variables ni renovación, pero cada VU con sus cookies.
+        let vus = (0..concurrency)
+            .map(|_| Session::new(HashMap::new(), None, Jar::new(plan.cookies)))
+            .collect();
+        (vus, None)
     } else {
-        let (ready, result) =
-            prepare_vus(&client, &plan, &setup_vars, concurrency, &progress).await;
+        progress.set_phase(Phase::VuSetup);
+        // Frenar corta la preparación: los logins en curso se abandonan.
+        let prepared = tokio::select! {
+            p = prepare_vus(&client, &plan, &setup_vars, concurrency, &progress) => Some(p),
+            _ = progress.stopped(1) => None,
+        };
+        let Some((ready, result)) = prepared else {
+            return RunResult::aborted(&plan, setup, stopped_before());
+        };
+        if progress.stop_requested() {
+            let mut aborted = RunResult::aborted(&plan, setup, stopped_before());
+            aborted.vu_setup = Some(result);
+            return aborted;
+        }
         if ready.is_empty() {
             let why = result
                 .steps
@@ -488,7 +674,10 @@ pub async fn run(plan: Arc<Plan>, progress: Arc<Progress>) -> RunResult {
             let mut aborted = RunResult::aborted(
                 &plan,
                 setup,
-                format!("el vu_setup falló en los {concurrency} VUs; {why}"),
+                crate::tr!(
+                    "vu_setup failed in all {concurrency} VUs; {why}",
+                    "el vu_setup falló en los {concurrency} VUs; {why}"
+                ),
             );
             aborted.vu_setup = Some(result);
             return aborted;
@@ -497,23 +686,31 @@ pub async fn run(plan: Arc<Plan>, progress: Arc<Progress>) -> RunResult {
     };
 
     let start = Instant::now() + Duration::from_millis(50);
+    let _ = progress.load_start.set(start);
+    progress.set_phase(Phase::Load);
     let (tx, mut rx) = mpsc::unbounded_channel::<Event>();
     let collector_plan = plan.clone();
+    let collector_progress = progress.clone();
     let collector = tokio::spawn(async move {
         let mut c = Collector::new(&collector_plan, start);
-        while let Some(event) = rx.recv().await {
-            match event {
-                Event::Started(at) => c.record_started(at),
-                Event::Dropped(at) => c.record_dropped(at),
-                Event::Sample(s) => {
-                    let counted = c.record(s.step, s.done, s.latency, s.outcome, s.traffic);
-                    c.record_checks(s.step, &s.checks);
-                    if let Some(e) = s.extract_error {
-                        c.record_extract_failure(s.step, s.done, e, counted);
-                    }
+        // Cada segundo se publica medio segundo después de cerrar: sus eventos ya llegaron.
+        let mut tick = tokio::time::interval(Duration::from_millis(250));
+        let mut published = 0;
+        loop {
+            tokio::select! {
+                event = rx.recv() => match event {
+                    Some(event) => apply(&mut c, event),
+                    None => break,
+                },
+                _ = tick.tick() => {
+                    let closed = Instant::now()
+                        .saturating_duration_since(start + Duration::from_millis(500))
+                        .as_secs() as usize;
+                    published = publish(&c, &collector_progress, published, closed);
                 }
             }
         }
+        publish(&c, &collector_progress, published, c.seconds());
         c
     });
 
@@ -539,6 +736,19 @@ pub async fn run(plan: Arc<Plan>, progress: Arc<Progress>) -> RunResult {
     let dispatch = match &plan.load {
         LoadPlan::Open { .. } => open_model(shared, start, vus).await,
         LoadPlan::Closed { duration, .. } => closed_model(shared, start, vus, *duration).await,
+    };
+    let at_s = |t: Instant| round1(t.saturating_duration_since(start).as_secs_f64());
+    // Terminar porque se acabaron las filas no es que la frenó la persona.
+    let exhausted = progress.exhausted();
+    let (stopped_at_s, data_exhausted) = match (&exhausted, dispatch.stopped_at) {
+        (Some(dataset), at) => (
+            None,
+            Some(crate::metrics::DataExhausted {
+                dataset: dataset.clone(),
+                at_s: at_s(at.unwrap_or_else(Instant::now)),
+            }),
+        ),
+        (None, at) => (at.map(at_s), None),
     };
     // Tiene una copia del canal de eventos: el colector no termina mientras siga viva.
     if let Some(r) = refresher {
@@ -576,7 +786,8 @@ pub async fn run(plan: Arc<Plan>, progress: Arc<Progress>) -> RunResult {
     let scheduler_lag = dispatch.lag.as_ref().and_then(Percentiles::from);
     let mut warnings = warnings(&totals, scheduler_lag.as_ref());
     if let Some(v) = vu_setup.as_ref().filter(|v| v.failed > 0) {
-        warnings.push(format!(
+        warnings.push(crate::tr!(
+            "{} of {} VUs did not complete vu_setup and were left out: the load ran with {}.",
             "{} de {} VUs no completaron vu_setup y quedaron afuera: la carga corrió con {}.",
             v.failed,
             v.vus,
@@ -585,7 +796,8 @@ pub async fn run(plan: Arc<Plan>, progress: Arc<Progress>) -> RunResult {
     }
     let vu_refresh = refresh.map(|r| r.result(&plan));
     if let Some(r) = vu_refresh.as_ref().filter(|r| r.failed_vus > 0) {
-        warnings.push(format!(
+        warnings.push(crate::tr!(
+            "{} VUs failed to renew their session (vu_refresh) and stopped iterating.",
             "{} VUs fallaron al renovar la sesión (vu_refresh) y dejaron de iterar.",
             r.failed_vus
         ));
@@ -598,15 +810,37 @@ pub async fn run(plan: Arc<Plan>, progress: Arc<Progress>) -> RunResult {
         .iter()
         .any(|p| p.requests as f64 >= 0.9 * cap * f64::from(series.window_s));
     if dispatch.paced > 0 && near_cap {
-        warnings.push(format!(
-            "{} iteraciones esperaron para no superar limits.max_rps ({}/s): la carga quedó limitada por el entorno.",
+        warnings.push(crate::tr!("{} iterations waited so as not to exceed limits.max_rps ({}/s): the load was limited by the environment.", "{} iteraciones esperaron para no superar limits.max_rps ({}/s): la carga quedó limitada por el entorno.",
             dispatch.paced,
             plan.request_cap.unwrap_or_default()
         ));
     }
 
+    if let Some(d) = &data_exhausted {
+        warnings.insert(
+            0,
+            crate::tr!(
+                "Dataset `{}` (pick: unique) ran out of rows at second {}: the load ended there.",
+                "El dataset `{}` (pick: unique) se quedó sin filas en el segundo {}: la carga terminó ahí.",
+                d.dataset,
+                d.at_s
+            ),
+        );
+    }
+    if let Some(at) = stopped_at_s {
+        warnings.insert(
+            0,
+            crate::tr!(
+                "Stopped by the person at second {at}: the run is incomplete and its numbers only cover what ran.",
+                "Frenada por la persona en el segundo {at}: la corrida está incompleta y sus números cubren solo lo que corrió."
+            ),
+        );
+    }
+
     let mut result = RunResult {
-        passed: thresholds.iter().all(|t| t.passed),
+        passed: stopped_at_s.is_none() && thresholds.iter().all(|t| t.passed),
+        stopped_at_s,
+        data_exhausted,
         duration_s: round1(elapsed),
         aborted: None,
         setup,
@@ -635,11 +869,21 @@ async fn open_model(shared: Shared, start: Instant, vus: Vec<Vu>) -> Dispatch {
     let mut tasks = JoinSet::new();
     let mut planned = 0;
     let mut last_dispatch = start;
+    let mut stopped_at = None;
+    let progress = shared.progress.clone();
+    let stop = progress.stopped(1);
+    tokio::pin!(stop);
 
     for offset in plan.load.schedule() {
-        planned += 1;
         let intended = start + offset;
-        sleep_until(intended.into()).await;
+        tokio::select! {
+            _ = sleep_until(intended.into()) => {}
+            _ = &mut stop => {
+                stopped_at = Some(Instant::now());
+                break;
+            }
+        }
+        planned += 1;
         last_dispatch = Instant::now();
         record(&mut lag, last_dispatch.saturating_duration_since(intended));
         while tasks.try_join_next().is_some() {}
@@ -656,23 +900,34 @@ async fn open_model(shared: Shared, start: Instant, vus: Vec<Vu>) -> Dispatch {
             let _ = shared.tx.send(Event::Dropped(intended));
             continue;
         };
+        // Las filas se toman al despachar: si un dataset `unique` se acabó, la carga termina.
+        let rows = match plan.row_vars(&plan.flows[flow]) {
+            Ok(rows) => rows,
+            Err(dataset) => {
+                free.lock().unwrap().push(vu);
+                shared.progress.exhaust(dataset);
+                stopped_at = Some(Instant::now());
+                break;
+            }
+        };
         shared.progress.started.fetch_add(1, Relaxed);
         let _ = shared.tx.send(Event::Started(intended));
         let (shared, free) = (shared.clone(), free.clone());
         tasks.spawn(async move {
-            shared.iteration(flow, intended, &vu.vars()).await;
+            shared.iteration(flow, intended, &vu, rows).await;
             free.lock().unwrap().push(vu);
         });
     }
     let schedule_secs = (last_dispatch - start).as_secs_f64().max(1e-3);
     drop(shared);
-    let interrupted = drain(&mut tasks, plan.load.graceful_stop()).await;
+    let interrupted = drain(&mut tasks, plan.load.graceful_stop(), &progress).await;
     Dispatch {
         planned: Some(planned),
         schedule_secs,
         lag: Some(lag),
         interrupted,
         paced: 0,
+        stopped_at,
     }
 }
 
@@ -717,35 +972,54 @@ async fn closed_model(
                 if Instant::now() >= deadline {
                     break;
                 }
-                if vu.retired() {
+                if vu.retired() || shared.progress.stop_requested() {
                     break;
                 }
                 let flow = picker.lock().unwrap().next();
+                let rows = match shared.plan.row_vars(&shared.plan.flows[flow]) {
+                    Ok(rows) => rows,
+                    Err(dataset) => {
+                        shared.progress.exhaust(dataset);
+                        break;
+                    }
+                };
                 shared.progress.started.fetch_add(1, Relaxed);
                 let _ = shared.tx.send(Event::Started(Instant::now()));
-                shared.iteration(flow, Instant::now(), &vu.vars()).await;
+                shared.iteration(flow, Instant::now(), &vu, rows).await;
             }
         });
     }
+    let progress = shared.progress.clone();
     drop(shared);
-    sleep_until(deadline.into()).await;
-    let interrupted = drain(&mut tasks, plan.load.graceful_stop()).await;
+    let mut stopped_at = None;
+    tokio::select! {
+        _ = sleep_until(deadline.into()) => {}
+        _ = progress.stopped(1) => stopped_at = Some(Instant::now()),
+    }
+    let ran = stopped_at
+        .unwrap_or(deadline)
+        .saturating_duration_since(start);
+    let interrupted = drain(&mut tasks, plan.load.graceful_stop(), &progress).await;
     Dispatch {
         planned: None,
-        schedule_secs: duration.as_secs_f64(),
+        schedule_secs: ran.as_secs_f64().max(1e-3),
         lag: None,
         interrupted,
         paced: pacer.map_or(0, |p| p.delayed.load(Relaxed)),
+        stopped_at,
     }
 }
 
-/// Espera a que terminen las tareas, hasta `graceful_stop`; corta las que queden.
-async fn drain(tasks: &mut JoinSet<()>, graceful_stop: Duration) -> u64 {
-    let drained = timeout(graceful_stop, async {
-        while tasks.join_next().await.is_some() {}
-    })
-    .await
-    .is_ok();
+/// Espera a que terminen las tareas, hasta `graceful_stop` o hasta que la persona pida cortar
+/// ya; corta las que queden.
+async fn drain(tasks: &mut JoinSet<()>, graceful_stop: Duration, progress: &Progress) -> u64 {
+    progress.set_phase(Phase::Draining);
+    let drained = tokio::select! {
+        done = timeout(graceful_stop, async {
+            while tasks.join_next().await.is_some() {}
+        }) => done.is_ok(),
+        _ = progress.stopped(2) => tasks.is_empty(),
+    };
     let interrupted = if drained { 0 } else { tasks.len() as u64 };
     tasks.shutdown().await;
     interrupted
@@ -787,9 +1061,40 @@ impl Pacer {
     }
 }
 
+/// Aplica un evento del motor al colector.
+fn apply(c: &mut Collector, event: Event) {
+    match event {
+        Event::Started(at) => c.record_started(at),
+        Event::Dropped(at) => c.record_dropped(at),
+        Event::Sample(s) => {
+            let counted = c.record(s.step, s.done, s.latency, s.outcome, s.traffic);
+            c.record_checks(s.step, &s.checks);
+            if let Some(e) = s.extract_error {
+                c.record_extract_failure(s.step, s.done, e, counted);
+            }
+        }
+    }
+}
+
+/// Publica en `progress` los segundos `from..to` de la serie. Devuelve hasta dónde publicó.
+fn publish(c: &Collector, progress: &Progress, from: usize, to: usize) -> usize {
+    if to > from {
+        let mut live = progress.live.lock().unwrap();
+        live.extend((from..to).map(|t| c.second(t)));
+    }
+    to.max(from)
+}
+
 /// Ejecuta los pasos de un flow en orden. Si un paso falla sin respuesta o un `extract`
 /// no encuentra su valor, la iteración se corta: los pasos siguientes dependen de él.
-async fn iteration(shared: &Shared, flow: usize, vu: &HashMap<String, Value>, intended: Instant) {
+async fn iteration(
+    shared: &Shared,
+    flow: usize,
+    vu: &HashMap<String, Value>,
+    rows: HashMap<String, Value>,
+    jar: &Jar,
+    intended: Instant,
+) {
     let Shared {
         plan,
         client,
@@ -800,15 +1105,17 @@ async fn iteration(shared: &Shared, flow: usize, vu: &HashMap<String, Value>, in
     let mut from = intended;
     // Lo del VU (su `vu_setup`) y las filas de esta iteración; lo extraído después lo pisa.
     let mut locals = vu.clone();
-    locals.extend(plan.row_vars(&plan.flows[flow]));
+    locals.extend(rows);
     for step in &plan.flows[flow].steps {
-        let run = run_step(client, plan, step, setup, &locals).await;
+        let run = run_step(client, plan, step, setup, &locals, jar).await;
         let done = Instant::now();
         let broken = run.broken();
         let outcome = match run.result {
             Ok(r) => Outcome::Response {
                 status: r.status,
                 timings: r.timings,
+                limit: (r.status == 429)
+                    .then(|| Box::new(crate::ratelimit::Sample::from_headers(&r.headers))),
             },
             Err(f) => Outcome::Failure {
                 kind: f.kind,
@@ -849,21 +1156,23 @@ fn warnings(t: &Totals, lag: Option<&Percentiles>) -> Vec<String> {
     let mut out = Vec::new();
     if t.dropped > 0 {
         let pct = 100.0 * t.dropped as f64 / t.planned.max(1) as f64;
-        out.push(format!(
-            "{} iteraciones descartadas ({pct:.1}%) por falta de VUs libres: el servidor no da abasto \
+        out.push(crate::tr!("{} iterations dropped ({pct:.1}%) for lack of free VUs: the server cannot keep up \
+             at this rate or max_vus is low. The measured latencies underestimate the real one.", "{} iteraciones descartadas ({pct:.1}%) por falta de VUs libres: el servidor no da abasto \
              a esta tasa o max_vus es bajo. Las latencias medidas subestiman la real.",
             t.dropped
         ));
     }
     if lag.is_some_and(|l| l.p99 > 5.0) {
-        out.push(
+        out.push(crate::tr!(
+            "the scheduler was late (p99 > 5 ms): the generator may be the bottleneck; \
+             the results are not reliable.",
             "el scheduler llegó tarde (p99 > 5 ms): el generador puede ser el cuello de botella; \
              los resultados no son confiables."
-                .into(),
-        );
+        ));
     }
     if t.interrupted > 0 {
-        out.push(format!(
+        out.push(crate::tr!(
+            "{} iterations cut by graceful_stop.",
             "{} iteraciones cortadas por graceful_stop.",
             t.interrupted
         ));
@@ -904,25 +1213,179 @@ impl WeightedPicker {
     }
 }
 
+/// Manda el request con las cookies del VU y sigue los redirects del paso, solo hacia
+/// `allowed_hosts` (ADR-014). Devuelve la última respuesta, ya descomprimida.
+async fn follow(
+    client: &Client,
+    plan: &Plan,
+    step: &StepPlan,
+    mut request: Request<Body>,
+    meter: &Arc<Meter>,
+    jar: &Jar,
+) -> Result<Response, Failure> {
+    let mut origin = step.origin.clone();
+    // La cookie que puso el escenario, para sumarle las del jar sin perderla.
+    let mut own_cookie = request.headers().get(COOKIE).cloned();
+    let mut redirects = Vec::new();
+    loop {
+        let url = url_of(&origin, request.uri())?;
+        let cookie = match (&own_cookie, jar.header(&url)) {
+            (Some(own), Some(jar)) => Some(format!("{}; {jar}", own.to_str().unwrap_or_default())),
+            (Some(own), None) => own.to_str().ok().map(String::from),
+            (None, jar) => jar,
+        };
+        request.headers_mut().remove(COOKIE);
+        if let Some(c) = cookie.and_then(|c| HeaderValue::from_str(&c).ok()) {
+            request.headers_mut().insert(COOKIE, c);
+        }
+
+        let mut response = client
+            .send(&origin, || http::duplicate(&request), meter)
+            .await?;
+        jar.store(&url, &response.headers);
+        let location = match response.status {
+            301 | 302 | 303 | 307 | 308 if redirects.len() < step.redirects as usize => response
+                .headers
+                .get(LOCATION)
+                .and_then(|v| v.to_str().ok())
+                .map(String::from),
+            _ => None,
+        };
+        let Some(location) = location else {
+            response.redirects = redirects;
+            http::decode(&mut response)?;
+            return Ok(response);
+        };
+
+        let next = url.join(&location).map_err(|e| {
+            Failure::new(
+                FailureKind::Redirect,
+                crate::tr!(
+                    "redirect to `{location}`: invalid URL ({e})",
+                    "redirect a `{location}`: URL inválida ({e})"
+                ),
+            )
+        })?;
+        let https = match next.scheme() {
+            "http" => false,
+            "https" => true,
+            other => {
+                return Err(Failure::new(
+                    FailureKind::Redirect,
+                    crate::tr!(
+                        "redirect to `{next}`: scheme `{other}` is not supported",
+                        "redirect a `{next}`: esquema `{other}` no soportado"
+                    ),
+                ));
+            }
+        };
+        let host = next.host_str().unwrap_or_default().to_ascii_lowercase();
+        if !plan.allowed_hosts.contains(&host) {
+            return Err(Failure::new(
+                FailureKind::Redirect,
+                crate::tr!(
+                    "redirect to `{host}`, which is not in the allowed_hosts of the environment",
+                    "redirect a `{host}`, que no está en allowed_hosts del entorno"
+                ),
+            ));
+        }
+        let next_origin = Origin {
+            https,
+            port: next
+                .port_or_known_default()
+                .unwrap_or(if https { 443 } else { 80 }),
+            host,
+        };
+        // Como un navegador: las credenciales propias no viajan a otro host.
+        let same_host = next_origin.host == origin.host;
+        if !same_host {
+            own_cookie = None;
+        }
+        request = redirected(&request, response.status, &next, same_host)?;
+        origin = next_origin;
+        redirects.push(next.to_string());
+    }
+}
+
+/// URL completa de un request, para el jar y para resolver un `location` relativo.
+fn url_of(origin: &Origin, uri: &hyper::Uri) -> Result<url::Url, Failure> {
+    let scheme = if origin.https { "https" } else { "http" };
+    let target = uri.path_and_query().map_or("/", |p| p.as_str());
+    url::Url::parse(&format!(
+        "{scheme}://{}:{}{target}",
+        origin.host, origin.port
+    ))
+    .map_err(|e| {
+        Failure::new(
+            FailureKind::Protocol,
+            crate::tr!("invalid URL: {e}", "URL inválida: {e}"),
+        )
+    })
+}
+
+/// El request que sigue a un redirect. 303, y 301 o 302 después de un POST, pasan a GET
+/// sin body (como los navegadores); 307 y 308 repiten método y body.
+fn redirected(
+    previous: &Request<Body>,
+    status: u16,
+    next: &url::Url,
+    same_host: bool,
+) -> Result<Request<Body>, Failure> {
+    let method = previous.method();
+    let to_get = status == 303 && method != Method::HEAD
+        || matches!(status, 301 | 302) && method == Method::POST;
+    let mut request = http::duplicate(previous);
+    if to_get {
+        *request.method_mut() = Method::GET;
+        *request.body_mut() = Body::default();
+        request.headers_mut().remove(CONTENT_TYPE);
+    }
+    *request.uri_mut() = next[url::Position::BeforePath..].parse().map_err(|e| {
+        Failure::new(
+            FailureKind::Redirect,
+            crate::tr!("redirect to `{next}`: {e}", "redirect a `{next}`: {e}"),
+        )
+    })?;
+    let host = next.host_str().unwrap_or_default();
+    let authority = match next.port() {
+        Some(port) => format!("{host}:{port}"),
+        None => host.to_string(),
+    };
+    let headers = request.headers_mut();
+    headers.insert(
+        HOST,
+        HeaderValue::from_str(&authority)
+            .map_err(|e| Failure::new(FailureKind::Redirect, e.to_string()))?,
+    );
+    if !same_host {
+        headers.remove(AUTHORIZATION);
+    }
+    Ok(request)
+}
+
 /// Envía el request ya armado de un paso, con su timeout. Si armarlo falló, devuelve
 /// una falla de tipo `template`.
 pub async fn send_step(
     client: &Client,
+    plan: &Plan,
     step: &StepPlan,
     request: Result<Request<Body>, String>,
     meter: &Arc<Meter>,
+    jar: &Jar,
 ) -> Result<Response, Failure> {
     let request = request.map_err(|e| Failure::new(FailureKind::Template, e))?;
+    // El timeout cubre todos los saltos: es lo que espera un cliente real.
     match timeout(
         step.timeout,
-        client.send(&step.origin, || http::duplicate(&request), meter),
+        follow(client, plan, step, request, meter, jar),
     )
     .await
     {
         Ok(result) => result,
         Err(_) => Err(Failure::new(
             FailureKind::Timeout,
-            format!(
+            crate::tr!(
+                "no response within {}",
                 "sin respuesta en {}",
                 crate::units::HumanDuration(step.timeout)
             ),

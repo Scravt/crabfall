@@ -48,3 +48,18 @@ La "base" es la mediana del p95 de las primeras ventanas con datos. El paso "cul
 - `stress-ramp` (20 → 400 it/s): latencia plana en toda la rampa (p95 ~33 ms, el costo fijo de `create_order`) y sin hallazgos. Correcto: el sistema no se saturó.
 - `login-ramp` (10 → 80 it/s): `breaking_point` en ~40 it/s (36 req/s) sobre `login`, con 219 iteraciones descartadas. La causa en el código es `scryptSync` (~28 ms de CPU por llamada que bloquea el event loop: 1000 / 28 ≈ 36/s).
 - Esa misma corrida dio un falso positivo de `new_connections`: 200 conexiones nuevas con `max_vus: 200`, todas reutilizadas. Se corrigió la regla y se agregó la patología al laboratorio (`slow_server_with_keep_alive_has_no_new_connections`).
+
+## El límite que declara el servidor (19 oct 2026)
+
+Un 429 casi siempre viene con información: `Retry-After` y, cada vez más, la política del límite (`RateLimit-Policy` de los drafts de la IETF, como manda express-rate-limit; o el `X-RateLimit-Limit` de siempre). El motor guarda eso de cada 429 en `steps[].rate_limit` (cantidad, `Retry-After` mínimo y máximo, cuota y ventana). Cuando `error_threshold` encuentra que el 429 domina, la causa deja de ser genérica y dice el límite con números ("declara 30 requests cada 60 s (`RateLimit-Policy`) y pide esperar con `Retry-After 23 s`"), y la evidencia lo incluye. `crabfall run` lo muestra en una línea `límite`. Solo se lee la forma numérica de `Retry-After`; una fecha HTTP se ignora.
+
+## Ancho de banda (20 oct 2026)
+
+`bandwidth_limit` (media): el tráfico (bytes enviados + recibidos por segundo, ADR-013) llega a un techo y se queda ahí mientras la carga pide bastante más y el p95 se dispara.
+
+- **Cuándo mira:** solo si el pico pasa 1 MB/s; con menos, el ancho de banda casi nunca es el límite.
+- **El techo:** el primer segundo con al menos el 85% del pico; desde ahí, 5 segundos o más, y el 70% de ellos, en ese nivel.
+- **Lo que pedía la carga:** las iteraciones ofrecidas (iniciadas + descartadas) después del techo, por los bytes por iteración de antes. Tiene que superar en un 25% lo que se movió.
+- **La latencia:** el p95 mediano después del techo, al menos 3 veces (y 50 ms más que) el de antes, como en `breaking_point`.
+- **Evidencia:** pico, bytes/s movidos y pedidos, bytes por iteración y los p95. Las causas empiezan por el enlace (Wi-Fi, VPN, placa, plan), siguen con un proxy o CDN que limita, y terminan en respuestas grandes.
+- **Laboratorio:** respuestas de 100 KB por un "enlace" simulado de 2 MB/s, bajo una rampa de 5 a 60 it/s (hasta 6 MB/s pedidos), dan el hallazgo; las mismas respuestas sin el enlace, no.

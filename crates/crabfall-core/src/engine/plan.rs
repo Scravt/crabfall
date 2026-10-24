@@ -13,7 +13,7 @@ use bytes::Bytes;
 use http_body_util::Full;
 use hyper::{
     Method, Request,
-    header::{CONTENT_TYPE, HOST, HeaderName, HeaderValue, USER_AGENT},
+    header::{ACCEPT_ENCODING, CONTENT_TYPE, HOST, HeaderName, HeaderValue, USER_AGENT},
 };
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 use serde_json::{Value, json};
@@ -34,6 +34,18 @@ use crate::{
 };
 
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Redirects que sigue un paso si el escenario no dice otra cosa.
+pub const DEFAULT_REDIRECTS: u32 = 10;
+
+/// Lo que piden los clientes reales; un header `accept-encoding` del escenario lo pisa.
+pub const DEFAULT_ACCEPT_ENCODING: &str = "gzip, br";
+
+/// El `user-agent` si el escenario no pone otro.
+pub const DEFAULT_USER_AGENT: &str = concat!("crabfall/", env!("CARGO_PKG_VERSION"));
+/// Cómo se firma el `user-agent` por defecto: sin la versión, para que actualizar Crabfall
+/// no invalide las aprobaciones.
+const SIGNED_USER_AGENT: &str = "crabfall/<version>";
 
 /// Lo que se codifica de un valor interpolado en el path: todo menos lo no reservado.
 const PATH_VALUE: &AsciiSet = &NON_ALPHANUMERIC
@@ -69,6 +81,10 @@ pub struct Plan {
     pub load: LoadPlan,
     /// Hosts a los que se va a conectar.
     pub hosts: BTreeSet<String>,
+    /// `allowed_hosts` del entorno, en minúsculas: un redirect solo se sigue hacia uno de estos.
+    pub allowed_hosts: BTreeSet<String>,
+    /// Cada VU guarda y reenvía sus cookies (`cookies`, por defecto `true`).
+    pub cookies: bool,
     /// Cota de requests/s; `None` con `constant_vus`.
     pub max_request_rate: Option<f64>,
     /// `limits.max_rps` del entorno: el motor no lo supera aunque la tasa no esté acotada.
@@ -104,12 +120,13 @@ pub struct DataPlan {
 }
 
 impl DataPlan {
-    /// Fila de la próxima iteración.
-    fn pick(&self) -> usize {
+    /// Fila de la próxima iteración; `None` si es `unique` y ya se usaron todas.
+    fn pick(&self) -> Option<usize> {
         let rows = self.dataset.rows.len();
         match self.dataset.pick {
-            Pick::Sequential => self.next.fetch_add(1, Relaxed) % rows,
-            Pick::Random => fastrand::usize(..rows),
+            Pick::Sequential => Some(self.next.fetch_add(1, Relaxed) % rows),
+            Pick::Random => Some(fastrand::usize(..rows)),
+            Pick::Unique => Some(self.next.fetch_add(1, Relaxed)).filter(|i| *i < rows),
         }
     }
 }
@@ -121,6 +138,8 @@ pub enum BodyPlan {
         source: Value,
     },
     Text(Template),
+    /// `application/x-www-form-urlencoded`: campo y valor, en el orden del escenario.
+    Form(Vec<(String, Template)>),
     /// `multipart/form-data`. El boundary es fijo por paso y no se firma: no está en el escenario.
     Multipart {
         boundary: String,
@@ -157,6 +176,8 @@ pub struct StepPlan {
     headers: Vec<(HeaderName, Template)>,
     pub body: BodyPlan,
     pub timeout: Duration,
+    /// Cuántos redirects sigue (`0`: ninguno).
+    pub redirects: u32,
     /// Pausa después del paso; `None` si no hay.
     pub think: Option<Think>,
     /// Variables que salen de la respuesta.
@@ -194,16 +215,27 @@ impl StepPlan {
                 serde_json::to_vec(&template.render(scope)?).expect("JSON siempre serializa"),
             ),
             BodyPlan::Text(t) => Bytes::from(t.render(scope)?),
+            BodyPlan::Form(fields) => {
+                let mut form = form_urlencoded::Serializer::new(String::new());
+                for (name, value) in fields {
+                    form.append_pair(name, &value.render(scope)?);
+                }
+                Bytes::from(form.finish())
+            }
             BodyPlan::Multipart { boundary, parts } => multipart(boundary, parts, scope)?,
         };
         let mut request = Request::builder()
             .method(self.method.clone())
             .uri(self.target(scope)?)
             .body(Full::new(body))
-            .map_err(|e| format!("request inválido: {e}"))?;
+            .map_err(|e| crate::tr!("invalid request: {e}", "request inválido: {e}"))?;
         for (name, value) in &self.headers {
-            let value = HeaderValue::from_str(&value.render(scope)?)
-                .map_err(|e| format!("header `{name}` inválido: {e}"))?;
+            let value = HeaderValue::from_str(&value.render(scope)?).map_err(|e| {
+                crate::tr!(
+                    "invalid header `{name}`: {e}",
+                    "header `{name}` inválido: {e}"
+                )
+            })?;
             request.headers_mut().insert(name.clone(), value);
         }
         if let BodyPlan::Multipart { boundary, .. } = &self.body {
@@ -261,6 +293,7 @@ impl StepPlan {
             BodyPlan::None => {}
             BodyPlan::Json { template, .. } => all.extend(template.templates()),
             BodyPlan::Text(t) => all.push(t),
+            BodyPlan::Form(fields) => all.extend(fields.iter().map(|(_, t)| t)),
             BodyPlan::Multipart { parts, .. } => all.extend(parts.iter().map(|(_, p)| match p {
                 PartPlan::Text(t) => t,
                 PartPlan::File { filename, .. } => filename,
@@ -284,8 +317,13 @@ impl Plan {
         inputs: &Inputs,
     ) -> Result<Self, Vec<String>> {
         let mut errors = Vec::new();
-        let base = Url::parse(&env.base_url)
-            .map_err(|e| vec![format!("base_url `{}` inválida: {e}", env.base_url)])?;
+        let base = Url::parse(&env.base_url).map_err(|e| {
+            vec![crate::tr!(
+                "invalid base_url `{}`: {e}",
+                "base_url `{}` inválida: {e}",
+                env.base_url
+            )]
+        })?;
         let allowed: BTreeSet<String> = env
             .allowed_hosts
             .iter()
@@ -352,7 +390,10 @@ impl Plan {
                         next: AtomicUsize::new(0),
                     });
                 }
-                None => data_errors.push(format!("data.{name}: el dataset no se cargó")),
+                None => data_errors.push(crate::tr!(
+                    "data.{name}: the dataset was not loaded",
+                    "data.{name}: el dataset no se cargó"
+                )),
             }
         }
         // Lo que extrae `vu_setup` lo ven los flows: se suma a `after_setup`.
@@ -382,6 +423,20 @@ impl Plan {
             .chain(vu_refresh.iter().flat_map(|r| &r.steps))
             .collect();
         let vu_data = datasets_used(&data, vu_steps.iter().copied());
+        // Con `unique`, cada VU toma una fila distinta en su `vu_setup`: tienen que alcanzar.
+        let vus = scenario.load.plan().concurrency() as usize;
+        let mut unique_errors = Vec::new();
+        for &i in &vu_data {
+            let d = &data[i].dataset;
+            if d.pick == Pick::Unique && d.rows.len() < vus {
+                unique_errors.push(crate::tr!(
+                    "data.{}: pick unique has {} rows for {vus} VUs in vu_setup: add rows or lower the VUs",
+                    "data.{}: pick unique tiene {} filas para {vus} VUs en vu_setup: agregá filas o bajá los VUs",
+                    d.name,
+                    d.rows.len()
+                ));
+            }
+        }
         let flows: Vec<FlowPlan> = scenario
             .flows
             .iter()
@@ -421,6 +476,8 @@ impl Plan {
             flows,
             load: scenario.load.plan(),
             hosts,
+            allowed_hosts: allowed.clone(),
+            cookies: scenario.cookies.unwrap_or(true),
             max_request_rate: scenario.max_request_rate(),
             request_cap: env.limits.max_rps,
             vars,
@@ -429,6 +486,7 @@ impl Plan {
             thresholds: Vec::new(),
         };
         errors.extend(data_errors);
+        errors.extend(unique_errors);
         let mut plan = plan;
         for (i, t) in scenario.thresholds.iter().enumerate() {
             match ThresholdPlan::parse(t) {
@@ -441,7 +499,7 @@ impl Plan {
                     if exists {
                         plan.thresholds.push(t);
                     } else {
-                        errors.push(format!("thresholds[{i}]: ningún paso de los flows coincide con el filtro de `{}`", t.label));
+                        errors.push(crate::tr!("thresholds[{i}]: no flow step matches the filter of `{}`", "thresholds[{i}]: ningún paso de los flows coincide con el filtro de `{}`", t.label));
                     }
                 }
                 Err(e) => errors.push(format!("thresholds[{i}]: {e}")),
@@ -470,13 +528,21 @@ impl Plan {
             let mut headers: Vec<(String, String)> = s
                 .headers
                 .iter()
-                .map(|(k, v)| (k.to_string(), v.source().to_string()))
+                .map(|(k, v)| match v.source() {
+                    DEFAULT_USER_AGENT if *k == USER_AGENT => {
+                        (k.to_string(), SIGNED_USER_AGENT.to_string())
+                    }
+                    source => (k.to_string(), source.to_string()),
+                })
                 .collect();
             headers.sort();
             let body = match &s.body {
                 BodyPlan::None => Value::Null,
                 BodyPlan::Json { source, .. } => json!({ "json": source }),
                 BodyPlan::Text(t) => json!({ "text": t.source() }),
+                BodyPlan::Form(fields) => json!({
+                    "form": fields.iter().map(|(n, v)| json!([n, v.source()])).collect::<Vec<_>>()
+                }),
                 // Se firma el contenido de cada archivo, no solo su ruta (ADR-012).
                 BodyPlan::Multipart { parts, .. } => json!({
                     "multipart": parts.iter().map(|(name, p)| match p {
@@ -505,6 +571,10 @@ impl Plan {
                 "tags": s.tags,
                 "extract": extract,
             });
+            // Solo si no es el de siempre (ADR-014).
+            if s.redirects != DEFAULT_REDIRECTS {
+                step["redirects"] = json!(s.redirects);
+            }
             // Solo si hay pausa, para no invalidar las aprobaciones de antes (ADR-008).
             if let Some(think) = s.think {
                 step["think"] = json!(think.to_string());
@@ -533,6 +603,10 @@ impl Plan {
             "setup": setup,
             "flows": flows,
         });
+        // Solo si se apagaron (ADR-014).
+        if !self.cookies {
+            canonical["cookies"] = json!(false);
+        }
         // Solo si hay `vu_setup`, para no invalidar las aprobaciones de antes (ADR-010).
         if !self.vu_setup.is_empty() {
             canonical["vu_setup"] = self.vu_setup.iter().map(step).collect();
@@ -560,7 +634,9 @@ impl Plan {
     }
 
     /// Variables de las filas que toma una iteración de `flow`: `dataset.columna` → valor.
-    pub fn row_vars(&self, flow: &FlowPlan) -> HashMap<String, Value> {
+    /// Las filas de una iteración del flow. `Err` con el nombre del dataset `unique` que
+    /// se quedó sin filas.
+    pub fn row_vars(&self, flow: &FlowPlan) -> Result<HashMap<String, Value>, String> {
         self.rows(&flow.data)
     }
 
@@ -571,15 +647,63 @@ impl Plan {
                 BodyPlan::Multipart { parts, .. } => parts
                     .iter()
                     .filter_map(|(_, p)| match p {
-                        PartPlan::File { upload, .. } => {
-                            Some(format!("{} en {}", upload.describe(), s.name))
-                        }
+                        PartPlan::File { upload, .. } => Some(crate::tr!(
+                            "{} in {}",
+                            "{} en {}",
+                            upload.describe(),
+                            s.name
+                        )),
                         PartPlan::Text(_) => None,
                     })
                     .collect(),
                 _ => vec![],
             })
             .collect()
+    }
+
+    /// Cómo se comporta el cliente, para quien aprueba: `cookies por VU · sigue hasta 10
+    /// redirects (solo a allowed_hosts) · acepta gzip, br`.
+    pub fn http_summary(&self) -> String {
+        let cookies = if self.cookies {
+            crate::tr!("cookies per VU", "cookies por VU")
+        } else {
+            crate::tr!("no cookies", "sin cookies")
+        };
+        let mut limits: Vec<u32> = self.all_steps().map(|s| s.redirects).collect();
+        limits.sort_unstable();
+        limits.dedup();
+        let redirects = match limits.as_slice() {
+            [0] => crate::tr!("does not follow redirects", "no sigue redirects").to_string(),
+            [n] => crate::tr!(
+                "follows up to {n} redirects (only to allowed_hosts)",
+                "sigue hasta {n} redirects (solo a allowed_hosts)"
+            ),
+            _ => crate::tr!(
+                "follows redirects per step (only to allowed_hosts)",
+                "sigue redirects según el paso (solo a allowed_hosts)"
+            )
+            .to_string(),
+        };
+        let mut encodings: Vec<String> = self
+            .all_steps()
+            .filter_map(|s| {
+                s.headers
+                    .iter()
+                    .find(|(n, _)| *n == ACCEPT_ENCODING)
+                    .map(|(_, v)| v.source().to_string())
+            })
+            .collect();
+        encodings.sort();
+        encodings.dedup();
+        let compression = match encodings.as_slice() {
+            [e] => crate::tr!("accepts {e}", "acepta {e}"),
+            _ => crate::tr!(
+                "accepts compression per step",
+                "acepta compresión según el paso"
+            )
+            .to_string(),
+        };
+        format!("{cookies} · {redirects} · {compression}")
     }
 
     /// Pasos que renuevan la sesión de un VU: los de `vu_refresh` o, si no tiene, `vu_setup`.
@@ -601,39 +725,62 @@ impl Plan {
             .map(|s| s.name.as_str())
             .collect();
         let what = if r.steps.is_empty() {
-            format!("repite {}", names.join(", "))
+            crate::tr!("repeats {}", "repite {}", names.join(", "))
         } else {
             names.join(", ")
         };
-        Some(format!("{what} cada {}", HumanDuration(r.every)))
+        Some(crate::tr!(
+            "{what} every {}",
+            "{what} cada {}",
+            HumanDuration(r.every)
+        ))
     }
 
-    /// Variables de las filas que toma un VU para su `vu_setup`.
-    pub fn vu_row_vars(&self) -> HashMap<String, Value> {
+    /// Variables de las filas que toma un VU para su `vu_setup`. Con `unique`, el plan ya
+    /// verificó que alcanzan para todos los VUs.
+    pub fn vu_row_vars(&self) -> Result<HashMap<String, Value>, String> {
         self.rows(&self.vu_data)
     }
 
-    fn rows(&self, datasets: &[usize]) -> HashMap<String, Value> {
-        datasets
+    fn rows(&self, datasets: &[usize]) -> Result<HashMap<String, Value>, String> {
+        let mut vars = HashMap::new();
+        for &i in datasets {
+            let d = &self.data[i];
+            let row = d.pick().ok_or_else(|| d.dataset.name.clone())?;
+            vars.extend(d.dataset.vars(row));
+        }
+        Ok(vars)
+    }
+
+    /// Datasets `unique` con menos filas que las iteraciones del plan: la corrida termina
+    /// cuando se acaban. (nombre, filas, iteraciones).
+    pub fn unique_shortfalls(&self) -> Vec<(String, usize, u64)> {
+        let Some(planned) = self.load.planned_iterations() else {
+            return vec![];
+        };
+        self.data
             .iter()
-            .flat_map(|&i| {
-                let d = &self.data[i];
-                d.dataset.vars(d.pick())
-            })
+            .filter(|d| d.dataset.pick == Pick::Unique && (d.dataset.rows.len() as u64) < planned)
+            .map(|d| (d.dataset.name.clone(), d.dataset.rows.len(), planned))
             .collect()
     }
 
     /// Cuánta carga puede generar, en requests/s, para resúmenes.
     pub fn rate_summary(&self) -> String {
         match (self.max_request_rate, self.request_cap) {
-            (Some(rate), _) => format!("hasta {rate:.1} requests/s"),
+            (Some(rate), _) => {
+                crate::tr!("up to {rate:.1} requests/s", "hasta {rate:.1} requests/s")
+            }
             (None, Some(cap)) => {
-                format!("según la latencia, con tope de {cap} requests/s (limits.max_rps)")
+                crate::tr!(
+                    "depends on latency, capped at {cap} requests/s (limits.max_rps)",
+                    "según la latencia, con tope de {cap} requests/s (limits.max_rps)"
+                )
             }
-            (None, None) => {
+            (None, None) => crate::tr!(
+                "depends on latency, uncapped (set limits.max_rps in the environment to cap it)",
                 "según la latencia, sin tope (definí limits.max_rps en el entorno para acotarla)"
-                    .into()
-            }
+            ),
         }
     }
 
@@ -646,13 +793,13 @@ impl Plan {
         }
         let first = thinks[0].1;
         if thinks.iter().all(|(_, t)| *t == first) {
-            return first.map(|t| format!("{t} después de cada paso"));
+            return first.map(|t| crate::tr!("{t} after each step", "{t} después de cada paso"));
         }
         let each: Vec<String> = thinks
             .iter()
             .filter_map(|(name, t)| t.map(|t| format!("{name} {t}")))
             .collect();
-        Some(format!("después de {}", each.join(", ")))
+        Some(crate::tr!("after {}", "después de {}", each.join(", ")))
     }
 
     /// Pasos de los flows (los que generan carga y tienen métricas).
@@ -678,7 +825,8 @@ impl Plan {
         if let (Some(max), Some(rate)) = (limits.max_rps, self.max_request_rate)
             && rate > max
         {
-            out.push(format!(
+            out.push(crate::tr!(
+                "the maximum request rate ({rate:.1}/s) exceeds limits.max_rps ({max})",
                 "la tasa máxima de requests ({rate:.1}/s) supera limits.max_rps ({max})"
             ));
         }
@@ -686,14 +834,16 @@ impl Plan {
         if let Some(max) = limits.max_vus
             && concurrency > max
         {
-            out.push(format!(
+            out.push(crate::tr!(
+                "the concurrency ({concurrency}) exceeds limits.max_vus ({max})",
                 "la concurrencia ({concurrency}) supera limits.max_vus ({max})"
             ));
         }
         if let Some(max) = limits.max_duration
             && self.load.duration() > max.0
         {
-            out.push(format!(
+            out.push(crate::tr!(
+                "the duration ({}) exceeds limits.max_duration ({max})",
                 "la duración ({}) supera limits.max_duration ({max})",
                 HumanDuration(self.load.duration())
             ));
@@ -739,9 +889,14 @@ fn check_references(
     let mut problems = BTreeSet::new();
     for var in step.checks.iter().flat_map(|c| c.vars()) {
         if !known.contains(var) && var.contains('.') {
-            problems.insert(format!("un check usa {}", unknown_column(var, columns)));
+            problems.insert(crate::tr!(
+                "a check uses {}",
+                "un check usa {}",
+                unknown_column(var, columns)
+            ));
         } else if !known.contains(var) {
-            problems.insert(format!(
+            problems.insert(crate::tr!(
+                "a check uses `{{{{{var}}}}}`, which is not defined",
                 "un check usa `{{{{{var}}}}}`, que no está definida"
             ));
         }
@@ -751,18 +906,15 @@ fn check_references(
             if !known.contains(var) && var.contains('.') {
                 problems.insert(unknown_column(var, columns));
             } else if !known.contains(var) {
-                problems.insert(format!(
-                    "`{{{{{var}}}}}` no está definida: agregala en `vars`, en el entorno o con --var, o extraéla en un paso anterior"
+                problems.insert(crate::tr!("`{{{{{var}}}}}` is not defined: add it to `vars`, to the environment or with --var, or extract it in an earlier step", "`{{{{{var}}}}}` no está definida: agregala en `vars`, en el entorno o con --var, o extraéla en un paso anterior"
                 ));
             }
         }
         for name in t.secrets() {
             match secrets.get(name) {
-                None => problems.insert(format!(
-                    "`{{{{env.{name}}}}}` no está declarado en `secrets` de config.yaml"
+                None => problems.insert(crate::tr!("`{{{{env.{name}}}}}` is not declared in `secrets` of config.yaml", "`{{{{env.{name}}}}}` no está declarado en `secrets` de config.yaml"
                 )),
-                Some(None) => problems.insert(format!(
-                    "el secreto `{name}` no tiene valor: definilo como variable de entorno o en .env"
+                Some(None) => problems.insert(crate::tr!("secret `{name}` has no value: set it as an environment variable or in .env", "el secreto `{name}` no tiene valor: definilo como variable de entorno o en .env"
                 )),
                 Some(Some(_)) => false,
             };
@@ -784,7 +936,11 @@ fn multipart_plan(
             }
             MultipartPart::File(f) => {
                 let upload = files.get(&f.file).ok_or_else(|| {
-                    format!("multipart.{name}: el archivo {} no se cargó", f.file)
+                    crate::tr!(
+                        "multipart.{name}: file {} was not loaded",
+                        "multipart.{name}: el archivo {} no se cargó",
+                        f.file
+                    )
                 })?;
                 let default_name = std::path::Path::new(&f.file)
                     .file_name()
@@ -895,12 +1051,17 @@ fn datasets_used<'a>(
 fn unknown_column(var: &str, columns: &BTreeMap<&str, &[String]>) -> String {
     let (dataset, column) = var.split_once('.').unwrap_or((var, ""));
     match columns.get(dataset) {
-        None => format!("`{{{{{var}}}}}`: no hay un dataset `{dataset}` en `data`"),
-        Some(cols) if !cols.iter().any(|c| c == column) => format!(
+        None => crate::tr!(
+            "`{{{{{var}}}}}`: there is no dataset `{dataset}` in `data`",
+            "`{{{{{var}}}}}`: no hay un dataset `{dataset}` en `data`"
+        ),
+        Some(cols) if !cols.iter().any(|c| c == column) => crate::tr!(
+            "`{{{{{var}}}}}`: dataset `{dataset}` has no column `{column}` (it has: {})",
             "`{{{{{var}}}}}`: el dataset `{dataset}` no tiene la columna `{column}` (tiene: {})",
             cols.join(", ")
         ),
-        Some(_) => format!(
+        Some(_) => crate::tr!(
+            "`{{{{{var}}}}}`: datasets cannot be used in `setup`, which runs only once; for a step per user (like the login), use `vu_setup`",
             "`{{{{{var}}}}}`: los datasets no se pueden usar en `setup`, que corre una sola vez; para un paso por usuario (como el login), usá `vu_setup`"
         ),
     }
@@ -944,20 +1105,26 @@ fn build_step(
     let https = match origin_url.scheme() {
         "http" => false,
         "https" => true,
-        other => return Err(format!("esquema `{other}` no soportado")),
+        other => {
+            return Err(crate::tr!(
+                "scheme `{other}` is not supported",
+                "esquema `{other}` no soportado"
+            ));
+        }
     };
     let host = origin_url
         .host_str()
-        .ok_or("la URL no tiene host")?
+        .ok_or(crate::tr!("the URL has no host", "la URL no tiene host"))?
         .to_ascii_lowercase();
     if !allowed.contains(&host) {
-        return Err(format!(
+        return Err(crate::tr!(
+            "host `{host}` is not in the allowed_hosts of the environment",
             "el host `{host}` no está en allowed_hosts del entorno"
         ));
     }
     let port = origin_url
         .port_or_known_default()
-        .ok_or("la URL no tiene puerto")?;
+        .ok_or(crate::tr!("the URL has no port", "la URL no tiene puerto"))?;
 
     let mut query = Vec::new();
     if let Some(raw) = raw_query {
@@ -977,10 +1144,8 @@ fn build_step(
     };
     let mut headers: Vec<(HeaderName, Template)> = vec![
         (HOST, Template::literal(authority)),
-        (
-            USER_AGENT,
-            Template::literal(concat!("crabfall/", env!("CARGO_PKG_VERSION"))),
-        ),
+        (USER_AGENT, Template::literal(DEFAULT_USER_AGENT)),
+        (ACCEPT_ENCODING, Template::literal(DEFAULT_ACCEPT_ENCODING)),
     ];
     let mut set_header = |name: &str, value: &str| -> Result<(), String> {
         let name = HeaderName::try_from(name).map_err(|e| format!("header `{name}`: {e}"))?;
@@ -998,6 +1163,21 @@ fn build_step(
             }
         }
         (None, Some(text)) => BodyPlan::Text(Template::parse(text)?),
+        (None, None) if !r.form.is_empty() => {
+            set_header(CONTENT_TYPE.as_str(), "application/x-www-form-urlencoded")?;
+            let fields = r
+                .form
+                .iter()
+                .map(|(name, value)| {
+                    let template = match value {
+                        Value::String(s) => Template::parse(s)?,
+                        other => Template::literal(to_text(other)),
+                    };
+                    Ok((name.clone(), template))
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            BodyPlan::Form(fields)
+        }
         (None, None) if !r.multipart.is_empty() => multipart_plan(&r.multipart, files)?,
         (None, None) => BodyPlan::None,
     };
@@ -1026,6 +1206,10 @@ fn build_step(
             .timeout
             .or(defaults.and_then(|d| d.timeout))
             .map_or(DEFAULT_TIMEOUT, |t| t.0),
+        redirects: r
+            .redirects
+            .or(defaults.and_then(|d| d.redirects))
+            .unwrap_or(DEFAULT_REDIRECTS),
         think: step
             .think
             .or(defaults.and_then(|d| d.think))
@@ -1042,10 +1226,13 @@ fn split_url(base: &Url, url: &str) -> Result<(Url, String, Option<String>), Str
             let end = after.find(['/', '?']).unwrap_or(after.len());
             let authority = &after[..end];
             if authority.contains("{{") {
-                return Err("el host de la URL no puede tener variables".into());
+                return Err(crate::tr!(
+                    "the URL host cannot have variables",
+                    "el host de la URL no puede tener variables"
+                ));
             }
             let origin = Url::parse(&format!("{scheme}://{authority}/"))
-                .map_err(|e| format!("url inválida: {e}"))?;
+                .map_err(|e| crate::tr!("invalid url: {e}", "url inválida: {e}"))?;
             (origin, String::new(), &after[end..])
         }
         None => (
@@ -1115,6 +1302,7 @@ mod tests {
             extract: vec![],
             checks: vec![],
             timeout: DEFAULT_TIMEOUT,
+            redirects: DEFAULT_REDIRECTS,
             think: None,
         };
         assert_eq!(step.target(&NoVars).unwrap(), "/a%20b/1?q=x+y%26z");

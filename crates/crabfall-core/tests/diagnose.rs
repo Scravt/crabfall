@@ -24,6 +24,27 @@ use crabfall_core::{
 };
 use tokio::{net::TcpListener, sync::Semaphore};
 
+/// `CRABFALL_SKIP_TIMING_TESTS=1` las saltea: en máquinas que no sostienen el calendario de la
+/// carga (el runner de Windows del CI, con 2 núcleos) el diagnóstico da, con razón,
+/// `invalid_result` y no hay nada que verificar. En Linux y en una máquina de desarrollo corren.
+fn skip_timing() -> bool {
+    let skip = std::env::var("CRABFALL_SKIP_TIMING_TESTS").is_ok_and(|v| v == "1");
+    if skip {
+        eprintln!("salteado: CRABFALL_SKIP_TIMING_TESTS=1");
+    }
+    skip
+}
+
+/// Las patologías miden tiempos: si varias generan carga a la vez, se pisan, el generador
+/// llega tarde y el diagnóstico (con razón) da `invalid_result`. Pasa en máquinas chicas,
+/// como los runners de CI. Una corrida a la vez, como en la realidad.
+static LOAD: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+async fn run_alone(plan: Plan) -> RunResult {
+    let _one_at_a_time = LOAD.lock().await;
+    engine::run(Arc::new(plan), Arc::new(Progress::default())).await
+}
+
 async fn serve(app: Router) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -40,7 +61,7 @@ async fn run(base: &str, path: &str, load: &str) -> RunResult {
     let env: Environment =
         serde_saphyr::from_str(&format!("base_url: {base}\nallowed_hosts: [127.0.0.1]\n")).unwrap();
     let plan = Plan::build(&parse_scenario(&yaml).unwrap(), &env, &Default::default()).unwrap();
-    engine::run(Arc::new(plan), Arc::new(Progress::default())).await
+    run_alone(plan).await
 }
 
 fn find<'a>(r: &'a RunResult, id: &str) -> &'a Finding {
@@ -60,6 +81,9 @@ const RAMP: &str = "  executor: ramping_rate\n  start_rate: 20/s\n  stages:\n   
 
 #[tokio::test(flavor = "multi_thread")]
 async fn healthy_ramp_has_no_serious_findings() {
+    if skip_timing() {
+        return;
+    }
     let base = serve(Router::new().route("/ok", get(|| async { "ok" }))).await;
     let r = run(&base, "/ok", RAMP).await;
     assert!(
@@ -71,6 +95,9 @@ async fn healthy_ramp_has_no_serious_findings() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn small_pool_shows_a_breaking_point() {
+    if skip_timing() {
+        return;
+    }
     // 4 requests a la vez × 20 ms: capacidad ~200 req/s.
     let pool = Arc::new(Semaphore::new(4));
     let app = Router::new().route(
@@ -103,6 +130,9 @@ async fn small_pool_shows_a_breaking_point() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn rate_limiter_shows_an_error_threshold_with_429() {
+    if skip_timing() {
+        return;
+    }
     // Deja pasar 150 requests por segundo de reloj; el resto, 429.
     let window = Arc::new((AtomicU64::new(0), AtomicU64::new(0)));
     let started = Instant::now();
@@ -116,9 +146,17 @@ async fn rate_limiter_shows_an_error_threshold_with_429() {
                     window.1.store(0, Relaxed);
                 }
                 if window.1.fetch_add(1, Relaxed) < 150 {
-                    StatusCode::OK
+                    StatusCode::OK.into_response()
                 } else {
-                    StatusCode::TOO_MANY_REQUESTS
+                    // Como express-rate-limit (draft-8).
+                    (
+                        StatusCode::TOO_MANY_REQUESTS,
+                        [
+                            ("ratelimit-policy", "\"api\"; q=150; w=1"),
+                            ("retry-after", "1"),
+                        ],
+                    )
+                        .into_response()
                 }
             }
         }),
@@ -129,6 +167,15 @@ async fn rate_limiter_shows_an_error_threshold_with_429() {
     let f = find(&r, "error_threshold");
     assert!(f.title.contains("429"), "{}", f.title);
     assert!(f.causes[0].contains("rate limiter"), "{:?}", f.causes);
+    assert!(
+        f.causes[0].contains("declara 150 requests cada 1 s")
+            && f.causes[0].contains("Retry-After 1 s"),
+        "{:?}",
+        f.causes
+    );
+    assert_eq!(f.evidence["rate_limit"]["quota"], 150);
+    let limited = r.steps[0].rate_limit.as_ref().unwrap();
+    assert_eq!(Some(&limited.responses), r.steps[0].status_codes.get("429"));
     let at = f.evidence["offered_iterations_per_s"].as_u64().unwrap();
     assert!(
         (120..=260).contains(&at),
@@ -139,6 +186,9 @@ async fn rate_limiter_shows_an_error_threshold_with_429() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn growing_work_shows_degradation_over_time() {
+    if skip_timing() {
+        return;
+    }
     // Cada request tarda 2 ms + 0,15 ms por request ya atendida.
     let served = Arc::new(AtomicU64::new(0));
     let app = Router::new().route(
@@ -167,6 +217,9 @@ async fn growing_work_shows_degradation_over_time() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn occasional_slow_requests_show_a_long_tail() {
+    if skip_timing() {
+        return;
+    }
     // Una de cada 25 requests tarda 150 ms; el resto, 1 ms.
     let served = Arc::new(AtomicU64::new(0));
     let app = Router::new().route(
@@ -194,6 +247,9 @@ async fn occasional_slow_requests_show_a_long_tail() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn closing_every_connection_shows_new_connections() {
+    if skip_timing() {
+        return;
+    }
     let app = Router::new().route(
         "/close",
         get(|| async { ([(header::CONNECTION, "close")], "ok").into_response() }),
@@ -216,6 +272,9 @@ async fn closing_every_connection_shows_new_connections() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn exceeding_capacity_at_constant_rate() {
+    if skip_timing() {
+        return;
+    }
     let pool = Arc::new(Semaphore::new(2));
     let app = Router::new().route(
         "/pool",
@@ -244,6 +303,9 @@ async fn exceeding_capacity_at_constant_rate() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn slow_server_with_keep_alive_has_no_new_connections() {
+    if skip_timing() {
+        return;
+    }
     // Cada request tarda 300 ms: el pool crece hasta ~30 conexiones y las reutiliza.
     // Abrir una conexión por VU no es falta de keep-alive (caso `login-ramp` de shop-api).
     let app = Router::new().route(
@@ -315,11 +377,14 @@ load:\n  executor: constant_vus\n  vus: 2\n  duration: 4s\n"
     let env: Environment =
         serde_saphyr::from_str(&format!("base_url: {base}\nallowed_hosts: [127.0.0.1]\n")).unwrap();
     let plan = Plan::build(&parse_scenario(&yaml).unwrap(), &env, &Default::default()).unwrap();
-    engine::run(Arc::new(plan), Arc::new(Progress::default())).await
+    run_alone(plan).await
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn expired_session_says_so_and_suggests_vu_refresh() {
+    if skip_timing() {
+        return;
+    }
     let base = expiring_tokens().await;
     let r = run_session(&base, "").await;
 
@@ -357,4 +422,59 @@ async fn expired_session_says_so_and_suggests_vu_refresh() {
         r.steps[0].status_codes
     );
     assert!(r.vu_refresh.unwrap().refreshes >= 4);
+}
+
+/// Respuestas de 100 KB. Con `link`, salen de a una por un "enlace" de 2 MB/s: cada una
+/// espera su turno, como en una conexión llena.
+async fn big_bodies(link: bool) -> String {
+    let next = Arc::new(std::sync::Mutex::new(Instant::now()));
+    let app = Router::new().route(
+        "/big",
+        get(move || {
+            let next = next.clone();
+            async move {
+                if link {
+                    let slot = {
+                        let mut next = next.lock().unwrap();
+                        *next = (*next).max(Instant::now()) + Duration::from_micros(48_800);
+                        *next
+                    };
+                    tokio::time::sleep_until(slot.into()).await;
+                }
+                vec![b'x'; 100 * 1024]
+            }
+        }),
+    );
+    serve(app).await
+}
+
+const BANDWIDTH_RAMP: &str = "  executor: ramping_rate\n  start_rate: 5/s\n  stages:\n    - { target: 60/s, duration: 8s }\n  max_vus: 300\n";
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_full_link_shows_a_bandwidth_limit() {
+    if skip_timing() {
+        return;
+    }
+    let base = big_bodies(true).await;
+    let r = run(&base, "/big", BANDWIDTH_RAMP).await;
+    let f = find(&r, "bandwidth_limit");
+    let moved = f.evidence["moved_bytes_per_s"].as_f64().unwrap();
+    assert!(
+        (1.5e6..2.8e6).contains(&moved),
+        "movió {moved} B/s; {}",
+        f.title
+    );
+    let demanded = f.evidence["demanded_bytes_per_s"].as_f64().unwrap();
+    assert!(demanded > 1.25 * moved, "pedía {demanded} B/s");
+    assert!(f.causes[0].contains("enlace"), "{:?}", f.causes);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn traffic_that_follows_the_load_is_not_a_bandwidth_limit() {
+    if skip_timing() {
+        return;
+    }
+    let base = big_bodies(false).await;
+    let r = run(&base, "/big", BANDWIDTH_RAMP).await;
+    assert!(!ids(&r).contains(&"bandwidth_limit"), "{:?}", r.findings);
 }

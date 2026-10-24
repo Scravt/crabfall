@@ -7,6 +7,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 use crate::engine::{
+    cookies::Jar,
     http::{Client, FailureKind},
     plan::{Plan, StepPlan, Vars},
     run_step,
@@ -35,6 +36,9 @@ pub struct CheckStep {
     pub ok: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<u16>,
+    /// URLs a las que redirigió, en orden.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub redirects: Vec<String>,
     pub duration_ms: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub failure: Option<Failure>,
@@ -76,10 +80,16 @@ pub async fn ensure_loopback(plan: &Plan) -> Result<(), String> {
         let host = o.host.trim_start_matches('[').trim_end_matches(']');
         let addrs: Vec<_> = tokio::net::lookup_host((host, o.port))
             .await
-            .map_err(|e| format!("no se pudo resolver `{host}`: {e}"))?
+            .map_err(|e| {
+                crate::tr!(
+                    "could not resolve `{host}`: {e}",
+                    "no se pudo resolver `{host}`: {e}"
+                )
+            })?
             .collect();
         if addrs.is_empty() || addrs.iter().any(|a| !a.ip().is_loopback()) {
-            return Err(format!(
+            return Err(crate::tr!(
+                "`{host}` does not resolve only to loopback: the smoke check only runs against the local machine",
                 "`{host}` no resuelve solo a loopback: el smoke check únicamente corre contra la máquina local"
             ));
         }
@@ -90,7 +100,11 @@ pub async fn ensure_loopback(plan: &Plan) -> Result<(), String> {
 pub async fn check(plan: &Plan) -> Result<CheckResult, String> {
     ensure_loopback(plan).await?;
 
-    let client = Client::new();
+    // Ni un redirect puede sacar el check de la máquina local.
+    let client = Client::loopback_only();
+    // Como en `run`: `setup` con sus cookies, y el VU con las suyas de `vu_setup` en adelante.
+    let setup_jar = Jar::new(plan.cookies);
+    let jar = Jar::new(plan.cookies);
     let mut steps = Vec::new();
     let mut skipped = Vec::new();
 
@@ -102,22 +116,30 @@ pub async fn check(plan: &Plan) -> Result<CheckResult, String> {
             skipped.push(step.name.clone());
             continue;
         }
-        let (result, extracted) =
-            check_step(&client, plan, step, &setup_vars, &HashMap::new()).await;
+        let (result, extracted) = check_step(
+            &client,
+            plan,
+            step,
+            &setup_vars,
+            &HashMap::new(),
+            &setup_jar,
+        )
+        .await;
         setup_failed = !result.ok;
         setup_vars.extend(extracted);
         steps.push(result);
     }
 
     // vu_setup: un solo VU, que después recorre los flows.
-    let mut vu_vars = plan.vu_row_vars();
+    let mut vu_vars = plan.vu_row_vars().unwrap_or_default();
     let mut vu_failed = setup_failed;
     for step in &plan.vu_setup {
         if vu_failed {
             skipped.push(step.name.clone());
             continue;
         }
-        let (result, extracted) = check_step(&client, plan, step, &setup_vars, &vu_vars).await;
+        let (result, extracted) =
+            check_step(&client, plan, step, &setup_vars, &vu_vars, &jar).await;
         vu_failed = !result.ok;
         vu_vars.extend(extracted);
         steps.push(result);
@@ -125,14 +147,15 @@ pub async fn check(plan: &Plan) -> Result<CheckResult, String> {
 
     for flow in &plan.flows {
         let mut locals = vu_vars.clone();
-        locals.extend(plan.row_vars(flow));
+        locals.extend(plan.row_vars(flow).unwrap_or_default());
         let mut flow_failed = vu_failed;
         for step in &flow.steps {
             if flow_failed || steps.len() >= MAX_REQUESTS {
                 skipped.push(step.name.clone());
                 continue;
             }
-            let (result, extracted) = check_step(&client, plan, step, &setup_vars, &locals).await;
+            let (result, extracted) =
+                check_step(&client, plan, step, &setup_vars, &locals, &jar).await;
             flow_failed = result.failure.is_some();
             locals.extend(extracted);
             steps.push(result);
@@ -146,7 +169,8 @@ pub async fn check(plan: &Plan) -> Result<CheckResult, String> {
             skipped.push(step.name.clone());
             continue;
         }
-        let (mut result, extracted) = check_step(&client, plan, step, &setup_vars, &vu_vars).await;
+        let (mut result, extracted) =
+            check_step(&client, plan, step, &setup_vars, &vu_vars, &jar).await;
         // Sin pasos propios repite los de `vu_setup`: que se vea que es la renovación.
         result.flow = "vu_refresh".into();
         refresh_failed = !result.ok;
@@ -167,6 +191,7 @@ async fn check_step(
     step: &StepPlan,
     setup: &HashMap<String, Value>,
     locals: &HashMap<String, Value>,
+    jar: &Jar,
 ) -> (CheckStep, Vec<(String, Value)>) {
     // La URL resuelta ayuda más que la plantilla para depurar.
     let url = match step.target(&Vars {
@@ -184,7 +209,7 @@ async fn check_step(
         Err(_) => step.url(),
     };
     let start = Instant::now();
-    let run = run_step(client, plan, step, setup, locals).await;
+    let run = run_step(client, plan, step, setup, locals, jar).await;
     let duration_ms = (start.elapsed().as_secs_f64() * 1000.0 * 1000.0).round() / 1000.0;
 
     let mut out = CheckStep {
@@ -194,6 +219,7 @@ async fn check_step(
         url,
         ok: false,
         status: None,
+        redirects: vec![],
         duration_ms,
         failure: None,
         extracted: run
@@ -224,6 +250,7 @@ async fn check_step(
             out.ok =
                 status_ok && out.checks.iter().all(|c| c.passed) && run.extract_error.is_none();
             out.status = Some(r.status);
+            out.redirects = r.redirects;
             out.content_type = r.content_type;
             out.body_truncated = r.body.len() > MAX_BODY;
             let shown = &r.body[..r.body.len().min(MAX_BODY)];

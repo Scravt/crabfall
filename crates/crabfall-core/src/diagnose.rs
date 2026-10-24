@@ -61,6 +61,15 @@ const TAIL_MIN_DELTA_MS: f64 = 50.0;
 const TAIL_MIN_REQUESTS: u64 = 200;
 const NEW_CONN_RATIO: f64 = 0.10;
 const NEW_CONN_MIN_REQUESTS: u64 = 100;
+/// Por debajo de 1 MB/s no se busca un techo de ancho de banda.
+const BANDWIDTH_MIN_BYTES_PER_S: f64 = 1024.0 * 1024.0;
+/// Un segundo está "en el techo" si mueve al menos esta fracción del pico.
+const BANDWIDTH_PLATEAU: f64 = 0.85;
+const BANDWIDTH_MIN_SECONDS: usize = 5;
+/// Desde que se llega al techo, al menos esta fracción de los segundos se queda ahí.
+const BANDWIDTH_MIN_SHARE: f64 = 0.7;
+/// La carga pide al menos esto por encima de lo que se mueve.
+const BANDWIDTH_DEMAND_FACTOR: f64 = 1.25;
 
 pub fn diagnose(load: &LoadPlan, r: &RunResult) -> Vec<Finding> {
     if r.aborted.is_some() {
@@ -86,6 +95,7 @@ pub fn diagnose(load: &LoadPlan, r: &RunResult) -> Vec<Finding> {
         }
         out.extend(degradation_over_time(r, points));
     }
+    out.extend(bandwidth_limit(points));
     for (step, series) in r.steps.iter().zip(&r.series.steps) {
         out.extend(error_threshold(
             step,
@@ -107,8 +117,7 @@ fn invalid_result(r: &RunResult) -> Option<Finding> {
     (lag.p99 > MAX_LAG_P99_MS).then(|| Finding {
         id: "invalid_result".into(),
         severity: Severity::High,
-        title: format!(
-            "Resultado no confiable: el generador llegó tarde (lag p99 {} ms). No saques conclusiones de esta corrida.",
+        title: crate::tr!("Unreliable result: the generator was late (lag p99 {} ms). Do not draw conclusions from this run.", "Resultado no confiable: el generador llegó tarde (lag p99 {} ms). No saques conclusiones de esta corrida.",
             lag.p99
         ),
         step: None,
@@ -116,8 +125,90 @@ fn invalid_result(r: &RunResult) -> Option<Finding> {
         window: None,
         evidence: json!({ "scheduler_lag_ms": { "p50": lag.p50, "p99": lag.p99, "max": lag.max } }),
         causes: vec![
-            "La máquina que genera la carga está saturada (CPU) o compartida con el servidor.".into(),
-            "Repetir con menos carga, o generar desde otra máquina.".into(),
+            crate::tr!("The machine generating the load is saturated (CPU) or shared with the server.", "La máquina que genera la carga está saturada (CPU) o compartida con el servidor."),
+            crate::tr!("Repeat with less load, or generate from another machine.", "Repetir con menos carga, o generar desde otra máquina."),
+        ],
+    })
+}
+
+/// El tráfico (bytes enviados + recibidos por segundo) llega a un techo y se queda ahí,
+/// mientras la carga pide bastante más y la latencia sube: el límite puede ser el ancho de
+/// banda (ADR-013) y no el servidor. Lo que pedía la carga se estima con los bytes por
+/// iteración de antes del techo.
+fn bandwidth_limit(points: &[Point]) -> Option<Finding> {
+    let bytes = |p: &Point| (p.bytes_sent + p.bytes_received) as f64;
+    let peak = points.iter().map(bytes).fold(0.0, f64::max);
+    if peak < BANDWIDTH_MIN_BYTES_PER_S {
+        return None;
+    }
+    let ceiling = BANDWIDTH_PLATEAU * peak;
+    let t0 = points.iter().position(|p| bytes(p) >= ceiling)?;
+    let (before, window) = points.split_at(t0);
+    let at_ceiling = window.iter().filter(|p| bytes(p) >= ceiling).count();
+    if at_ceiling < BANDWIDTH_MIN_SECONDS
+        || (at_ceiling as f64) < BANDWIDTH_MIN_SHARE * window.len() as f64
+    {
+        return None;
+    }
+    let (before_bytes, before_started) = before
+        .iter()
+        .fold((0.0, 0), |(b, s), p| (b + bytes(p), s + p.started));
+    if before_started == 0 {
+        return None;
+    }
+    let per_iteration = before_bytes / before_started as f64;
+    let n = window.len() as f64;
+    let moved = window.iter().map(bytes).sum::<f64>() / n;
+    let demanded = window.iter().map(offered).sum::<u64>() as f64 / n * per_iteration;
+    if demanded < BANDWIDTH_DEMAND_FACTOR * moved {
+        return None;
+    }
+    let base = baseline(before, |p| p.p95)?;
+    let after = median(window.iter().filter_map(|p| p.p95).collect())?;
+    if after < (base * DEGRADED_FACTOR).max(base + DEGRADED_MIN_DELTA_MS) {
+        return None;
+    }
+    let size = |b: f64| format!("{}/s", crate::upload::size(b as usize));
+    let mbit = |b: f64| b * 8.0 / 1_000_000.0;
+    let from = window[0].t;
+    Some(Finding {
+        id: "bandwidth_limit".into(),
+        severity: Severity::Medium,
+        title: crate::tr!(
+            "Traffic levels off at ~{} ({:.0} Mbit/s) from second {from} while the load asks for ~{}: the limit may be the bandwidth, not the server",
+            "El tráfico se estanca en ~{} ({:.0} Mbit/s) desde el segundo {from} mientras la carga pide ~{}: el límite puede ser el ancho de banda, no el servidor",
+            size(moved),
+            mbit(moved),
+            size(demanded)
+        ),
+        step: None,
+        source: None,
+        window: Some(Window {
+            from_s: from,
+            to_s: points.last().map_or(from, |p| p.t),
+        }),
+        evidence: json!({
+            "peak_bytes_per_s": peak.round(),
+            "peak_mbit_per_s": (mbit(peak) * 10.0).round() / 10.0,
+            "moved_bytes_per_s": moved.round(),
+            "demanded_bytes_per_s": demanded.round(),
+            "bytes_per_iteration": per_iteration.round(),
+            "baseline_p95_ms": base,
+            "p95_ms": after,
+        }),
+        causes: vec![
+            crate::tr!(
+                "The link between the generator and the server is full: Wi-Fi, VPN, the network card or the provider's plan. Measure it (iperf) or run the generator next to the server.",
+                "El enlace entre el generador y el servidor está lleno: Wi-Fi, VPN, la placa de red o el plan del proveedor. Medilo (iperf) o corré el generador al lado del servidor."
+            ),
+            crate::tr!(
+                "A proxy, CDN or the server itself limits bandwidth per connection or per client.",
+                "Un proxy, una CDN o el propio servidor limita el ancho de banda por conexión o por cliente."
+            ),
+            crate::tr!(
+                "The responses (or uploads) are large: compress them (gzip, br), paginate, or send less.",
+                "Las respuestas (o los uploads) son grandes: comprimilas (gzip, br), paginá o mandá menos."
+            ),
         ],
     })
 }
@@ -214,18 +305,20 @@ fn affected_steps(r: &RunResult, from: usize) -> Vec<String> {
 fn saturation_causes(affected: &[String]) -> Vec<String> {
     let mut causes = Vec::new();
     if affected.len() >= 2 {
-        causes.push(format!(
-            "Varios pasos se degradan juntos ({}): recurso compartido (CPU, event loop, pool de conexiones a la base, thread pool).",
+        causes.push(crate::tr!("Several steps degrade together ({}): a shared resource (CPU, event loop, database connection pool, thread pool).", "Varios pasos se degradan juntos ({}): recurso compartido (CPU, event loop, pool de conexiones a la base, thread pool).",
             affected.join(", ")
         ));
     } else {
-        causes.push("Un recurso propio de este endpoint se agota: pool de conexiones, lock, servicio externo con concurrencia limitada.".into());
+        causes.push(crate::tr!("A resource of this endpoint runs out: connection pool, lock, external service with limited concurrency.", "Un recurso propio de este endpoint se agota: pool de conexiones, lock, servicio externo con concurrencia limitada."));
     }
-    causes.push(
+    causes.push(crate::tr!(
+        "Synchronous CPU work (hashing, serialization, regex) that blocks while serving.",
         "Trabajo de CPU sincrónico (hashing, serialización, regex) que bloquea mientras atiende."
-            .into(),
-    );
-    causes.push("Una cola interna que crece cuando la llegada supera la capacidad.".into());
+    ));
+    causes.push(crate::tr!(
+        "An internal queue that grows when arrivals exceed capacity.",
+        "Una cola interna que crece cuando la llegada supera la capacidad."
+    ));
     causes
 }
 
@@ -241,17 +334,25 @@ fn breaking_point(r: &RunResult, points: &[Point]) -> Option<Finding> {
     let affected = affected_steps(r, t);
     let culprit = culprit(r, t);
 
-    let mut title = format!(
+    let mut title = crate::tr!(
+        "Breaking point at ~{} it/s ({} req/s): p95 goes from {base} ms to {} ms",
         "Punto de quiebre en ~{} it/s ({} req/s): el p95 pasa de {base} ms a {} ms",
         offered(at),
         at.requests,
         p95_after.map_or("?".into(), |v| v.to_string())
     );
     if dropped_after > 0 {
-        title.push_str(&format!(" y se descartan {dropped_after} iteraciones"));
+        title.push_str(&crate::tr!(
+            " and {dropped_after} iterations are dropped",
+            " y se descartan {dropped_after} iteraciones"
+        ));
     }
     if let Some((step, ..)) = culprit {
-        title.push_str(&format!("; el que más empeora es `{}`", step.name));
+        title.push_str(&crate::tr!(
+            "; the one that worsens most is `{}`",
+            "; el que más empeora es `{}`",
+            step.name
+        ));
     }
     Some(Finding {
         id: "breaking_point".into(),
@@ -297,7 +398,8 @@ fn capacity_exceeded(r: &RunResult, points: &[Point]) -> Option<Finding> {
     Some(Finding {
         id: "capacity_exceeded".into(),
         severity: Severity::High,
-        title: format!(
+        title: crate::tr!(
+            "The requested rate ({offered_rate:.0} it/s) exceeds capacity: ~{sustained:.0} it/s were sustained and {:.1}% of the iterations were dropped",
             "La tasa pedida ({offered_rate:.0} it/s) supera la capacidad: se sostuvieron ~{sustained:.0} it/s y se descartó el {:.1}% de las iteraciones",
             ratio * 100.0
         ),
@@ -382,14 +484,18 @@ fn degradation_over_time(r: &RunResult, points: &[Point]) -> Option<Finding> {
     Some(Finding {
         id: "degradation_over_time".into(),
         severity: Severity::Medium,
-        title: format!(
+        title: crate::tr!(
+            "With constant load, p95 rises steadily: from ~{} ms to ~{} ms over the run",
             "Con la carga constante, el p95 sube de forma sostenida: de ~{} ms a ~{} ms a lo largo de la corrida",
             round1(start),
             round1(end)
         ),
         step: culprit.map(|s| s.name.clone()),
         source: culprit.and_then(|s| s.source.clone()),
-        window: Some(Window { from_s: points[0].t, to_s: points[points.len() - 1].t }),
+        window: Some(Window {
+            from_s: points[0].t,
+            to_s: points[points.len() - 1].t,
+        }),
         evidence: json!({
             "p95_ms_trend_start": round1(start),
             "p95_ms_trend_end": round1(end),
@@ -397,9 +503,18 @@ fn degradation_over_time(r: &RunResult, points: &[Point]) -> Option<Finding> {
             "p95_ms_by_second": points.iter().map(|p| p.p95).collect::<Vec<_>>(),
         }),
         causes: vec![
-            "Algo crece con cada request: una tabla o colección sin índice, una caché sin límite, una cola.".into(),
-            "Fuga de memoria que aumenta el trabajo del GC.".into(),
-            "Recursos que no se liberan (conexiones, handles) y se agotan de a poco.".into(),
+            crate::tr!(
+                "Something grows with each request: a table or collection without an index, an unbounded cache, a queue.",
+                "Algo crece con cada request: una tabla o colección sin índice, una caché sin límite, una cola."
+            ),
+            crate::tr!(
+                "A memory leak that increases GC work.",
+                "Fuga de memoria que aumenta el trabajo del GC."
+            ),
+            crate::tr!(
+                "Resources that are not released (connections, handles) and run out little by little.",
+                "Recursos que no se liberan (conexiones, handles) y se agotan de a poco."
+            ),
         ],
     })
 }
@@ -430,13 +545,16 @@ impl Session {
     fn expired(self, at: u32) -> Option<String> {
         Some(match self {
             Self::None => return None,
-            Self::Shared => format!(
+            Self::Shared => crate::tr!(
+                "The `setup` token expired after ~{at} s, and it is a single one for everyone: move the login to `vu_setup` and add `vu_refresh` (ADR-011).",
                 "El token de `setup` venció a los ~{at} s, y es uno solo para todos: pasá el login a `vu_setup` y agregá `vu_refresh` (ADR-011)."
             ),
-            Self::PerVu => format!(
+            Self::PerVu => crate::tr!(
+                "Each VU's token expired after ~{at} s: add `vu_refresh` (or `--refresh-every`) with `every` shorter than its lifetime minus the length of an iteration (ADR-011).",
                 "El token de cada VU venció a los ~{at} s: agregá `vu_refresh` (o `--refresh-every`) con `every` menor que su vida menos lo que dura una iteración (ADR-011)."
             ),
-            Self::Renewed => format!(
+            Self::Renewed => crate::tr!(
+                "Tokens expire before `vu_refresh` renews them (after ~{at} s): lower `every` below their lifetime minus the length of an iteration, or check that the renewal returns a new token.",
                 "Los tokens vencen antes de que `vu_refresh` los renueve (a los ~{at} s): bajá `every` por debajo de su vida menos lo que dura una iteración, o revisá que la renovación devuelva un token nuevo."
             ),
         })
@@ -503,28 +621,32 @@ fn error_threshold(
         .flatten();
 
     let what = match (dominant_code, dominant_failure) {
-        (Some(code), _) => format!("respuestas {code}"),
-        (None, Some(kind)) => format!(
+        (Some(code), _) => crate::tr!("{code} responses", "respuestas {code}"),
+        (None, Some(kind)) => crate::tr!(
+            "{} failures",
             "fallas de tipo {}",
             serde_json::to_value(kind).unwrap().as_str().unwrap_or("?")
         ),
-        _ => "errores".into(),
+        _ => crate::tr!("errors", "errores"),
     };
     let title = if expired.is_some() {
-        format!(
+        crate::tr!(
+            "`{}` gets 401 from second {} on ({:.0}%): the session expired",
             "`{}` recibe 401 desde el segundo {} ({:.0}%): venció la sesión",
             step.name,
             series[t].t,
             rate_at * 100.0
         )
     } else if from_start {
-        format!(
+        crate::tr!(
+            "`{}` fails from the start ({what}, {:.0}%): it does not look like an effect of the load",
             "`{}` falla desde el inicio ({what}, {:.0}%): no parece un efecto de la carga",
             step.name,
             rate_at * 100.0
         )
     } else {
-        format!(
+        crate::tr!(
+            "`{}` starts failing at ~{offered_at} it/s: {what} ({:.0}% from second {})",
             "`{}` empieza a fallar con ~{offered_at} it/s: {what} ({:.0}% desde el segundo {})",
             step.name,
             rate_at * 100.0,
@@ -532,29 +654,69 @@ fn error_threshold(
         )
     };
     let mut causes: Vec<String> = match (dominant_code, dominant_failure) {
-        (Some("429"), _) => vec!["Un rate limiter (de la aplicación, del gateway o de un proveedor) corta por encima de cierta tasa.".into()],
-        (Some("502" | "503" | "504"), _) => vec![
-            "Un proxy o balanceador no consigue un backend disponible: backends saturados o pool del proxy agotado.".into(),
-        ],
-        (Some(code), _) if code.starts_with('5') => vec![
-            "La aplicación lanza errores bajo carga: timeouts internos, pool de base agotado, excepciones por concurrencia.".into(),
-        ],
-        (Some(code), _) if code.starts_with('4') => vec![
-            "Errores del cliente que aparecen con la carga: datos que se agotan (stock, IDs), validaciones de concurrencia, tokens que vencen.".into(),
-        ],
-        (None, Some(FailureKind::Timeout)) => vec!["El servidor no responde a tiempo: las requests hacen cola más allá del timeout.".into()],
-        (None, Some(FailureKind::Connect | FailureKind::Reset)) => vec![
-            "Límite de conexiones: backlog del socket, límite de file descriptors o del proxy.".into(),
-        ],
-        (None, Some(FailureKind::Extract)) => vec!["La respuesta cambia bajo carga y el `extract` no encuentra el valor (¿una respuesta de error?).".into()],
+        (Some("429"), _) => vec![crate::tr!(
+            "A rate limiter (in the application, the gateway or a provider) cuts off above a certain rate.",
+            "Un rate limiter (de la aplicación, del gateway o de un proveedor) corta por encima de cierta tasa."
+        )],
+        (Some("502" | "503" | "504"), _) => vec![crate::tr!(
+            "A proxy or load balancer cannot find an available backend: saturated backends or an exhausted proxy pool.",
+            "Un proxy o balanceador no consigue un backend disponible: backends saturados o pool del proxy agotado."
+        )],
+        (Some(code), _) if code.starts_with('5') => vec![crate::tr!(
+            "The application throws errors under load: internal timeouts, exhausted database pool, concurrency exceptions.",
+            "La aplicación lanza errores bajo carga: timeouts internos, pool de base agotado, excepciones por concurrencia."
+        )],
+        (Some(code), _) if code.starts_with('4') => vec![crate::tr!(
+            "Client errors that appear with the load: data that runs out (stock, IDs), concurrency validations, expiring tokens.",
+            "Errores del cliente que aparecen con la carga: datos que se agotan (stock, IDs), validaciones de concurrencia, tokens que vencen."
+        )],
+        (None, Some(FailureKind::Timeout)) => vec![crate::tr!(
+            "The server does not respond in time: requests queue beyond the timeout.",
+            "El servidor no responde a tiempo: las requests hacen cola más allá del timeout."
+        )],
+        (None, Some(FailureKind::Connect | FailureKind::Reset)) => vec![crate::tr!(
+            "Connection limit: socket backlog, file descriptor limit or proxy limit.",
+            "Límite de conexiones: backlog del socket, límite de file descriptors o del proxy."
+        )],
+        (None, Some(FailureKind::Extract)) => vec![crate::tr!(
+            "The response changes under load and the `extract` does not find the value (an error response?).",
+            "La respuesta cambia bajo carga y el `extract` no encuentra el valor (¿una respuesta de error?)."
+        )],
         _ => vec![],
     };
     if let Some(why) = expired {
         // Reemplaza a la causa genérica de los 4xx, que ya mencionaba los tokens.
         causes = vec![why];
     }
+    // Si el servidor declaró su límite, el hallazgo lo dice con números.
+    let limit = step
+        .rate_limit
+        .as_ref()
+        .filter(|_| dominant_code == Some("429"));
+    if let Some(l) = limit {
+        let declared: Vec<String> = [
+            l.policy().map(|p| {
+                crate::tr!(
+                    "it declares {p} (`RateLimit-Policy`)",
+                    "declara {p} (`RateLimit-Policy`)"
+                )
+            }),
+            l.retry_after()
+                .map(|r| crate::tr!("it asks to wait with `{r}`", "pide esperar con `{r}`")),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        if !declared.is_empty() {
+            causes = vec![crate::tr!(
+                "The server's rate limiter cuts off: {}. The limit is usually per key (IP, user or token): with a single IP and few users, the load reaches it sooner than real traffic would.",
+                "El rate limiter del servidor corta: {}. El límite suele ser por clave (IP, usuario o token): con una sola IP y pocos usuarios, la carga lo alcanza antes que el tráfico real.",
+                declared.join(" y ")
+            )];
+        }
+    }
     if from_start {
-        causes.insert(0, "Un error funcional del escenario o de la API (URL, datos, auth): revisalo con `crabfall check`.".into());
+        causes.insert(0, crate::tr!("A functional error in the scenario or the API (URL, data, auth): check it with `crabfall check`.", "Un error funcional del escenario o de la API (URL, datos, auth): revisalo con `crabfall check`."));
     }
     Some(Finding {
         id: "error_threshold".into(),
@@ -573,6 +735,7 @@ fn error_threshold(
             "status_codes": step.status_codes,
             "failures": step.failures,
             "error_samples": step.error_samples,
+            "rate_limit": limit,
         }),
         causes,
     })
@@ -589,7 +752,8 @@ fn long_tail(step: &StepResult) -> Option<Finding> {
     Some(Finding {
         id: "long_tail".into(),
         severity: Severity::Medium,
-        title: format!(
+        title: crate::tr!(
+            "`{}` has a long tail: p50 {} ms, p99 {} ms ({:.0}×) under steady load",
             "`{}` tiene cola larga: p50 {} ms, p99 {} ms ({:.0}×) con la carga estable",
             step.name,
             l.p50,
@@ -601,9 +765,18 @@ fn long_tail(step: &StepResult) -> Option<Finding> {
         window: None,
         evidence: json!({ "latency_ms": l }),
         causes: vec![
-            "Algunas requests toman un camino lento: queries sin índice para ciertos parámetros, caché que falla, llamadas externas ocasionales.".into(),
-            "Pausas del runtime (GC) o contención por un lock.".into(),
-            "Conexiones nuevas (TLS, pool) en una fracción de las requests.".into(),
+            crate::tr!(
+                "Some requests take a slow path: queries without an index for certain parameters, cache misses, occasional external calls.",
+                "Algunas requests toman un camino lento: queries sin índice para ciertos parámetros, caché que falla, llamadas externas ocasionales."
+            ),
+            crate::tr!(
+                "Runtime pauses (GC) or lock contention.",
+                "Pausas del runtime (GC) o contención por un lock."
+            ),
+            crate::tr!(
+                "New connections (TLS, pool) on a fraction of the requests.",
+                "Conexiones nuevas (TLS, pool) en una fracción de las requests."
+            ),
         ],
     })
 }
@@ -622,7 +795,8 @@ fn new_connections(step: &StepResult, vus: u32) -> Option<Finding> {
     Some(Finding {
         id: "new_connections".into(),
         severity: Severity::Medium,
-        title: format!(
+        title: crate::tr!(
+            "`{}` opens a new connection on {:.0}% of the requests ({connects} connections with {vus} VUs): they are not reused (keep-alive)",
             "`{}` abre conexión nueva en el {:.0}% de las requests ({connects} conexiones con {vus} VUs): no se reutilizan (keep-alive)",
             step.name,
             ratio * 100.0
@@ -638,9 +812,18 @@ fn new_connections(step: &StepResult, vus: u32) -> Option<Finding> {
             "tls_ms": step.tls_ms,
         }),
         causes: vec![
-            "El servidor responde con `Connection: close` o cierra la conexión después de cada respuesta.".into(),
-            "Un proxy con keep-alive deshabilitado o con un timeout de inactividad muy corto.".into(),
-            "Cada conexión nueva suma connect y TLS a la latencia y consume puertos y file descriptors.".into(),
+            crate::tr!(
+                "The server responds with `Connection: close` or closes the connection after each response.",
+                "El servidor responde con `Connection: close` o cierra la conexión después de cada respuesta."
+            ),
+            crate::tr!(
+                "A proxy with keep-alive disabled or with a very short idle timeout.",
+                "Un proxy con keep-alive deshabilitado o con un timeout de inactividad muy corto."
+            ),
+            crate::tr!(
+                "Each new connection adds connect and TLS to the latency and uses up ports and file descriptors.",
+                "Cada conexión nueva suma connect y TLS a la latencia y consume puertos y file descriptors."
+            ),
         ],
     })
 }
@@ -669,6 +852,8 @@ mod tests {
         RunResult {
             passed: true,
             duration_s: 1.0,
+            stopped_at_s: None,
+            data_exhausted: None,
             aborted: None,
             setup: vec![],
             vu_setup: None,

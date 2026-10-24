@@ -116,10 +116,14 @@ impl Overrides {
         issues.extend(check_scenario(s).into_iter().map(|mut issue| {
             if let Some(flag) = flag_for(&issue.path) {
                 let from_flag = given.iter().any(|g| g.split(' ').next() == Some(flag));
-                if issue.message.starts_with("falta") {
-                    issue.message = format!("{} (usá {flag})", issue.message);
+                // A missing field (`falta …` / `… is missing`): the flag supplies it.
+                let missing =
+                    issue.message.starts_with("falta") || issue.message.contains(" is missing");
+                if missing {
+                    issue.message = crate::tr!("{} (use {flag})", "{} (usá {flag})", issue.message);
                 } else if from_flag {
-                    issue.message = format!("{} (sacá {flag})", issue.message);
+                    issue.message =
+                        crate::tr!("{} (remove {flag})", "{} (sacá {flag})", issue.message);
                 }
             }
             issue
@@ -169,7 +173,7 @@ fn set<T>(field: &mut Option<T>, value: Option<T>) {
 
 fn no_dataset(flag: &str, name: &str, available: &str) -> Issue {
     let available = if available.is_empty() {
-        "el escenario no tiene `data`".to_string()
+        crate::tr!("the scenario has no `data`", "el escenario no tiene `data`").to_string()
     } else {
         format!("hay: {available}")
     };
@@ -177,7 +181,10 @@ fn no_dataset(flag: &str, name: &str, available: &str) -> Issue {
         path: String::new(),
         line: None,
         column: None,
-        message: format!("{flag} {name}=…: no hay un dataset `{name}` ({available})"),
+        message: crate::tr!(
+            "{flag} {name}=…: there is no dataset `{name}` ({available})",
+            "{flag} {name}=…: no hay un dataset `{name}` ({available})"
+        ),
     }
 }
 
@@ -213,7 +220,8 @@ impl FromStr for Executor {
             "constant_rate" => Ok(Self::ConstantRate),
             "ramping_rate" => Ok(Self::RampingRate),
             "constant_vus" => Ok(Self::ConstantVus),
-            _ => Err(format!(
+            _ => Err(crate::tr!(
+                "unknown executor `{s}` (use constant_rate, ramping_rate or constant_vus)",
                 "executor `{s}` desconocido (usá constant_rate, ramping_rate o constant_vus)"
             )),
         }
@@ -227,7 +235,11 @@ impl FromStr for Pick {
         match s.trim() {
             "sequential" => Ok(Self::Sequential),
             "random" => Ok(Self::Random),
-            _ => Err(format!("pick `{s}` desconocido (usá sequential o random)")),
+            "unique" => Ok(Self::Unique),
+            _ => Err(crate::tr!(
+                "unknown pick `{s}` (use sequential, random or unique)",
+                "pick `{s}` desconocido (usá sequential, random o unique)"
+            )),
         }
     }
 }
@@ -238,7 +250,10 @@ pub type Stages = Vec<Stage>;
 /// `100/s:1m,0/s:30s` → etapas de `ramping_rate`.
 pub fn parse_stages(s: &str) -> Result<Vec<Stage>, String> {
     let invalid = || {
-        format!("etapas inválidas `{s}`: usá tasa:duración separadas por comas (100/s:1m,0/s:30s)")
+        crate::tr!(
+            "invalid stages `{s}`: use rate:duration separated by commas (100/s:1m,0/s:30s)",
+            "etapas inválidas `{s}`: usá tasa:duración separadas por comas (100/s:1m,0/s:30s)"
+        )
     };
     s.split(',')
         .map(|stage| {
@@ -263,7 +278,7 @@ fn stages_to_string(stages: &[Stage]) -> String {
 pub fn parse_pair<T: FromStr<Err: ToString>>(s: &str) -> Result<(String, T), String> {
     let (name, value) = s
         .split_once('=')
-        .ok_or_else(|| format!("`{s}`: usá nombre=valor"))?;
+        .ok_or_else(|| crate::tr!("`{s}`: use name=value", "`{s}`: usá nombre=valor"))?;
     let value = value.trim().parse().map_err(|e: T::Err| e.to_string())?;
     Ok((name.trim().to_string(), value))
 }

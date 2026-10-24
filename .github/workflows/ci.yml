@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+  workflow_dispatch:
+
+# Un push nuevo a la misma rama cancela la corrida anterior: ahorra minutos.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  lint:
+    name: fmt y clippy
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets
+
+  test:
+    name: tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Los tests que tocan el keyring del sistema están marcados #[ignore]: no corren acá.
+      # Las patologías del diagnóstico miden tiempos reales: el runner de Windows (2 núcleos)
+      # no sostiene el calendario de la carga y el diagnóstico da, con razón, `invalid_result`.
+      # Corren en Linux y en las máquinas de desarrollo. Los tests del motor corren igual, pero sin
+      # exigir que no haya avisos de que el scheduler llegó tarde.
+      - run: cargo test --workspace
+        env:
+          CRABFALL_SKIP_TIMING_TESTS: ${{ matrix.os == 'windows-latest' && '1' || '0' }}

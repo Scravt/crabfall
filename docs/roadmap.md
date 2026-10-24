@@ -78,8 +78,8 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente. Al cerrar
 - [x] `crabfall approve` y la verificación en `crabfall run`, con firma, keyring y TTY (ADR-004)
 - [x] `limits` y `allowed_hosts` en `config.yaml` (hecho en la rebanada 1)
 - [x] Hook `PreToolUse` (`crabfall hook pre-tool-use`), adelantado a la rebanada 2
-- [x] Tests de la guarda (lista en ADR-004; falta `--var`, que todavía no existe)
-- Listo cuando: apruebo un escenario de `shop-api` en mi terminal, lo ejecuto, y cualquier edición posterior hace que `crabfall run` lo rechace mostrando el diff. **Pendiente de probar a mano:** la parte interactiva no se puede probar desde la shell de Claude, que no tiene terminal.
+- [x] Tests de la guarda (lista en ADR-004; `--var` agregado el 24 oct 2026: otro valor invalida la aprobación con el diff, el mismo valor del escenario no, y el valor de un secreto tampoco)
+- Listo: en `market-api`, con `smoke` aprobado, subir el `rate` de 5/s a 6/s hizo que `crabfall run` en la terminal del usuario rechazara con código 3 y mostrara el diff (24 oct 2026). La prueba destapó dos detalles, ya corregidos: el encabezado del diff salía en español en la salida en inglés, y el `user-agent` por defecto llevaba la versión, así que actualizar Crabfall invalidaba todas las aprobaciones; ahora se firma como `crabfall/<version>` (ADR-004).
 
 **4. Escenario completo**
 - [x] `setup`, `extract` (json, header, regex), `defaults`, varios flows con `weight`
@@ -163,19 +163,141 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente. Al cerrar
 - [x] `bytes_sent` y `bytes_received` por paso, por segundo en la serie y en `totals`, con `send_rate` y `receive_rate`; `crabfall findings --json` los incluye
 - [x] `crabfall run` muestra el total, el promedio y el pico por segundo (también en Mbit/s); el reporte suma un tile, un gráfico por segundo y los bytes por request de cada paso
 - [x] Tests: un upload de 300 KB y una descarga de 256 KB medidos por paso (body más unos cientos de bytes de headers), la serie suma igual que los totales, y los bytes de un request que vence por timeout cuentan
-- Listo cuando: en `market-api`, `upload` muestra alrededor de 1 MB enviado y 1 MB recibido por iteración (sube y baja el mismo archivo). **Pendiente:** la corrida (la aprueba y ejecuta una persona).
+- Listo: en `market-api`, `upload` (10 VUs durante 1 minuto, ya como `crabfall`) movió 137,1 MB enviados y 137,2 MB recibidos, 2,1 MB/s en cada dirección. Por request, `upload_file` mandó el archivo más 559 bytes de headers y multipart, y `download_file` recibió el archivo más 487. El pico, 10 MB/s (84 Mbit/s), fue el segundo 0, con los 10 VUs subiendo a la vez. 685 de 685 checks pasados (19 oct 2026).
 
-## Primera versión
+**14. Cliente HTTP real**
+- [x] Cookies: un jar por VU (RFC 6265, con `cookie_store`) desde `vu_setup` hasta la última iteración, también en `vu_refresh`; `setup` con el suyo; un header `cookie` propio se suma; `cookies: false` las apaga (ADR-014)
+- [x] Redirects: hasta 10 por paso (`redirects` en el request o en `defaults`), solo hacia `allowed_hosts`; 303 y POST con 301/302 pasan a GET; `authorization` y la cookie propia no viajan a otro host; latencia, timeout y bytes cubren la cadena
+- [x] Compresión: `accept-encoding: gzip, br` por defecto; checks y `extract` ven el body descomprimido (gzip, deflate, br; tope de 64 MB) y los bytes son los del cable
+- [x] `form:` arma bodies `application/x-www-form-urlencoded`
+- [x] `crabfall check` no sale de loopback ni por un redirect: el cliente se niega a conectarse afuera
+- [x] Cada VU tiene su propia sesión aunque no haya `vu_setup` (antes compartían una vacía)
+- [x] `approve` y `run` muestran una línea `HTTP`; `check` muestra cada salto de un redirect
+- [x] CI en GitHub Actions: fmt y clippy en Linux, tests en Linux y Windows
+- [x] Tests: contra axum con `tower-http` comprimiendo de verdad (gzip y br), sesión por VU, cookies apagadas, redirects (cadena, límite, loop, POST 302 y 307, otro host sin `authorization`), check sin salir de loopback, formularios, firma y validación
+- Listo: en `market-api`, `browse` aprobado de nuevo (20 it/s durante 30 s) dio 1.800 de 1.800 checks, sin fallas, con `search` en p50 10 ms como antes. Recibió unos 2 KB por request: Express no comprime, así que pedir `gzip, br` no cambió nada, como corresponde (19 oct 2026). **Pendiente:** ver la compresión detrás de Caddy (perfil `tls`, `encode gzip`), junto con la prueba de TLS de la rebanada 1.
 
-**v0.1.0** (19 oct 2026): las rebanadas 0 a 13 con el nombre Crabfall (binario `crabfall`, carpeta `.crabfall/`), en `main` y en GitHub (privado). Lo que queda abierto de esas rebanadas: TLS contra un servidor real (1), la skill en una sesión nueva de Claude Code (2) y la corrida de `upload` con bytes (13).
+**15. Lo que dice el servidor**
+- [x] De cada 429 se guardan `Retry-After` y la política declarada (`RateLimit-Policy` draft-8 y drafts 6-7, `X-RateLimit-Limit`) en `steps[].rate_limit`; `error_threshold` dice el límite con números; `crabfall run` lo muestra en una línea `límite` (ADR-005)
+- [x] `crabfall compare` compara bytes por request y avisa si la respuesta o el request cambió mucho de tamaño (ADR-006)
+- [x] Tests: el parser con los headers reales de express-rate-limit y los formatos viejos, la patología de rate limit con headers, y el aviso de tamaño (también con corridas sin bytes)
+- Listo: en `market-api`, `rate-limit` (20 it/s contra `/me` durante 45 s) recibió 300 429 desde el segundo 30 (20/s × 30 s = 600). El hallazgo dice "declara 600 requests cada 60 s (`RateLimit-Policy`) y pide esperar con `Retry-After de 16 a 30 s`", y `crabfall run` lo muestra en la línea `límite` (19 oct 2026). La corrida destapó un detalle de formato, ya corregido: con poco tráfico el pico salía "0.0 Mbit/s"; ahora sale en kbit/s.
+
+**16. Idioma** (ADR-016)
+- [x] Inglés por defecto; `--lang` > `CRABFALL_LANG` > `language:` en config.yaml; sin tomar el idioma del sistema
+- [x] Toda la salida en los dos idiomas: terminal, validación, plan, hallazgos, avisos, comparación, ayuda de clap y reporte HTML (con números y fechas según el idioma)
+- [x] Cada mensaje con sus dos versiones juntas (`tr!`, `pick`); la ayuda se traduce con una tabla; el reporte con `L(en, es)`
+- [x] README, skill y documentación del schema en inglés; ADRs y roadmap en español
+- [x] Tests: los existentes en español con `CRABFALL_LANG=es` en `.cargo/config.toml`; los de inglés aparte (prioridad flag > variable > config, ayuda, idioma desconocido, mensajes del core)
+- Listo: en `market-api`, `register-users` sin configurar salió en inglés; con `language: es` en el config, `smoke` salió en español en `approve`, `run` y el reporte (22 oct 2026).
+
+**17. Frenar y ver en vivo** (motor, para la TUI; ADR-015)
+- [x] `Progress` lleva un pedido de freno de dos niveles: el primero deja de iniciar iteraciones y espera a las que están en curso (`graceful_stop`); el segundo corta ya
+- [x] Frenar antes de la carga (en `setup` o `vu_setup`) aborta la corrida; durante `vu_setup` corta los logins en curso
+- [x] La corrida frenada guarda `results.json` y el reporte con `stopped_at_s`, un aviso al principio y `passed: false`; el diagnóstico corre sobre lo que hubo; `crabfall compare` avisa que cubre menos
+- [x] Ctrl+C en `crabfall run`: el primero frena en orden, el segundo corta
+- [x] En vivo: fase (setup, vu_setup, carga, drenando, terminada), VUs ocupados, renovaciones fallidas y cada segundo cerrado de la serie (global y por paso), publicado medio segundo después de cerrar; la serie final y la publicada salen de la misma función
+- [x] Tests: frenar en los dos modelos, dos veces (corta lo que está en curso), durante `vu_setup`, y la serie en vivo igual a la final
+- Listo: en `market-api`, `browse --duration 2m` frenado con Ctrl+C a los 20 s terminó en 20,8 s (sin iteraciones largas que esperar), con 416 de 416 iteraciones y 1.248 checks pasados, y guardó resultados y reporte con el aviso "Stopped by the person at second 20.8". La corrida destapó dos detalles ya corregidos: la columna `no-2xx` sin traducir y dos líneas en blanco después del aviso (20 oct 2026).
+
+**18. TUI** (ADR-015)
+- [x] `crabfall` sin argumentos abre la TUI si hay terminal (si no, la ayuda); el hook la bloquea para Claude (`crabfall` sin subcomando, sin bloquear `--help` ni `which crabfall`)
+- [x] Inicio: escenarios con su descripción, el estado de la aprobación en el entorno elegido (también si se aprobó con ajustes) y la última corrida; `e` cambia de entorno
+- [x] Detalle: el resumen de riesgo de `approve` y un formulario de ajustes con los mismos parsers que los flags; el plan se rearma al aplicar y el error queda en el campo; el comando equivalente
+- [x] Check en segundo plano, aprobar tipeando el host (mismo resumen y diff) y correr con `run::execute`, que guarda resultados y reporte como `crabfall run`
+- [x] Vista en vivo: fase y avance, indicadores del último segundo, sparklines de p95 y errores, pasos (p50 del último segundo y peor p95 de los últimos 5), avisos; `q` o Ctrl+C frenan con confirmación
+- [x] Resultados en pestañas (resumen con comparación contra la anterior, hallazgos, pasos, checks); `o` abre el HTML, `r` repite
+- [x] La CLI se reordenó para compartir piezas: `prepare_in`, `approve::{summary, verify, sign}`, `run::execute`
+- [x] Tests con `TestBackend`: lista, ajustes válidos e inválidos, correr sin aprobación, host equivocado, check, pantalla de corrida; y dos tests ignorados que imprimen las pantallas (uno con una corrida real)
+- Listo: probada por el usuario en `market-api` (20 oct 2026): "es fantástica… buen diseño". Quedan detalles para pulir, a definir con el usuario.
+
+**19. Historial y comparación en la TUI** (ADR-015)
+- [x] `h` (desde el detalle o los resultados) lista las corridas del escenario en el entorno, de la más reciente a la más vieja: resultado, duración, requests, req/s, peor p95 y hallazgos
+- [x] Enter compara la elegida con la anterior; Espacio marca una base y Enter compara contra ella; `o` abre el reporte de la elegida
+- [x] La comparación usa `compare::compare`, como `crabfall compare`: veredicto, avisos, regresiones, mejoras, tabla de pasos y hallazgos nuevos, resueltos y que siguen
+- [x] Tests: el orden del historial, la comparación con la anterior (empeoró) y contra una base (mejoró), y un escenario sin corridas
+- Listo: en `market-api`, el historial de `search-ramp` comparó la corrida sin índice (18 oct) con la de después y dijo "mejoró": p95 de `search` 3203 → 10,8 ms en 60 de 60 segundos, y el punto de quiebre resuelto (22 oct 2026).
+
+**20. Diagnóstico de ancho de banda** (ADR-005)
+- [x] `bandwidth_limit`: el tráfico se estanca en un techo (85% del pico, 5 segundos o más) mientras la carga pide un 25% más y el p95 se triplica; solo por encima de 1 MB/s
+- [x] Evidencia (pico, movido, pedido, bytes por iteración, p95) con nombres en el reporte, en los dos idiomas; la skill sabe leerla
+- [x] Laboratorio: un enlace simulado de 2 MB/s da el hallazgo; las mismas respuestas sin límite, no
+- Listo cuando: contra `market-api` detrás de un enlace real (la prueba de TLS), `upload` con más VUs lo muestra si el enlace se llena. **Pendiente:** depende del servidor remoto.
+
+**21. `pick: unique`** (ADR-007)
+- [x] Cada fila una sola vez en toda la corrida; la fila se toma al despachar, antes de contar la iteración
+- [x] Al acabarse, la carga termina en orden con `data_exhausted` (dataset y segundo) y un aviso; no cuenta como falla ni como freno de la persona
+- [x] En `vu_setup`, el plan exige una fila por VU; `approve` avisa si las filas no alcanzan para las iteraciones planificadas
+- [x] `--pick users=unique` por flag; schema, skill y README
+- [x] Tests: los dos modelos usan cada fila una vez y terminan al acabarse; la validación de `vu_setup`
+- Listo: en `market-api`, `register-users` (25 filas de `data/new-users.csv`, 1/s, 60 iteraciones pedidas) registró 25 usuarios con 25 emails distintos en la base, 50 de 50 checks pasados y todos 201; la carga terminó sola en el segundo 25 con el aviso y `data_exhausted` en `results.json` (22 oct 2026).
+
+**22. Corrida base fija** (ADR-006)
+- [x] `crabfall baseline [corrida]` la guarda en `.crabfall/baselines/<escenario>.<entorno>.json`, versionada; no acepta una corrida abortada
+- [x] `crabfall compare --baseline [corrida]` compara contra ella; sin base, sale con 2 y dice cómo fijarla
+- [x] En la TUI, `b` en el historial fija la base y la fila la marca
+- [x] Ayuda en los dos idiomas, README, skill (Claude la prefiere para preguntar si algo empeoró, pero no la mueve)
+- [x] Tests: fijar, comparar contra la base aunque haya corridas en el medio, sin base, argumentos de más, y la tecla `b`
+- Listo: en `market-api`, la base de `search-ramp` se fijó con `b` en el historial (`20261022-202949`, con índice, versionada en `market-api`). Contra ella, una corrida con índice dio "sin cambios" (p95 de `search` 10,7 → 10,6 ms) y otra sin los índices de trigramas dio "empeoró": p95 10,7 → 3322 ms en 60 de 60 segundos, 8,1% de iteraciones descartadas y un punto de quiebre nuevo en ~102 it/s (24 oct 2026).
+
+**23. Ayuda en la TUI** (ADR-015)
+- [x] `?` en cualquier pantalla abre su ayuda (qué es, cómo se usa, cada tecla); cualquier tecla la cierra; editando un valor, `?` se escribe
+- [x] En el escenario, una línea con los tres pasos (check → aprobar → correr), cuál está hecho y qué sigue, según el estado: errores, ajuste inválido, check pendiente o fallido, cambió desde la aprobación, aprobado
+- [x] Debajo de los ajustes, qué significa el elegido y un ejemplo
+- [x] En la lista, la descripción entera del escenario elegido (y el error entero si no se puede armar), en lugar de una columna cortada
+- [x] En el historial, Enter elige una corrida y Enter en otra las compara; `c` compara con la anterior; Esc suelta la elegida
+- [x] El pie muestra `? ayuda` y `j/k`
+- [x] Gris más claro para el texto secundario (el oscuro casi no se leía)
+- [x] El pie se parte entre teclas cuando no entra en el ancho (antes se cortaba y no se veía `b` en el historial); el historial entra en 90 columnas sin cortar el id
+- [x] Al terminar, el resumen dice "¿Y ahora?": correr de nuevo, cambiar ajustes, volver al menú (`m`, desde cualquier pantalla), historial, reporte
+- Listo cuando: alguien que abre la TUI por primera vez llega a correr y comparar sin que le expliquen. Primera prueba con el usuario (22 oct 2026): llegó a correr, ver el historial, comparar y fijar la base, pero no encontró `b`: el pie del historial no entra en el ancho y se corta justo en "· b". Arreglado: el pie se parte entre teclas para entrar en el ancho, y las columnas del historial ya no cortan el id de la corrida (`20261022-2029`). **Pendiente:** la prueba con alguien que no la conoce.
+
+**24. El agente pide la corrida, la persona confirma en una ventana** (ADR-017)
+- [x] `crabfall run --ask`: sin terminal, se relanza en una consola nueva, espera y devuelve el código y dónde quedaron los resultados; en una terminal pregunta ahí
+- [x] La ventana muestra el resumen de riesgo; sin aprobación vigente pide el host y firma, con aprobación alcanza `s`; la carga corre en la ventana y Ctrl+C la frena; se cierra sola a los 30 s
+- [x] Permiso por tiempo (1 a 120 min) firmado con la misma clave y atado al hash del plan; se revoca borrando el archivo
+- [x] 5 min sin respuesta cancela; cerrar la ventana también
+- [x] `--window` rechaza si la consola no es nueva y visible (el único proceso en ella)
+- [x] Hook: deja pasar `run --ask`, bloquea `run` sin `--ask` y `run --window`; skill, ayuda en los dos idiomas y README
+- [x] Tests: el permiso (vence, no sobrevive a otro plan, a una edición ni a otra clave), el hook y `--window` fuera de su ventana
+- [x] Investigación sobre agentes maliciosos: qué resiste y qué no, en ADR-017
+- Listo: en `market-api`, Claude corrió `search-ramp --ask`; el usuario tipeó el host en la ventana (el plan había cambiado por `X-Lab-Key`) y dio unos minutos de permiso. Claude comparó contra la base ("sin cambios"), borró los índices de trigramas y volvió a pedir la corrida: corrió sin preguntar dentro del permiso, porque el plan era el mismo, y dio "empeoró". Después se restauraron los índices (24 oct 2026). La prueba destapó un detalle, ya corregido: después de tipear el host, la pregunta de los minutos parecía un segundo paso para aprobar; ahora dice que es opcional y que Enter corre la carga. Linux en la rebanada 25; macOS, después.
+
+**25. La ventana de `--ask` en Linux** (ADR-017)
+- [x] Con escritorio (`DISPLAY` o `WAYLAND_DISPLAY`), la ventana se abre en `$TERMINAL` o en la primera terminal conocida (`x-terminal-emulator`, gnome-terminal, konsole, kitty, xterm…), cada una con su forma de recibir el comando; sin escritorio rechaza como antes
+- [x] El agente no espera a la terminal (gnome-terminal vuelve enseguida): la ventana deja su pid al lado de la respuesta, y el agente espera la respuesta o que ese proceso deje de existir; la respuesta se escribe aparte y se renombra
+- [x] `--window` en Linux: entrada y salida en una terminal, líder de su propia sesión y con una terminal conocida como padre (no `script`, `tmux` ni una shell)
+- [x] Tests: los argumentos de cada terminal, `/proc/<pid>/stat` con nombres raros, qué padres valen; CI ya corre en Linux
+- Listo: en WSL2 (Ubuntu 24.04 con WSLg y GNOME Keyring), `smoke --ask` contra `market-api` abrió la ventana en gnome-terminal (vía `x-terminal-emulator`); el usuario tipeó el host, dio unos minutos de permiso, y la siguiente corrida en xterm salió sin preguntar. Revocado el permiso, volvió a preguntar; cerrar el xterm sin responder devolvió código 3 y "la ventana se cerró sin respuesta", sin corrida nueva (24 oct 2026). En WSLg las terminales se ven gris sobre negro: son sus colores por defecto.
+
+## Versiones
+
+**v0.1.0** (19 oct 2026): las rebanadas 0 a 13 con el nombre Crabfall (binario `crabfall`, carpeta `.crabfall/`), en `main` y en GitHub (privado). La rebanada 13 se cerró después, con la corrida de `upload`.
+
+**v0.2.0** (24 oct 2026): las rebanadas 14 a 25. Cliente HTTP real (cookies, redirects, compresión, formularios), lo que dice el servidor en un 429, inglés y español, frenar y ver en vivo, la TUI con historial, comparación y ayuda, diagnóstico de ancho de banda, `pick: unique`, la corrida base fija, y el agente que pide la corrida con `--ask` y una persona que la confirma en una ventana, en Windows y Linux.
+
+**Lo que queda abierto** (pruebas reales; el código está hecho):
+- Contra un servidor remoto (`market-api` en un VPS por hora; elegido Vultr en Santiago o São Paulo, con `sslip.io` en lugar de un dominio; en suspenso): TLS real (1), la compresión detrás de Caddy (14) y el diagnóstico de ancho de banda con un enlace real (20).
+- La skill en una sesión nueva de Claude Code, que la carga sola (2).
+- La TUI con alguien que no la conoce (23), para más adelante.
+
+## Próxima versión (v0.3)
+
+- **Servidor MCP.**
+- **Importadores:** OpenAPI, curl, Postman.
+- **Reglas de diagnóstico:** antes, un estudio comparativo de qué detectan otras herramientas (k6, Gatling, Locust, Artillery, JMeter y las de APM), y decidir si las reglas se pueden personalizar (umbrales, reglas propias) o quedan fijas en el motor.
 
 ## Backlog (sin orden)
 
-**TUI en la terminal** en lugar de la GUI con Tauri, al menos por ahora: elegir escenario y entorno, aprobar, ver la corrida en vivo y los resultados, con los mismos `Overrides` que los flags.
-
 **Al final: modelos de carga nuevos** (`ramping_vus`, iteraciones fijas, arrival por VU). Hoy alcanzan `constant_rate`, `ramping_rate` y `constant_vus`.
 
-Regla de diagnóstico para el ancho de banda (los bytes por segundo se estancan mientras la latencia sube), bytes por request en `crabfall compare` (una respuesta que creció mucho), más reglas de diagnóstico, corrida base fija para CI (`crabfall compare --baseline`), servidor MCP, importadores (OpenAPI, curl, Postman), cookies, redirects, gzip y bodies `form-urlencoded`, HTTP/2, GUI con Tauri (después de la TUI), `pick: unique` para datasets, leer `expires_in` para elegir solo cuándo renovar, leer `Retry-After` en los 429 para que el hallazgo diga la ventana del límite, GitHub Action, correlación con métricas del servidor (OTLP, Prometheus), WebSockets, gRPC, Kafka.
+- La ventana de `--ask` en macOS (Terminal vía `osascript`); hoy no hay dónde probarla.
+- Defensas contra un agente malicioso (ADR-017): guía para correr el agente con el sandbox de Claude Code y egress restringido, y un token de vida corta exigido por el target (FIDO2 o teléfono, verificado fuera de la máquina).
+- Aprobar en CI sin una persona, para que la base fija sirva en un pipeline, y una GitHub Action.
+- Correlación con métricas del servidor (OTLP, Prometheus); ver D4.
+- HTTP/2, WebSockets, gRPC, Kafka.
+- Leer `expires_in` para elegir solo cuándo renovar.
+- GUI con Tauri (después de la TUI).
 
 ## Decisiones abiertas
 
@@ -215,3 +337,9 @@ Regla de diagnóstico para el ancho de banda (los bytes por segundo se estancan 
 | 19 oct 2026 | Nombre: Crabfall; binario `crabfall`, carpeta `.crabfall/`, crates `crabfall-core` y `crabfall-cli` (D2) | — |
 | 19 oct 2026 | TUI en la terminal en lugar de la GUI con Tauri, por ahora; los modelos de carga nuevos van al final | Este documento |
 | 19 oct 2026 | Primera versión v0.1.0: `dev` se mergea a `main`; repo privado en GitHub | — |
+| 24 oct 2026 | El `user-agent` por defecto se firma sin la versión: actualizar Crabfall no invalida las aprobaciones | ADR-004 |
+| 24 oct 2026 | v0.2.0: las rebanadas 14 a 25 a `main`; para la v0.3, MCP, importadores y reglas de diagnóstico después de compararlas con otras herramientas | Versiones |
+| 19 oct 2026 | Cliente HTTP real por defecto: cookies por VU, redirects hacia `allowed_hosts`, gzip y br; `check` nunca sale de loopback | ADR-014 |
+| 19 oct 2026 | TUI: `crabfall` sin argumentos; aprueba con el host tipeado; frena en orden y guarda; el HTML queda para analizar y compartir | ADR-015 |
+| 19 oct 2026 | Salida en inglés por defecto y en español a pedido; README y skill en inglés, ADRs y roadmap en español | ADR-016 |
+| 23 oct 2026 | El agente puede correr carga con `run --ask`: una persona confirma cada corrida en una ventana aparte, donde corre la carga; permiso por tiempo firmado; el modelo de amenaza sigue siendo el de ADR-004 | ADR-017 |

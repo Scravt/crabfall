@@ -1,0 +1,77 @@
+# ADR-015 — TUI en la terminal
+
+Estado: **aceptado** · 19 oct 2026
+
+## Contexto
+
+Hoy Crabfall se usa por comandos (`approve`, `run`, `findings`, `compare`), con Claude diseñando y analizando, y con un reporte HTML por corrida. El plan original era una GUI con Tauri; se cambió por una TUI en la terminal, al menos por ahora (roadmap, 19 oct 2026). Falta un lugar para operar sin recordar flags y, sobre todo, para ver una corrida mientras pasa: hoy solo hay una línea de progreso.
+
+## Decisión
+
+### Quién hace qué
+
+| | Para qué | Cuándo |
+| --- | --- | --- |
+| TUI | Operar y mirar en vivo: elegir, ajustar, probar, aprobar, correr, frenar | Antes y durante |
+| Reporte HTML (ADR-009) | Analizar en detalle y compartir | Después |
+| Claude (ADR-001) | Diseñar escenarios y explicar hallazgos desde el código | Antes y después |
+
+La TUI no copia los gráficos del HTML: lo abre con una tecla. Lo que aporta es lo que el HTML no puede, la corrida en vivo.
+
+### Cómo se abre
+
+`crabfall` sin argumentos, con una terminal interactiva, abre la TUI. Sin terminal (Claude, CI, un pipe) muestra la ayuda como hasta ahora. Los subcomandos no cambian. El hook de Claude Code bloquea también `crabfall` a secas.
+
+### Funcionalidad (primera versión)
+
+- **Elegir:** escenarios de `.crabfall/` con su descripción, el estado de la aprobación por entorno (aprobado, cambió desde la aprobación, sin aprobar) y la última corrida. El entorno se elige arriba.
+- **Ajustar:** los mismos ajustes que los flags (ADR-008), con el mismo tipo `Overrides` de `crabfall-core`. Se validan mientras se escribe, con el error en el campo, y se muestra el comando equivalente para copiarlo o pasárselo a Claude. No edita el YAML.
+- **Probar:** el smoke check, solo contra loopback como siempre (ADR-004 §4).
+- **Aprobar:** el mismo resumen de riesgo que `crabfall approve` (con el diff si cambió) y se tipea el host. La TUI es una terminal con una persona, así que cumple el ADR-004; Claude no puede usarla.
+- **Correr y frenar:** la vista en vivo de abajo, con `q` para frenar con confirmación.
+- **Resultados:** el resumen al terminar, con `o` para abrir el `report.html`.
+- **Historial (`h`):** las corridas del escenario en el entorno, de la más reciente a la más vieja, con el resultado, la duración, las requests, el peor p95 y los hallazgos. Enter compara la elegida con la anterior; con una base marcada (Espacio), contra la base. La comparación es la de `crabfall compare`: veredicto, avisos, regresiones, mejoras, pasos y hallazgos (rebanada 19).
+
+### Durante la corrida
+
+- **Encabezado:** escenario y entorno, avance, fase (`vu_setup`, carga o graceful stop), la aprobación y la línea `HTTP`.
+- **Indicadores del último segundo, frente a lo pedido:** iteraciones/s y descartadas, VUs ocupados, requests/s, errores, checks y bytes por segundo.
+- **Sparklines:** p95 y errores por segundo, para ver la forma (si sube, si se rompe).
+- **Pasos:** requests, error %, p50 y el p95 de los últimos 5 s (no el acumulado, para que se vea el cambio), y los códigos.
+- **Avisos en vivo:** scheduler tarde, iteraciones descartadas, VUs fuera de `vu_setup`, fallas de renovación. Los hallazgos salen al final: el diagnóstico necesita la corrida entera.
+
+### Al terminar
+
+- **Pestañas:** resumen (veredicto, thresholds, totales, tráfico y la comparación rápida con la anterior), hallazgos (evidencia, causas, archivo de código), pasos (percentiles, códigos, límite declarado, bytes por request) y checks fallidos.
+- **Teclas:** `o` abre el reporte, `r` vuelve a correr con los mismos ajustes, `c` compara (cuando exista el historial).
+
+### Lo que necesita el motor
+
+- **Frenar en orden:** dejar de iniciar iteraciones, esperar las que están en curso (graceful stop) y guardar `results.json` y el reporte, marcados como interrumpidos por la persona. El diagnóstico corre sobre lo que hubo. `crabfall run` también lo usa con Ctrl+C.
+- **La serie en vivo:** el colector publica cada segundo el punto que cerró (global y por paso), no solo al final.
+
+### Biblioteca
+
+`ratatui` con `crossterm`: es la opción estándar en Rust y funciona en Windows, Linux y macOS.
+
+## Cómo quedó (rebanada 18)
+
+- **Código:** `crates/crabfall-cli/src/tui/` (estado y teclas en `mod.rs`, dibujo en `view.rs`). Usa `prepare_in`, `approve::{summary, verify, sign}` y `run::execute`, que también usan los comandos: no hay lógica duplicada.
+- **Formulario:** executor, tasa, duración, VUs, max VUs, tasa inicial, etapas, graceful stop, pausa, renovación y thresholds. `--data`, `--pick` y `--var` siguen solo por CLI. Un escenario aprobado con ajustes se abre con esos ajustes cargados, así se puede correr sin volver a aprobar.
+- **En vivo:** el p95 de "los últimos 5 s" de cada paso es el peor p95 por segundo de esos cinco (no hay histograma de la ventana). Los checks no se muestran en vivo: el colector no los publica por segundo.
+- **Frenar:** `q` (o Ctrl+C) pregunta y frena en orden; durante el drenaje, `q` pregunta si cortar ya. Salir de la TUI con una corrida en curso la corta y espera a que guarde.
+- **Tests:** la TUI se dibuja en un terminal en memoria (`TestBackend`): la lista, el detalle con ajustes válidos e inválidos, correr sin aprobación, aprobar con el host equivocado, el check en segundo plano y la pantalla de la corrida. La firma no se prueba ahí porque usa el keyring del sistema.
+
+## Consecuencias
+
+- **A favor:** un flujo completo sin recordar flags, y la corrida en vivo, que hoy no existe. Frenar con resultados también mejora `crabfall run`.
+- **En contra:** una segunda interfaz para mantener al día con cada ajuste nuevo; por eso usa los mismos `Overrides` y el mismo resumen de aprobación que la CLI, no copias.
+
+## Ayuda para quien la abre por primera vez (20 oct 2026)
+
+Probándola, el pie con las teclas no alcanzaba: decía qué teclas hay, pero no qué conviene hacer ni por qué, y la descripción del escenario se cortaba.
+
+- **Qué sigue:** el escenario muestra arriba los tres pasos (check → aprobar → correr), cuál está hecho y una línea "Siguiente" con la tecla y el motivo. El check se marca como "no aplica" si el destino no es loopback, porque `check` no corre ahí. El estado del check vive en la sesión de la TUI: no se guarda.
+- **`?`:** una ayuda por pantalla, en frases. Cualquier tecla la cierra y no hace nada más (así `q` no sale por accidente). Mientras se escribe un valor o el host, `?` es un carácter.
+- **Enter en el historial:** antes comparaba con la anterior y Espacio marcaba la base; Enter es lo que uno prueba primero para elegir. Ahora Enter elige una corrida y Enter en otra las compara (la primera es el "antes"); `c` compara con la anterior. Espacio sigue funcionando igual que Enter.
+- **No hay pantalla de bienvenida:** con "Siguiente" y `?` no hace falta, y molestaría a quien ya la usa.

@@ -50,9 +50,12 @@ impl Template {
                 parts.push(Part::Lit(rest[..start].to_string()));
             }
             let after = &rest[start + 2..];
-            let end = after
-                .find("}}")
-                .ok_or_else(|| format!("falta cerrar `}}}}` en `{s}`"))?;
+            let end = after.find("}}").ok_or_else(|| {
+                crate::tr!(
+                    "missing closing `}}}}` in `{s}`",
+                    "falta cerrar `}}}}` en `{s}`"
+                )
+            })?;
             parts.push(parse_expr(after[..end].trim())?);
             rest = &after[end + 2..];
         }
@@ -122,7 +125,10 @@ fn parse_expr(e: &str) -> Result<Part, String> {
         return if valid_name(name) {
             Ok(Part::Secret(name.to_string()))
         } else {
-            Err(format!("nombre de secreto inválido en `{{{{{e}}}}}`"))
+            Err(crate::tr!(
+                "invalid secret name in `{{{{{e}}}}}`",
+                "nombre de secreto inválido en `{{{{{e}}}}}`"
+            ))
         };
     }
     match e {
@@ -134,7 +140,12 @@ fn parse_expr(e: &str) -> Result<Part, String> {
         .strip_prefix("$randomInt(")
         .and_then(|a| a.strip_suffix(')'))
     {
-        let bad = || format!("`{{{{{e}}}}}`: usá $randomInt(min,max) con enteros y min <= max");
+        let bad = || {
+            crate::tr!(
+                "`{{{{{e}}}}}`: use $randomInt(min,max) with integers and min <= max",
+                "`{{{{{e}}}}}`: usá $randomInt(min,max) con enteros y min <= max"
+            )
+        };
         let (a, b) = args.split_once(',').ok_or_else(bad)?;
         let (a, b): (i64, i64) = (
             a.trim().parse().map_err(|_| bad())?,
@@ -147,7 +158,8 @@ fn parse_expr(e: &str) -> Result<Part, String> {
         };
     }
     if e.starts_with('$') {
-        return Err(format!(
+        return Err(crate::tr!(
+            "unknown placeholder `{{{{{e}}}}}` (supported: $uuid, $timestamp, $randomInt(min,max))",
             "placeholder desconocido `{{{{{e}}}}}` (soportados: $uuid, $timestamp, $randomInt(min,max))"
         ));
     }
@@ -158,7 +170,8 @@ fn parse_expr(e: &str) -> Result<Part, String> {
     if valid_name(e) || is_column {
         Ok(Part::Var(e.to_string()))
     } else {
-        Err(format!(
+        Err(crate::tr!(
+            "`{{{{{e}}}}}` is not a valid variable name (letters, digits and `_`, or `dataset.column`)",
             "`{{{{{e}}}}}` no es un nombre de variable válido (letras, números y `_`, o `dataset.columna`)"
         ))
     }
@@ -175,14 +188,21 @@ fn valid_name(name: &str) -> bool {
 fn resolve(part: &Part, scope: &dyn Scope) -> Result<Value, String> {
     Ok(match part {
         Part::Lit(s) => Value::String(s.clone()),
-        Part::Var(n) => scope
-            .var(n)
-            .cloned()
-            .ok_or_else(|| format!("la variable `{n}` no tiene valor"))?,
+        Part::Var(n) => scope.var(n).cloned().ok_or_else(|| {
+            crate::tr!(
+                "variable `{n}` has no value",
+                "la variable `{n}` no tiene valor"
+            )
+        })?,
         Part::Secret(n) => Value::String(
             scope
                 .secret(n)
-                .ok_or_else(|| format!("el secreto `{n}` no tiene valor"))?
+                .ok_or_else(|| {
+                    crate::tr!(
+                        "secret `{n}` has no value",
+                        "el secreto `{n}` no tiene valor"
+                    )
+                })?
                 .to_string(),
         ),
         Part::Uuid => Value::String(uuid_v4()),

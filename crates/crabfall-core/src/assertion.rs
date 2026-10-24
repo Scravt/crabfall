@@ -46,9 +46,14 @@ impl Assertion {
             c.body_matches.is_some(),
         ];
         if subjects.iter().filter(|s| **s).count() != 1 {
-            return Err("usá exactamente uno de: status, status_in, json, header, body_contains, body_matches".into());
+            return Err(crate::tr!(
+                "use exactly one of: status, status_in, json, header, body_contains, body_matches",
+                "usá exactamente uno de: status, status_in, json, header, body_contains, body_matches"
+            ));
         }
-        let regex = |r: &str| Regex::new(r).map_err(|e| format!("regex inválida: {e}"));
+        let regex = |r: &str| {
+            Regex::new(r).map_err(|e| crate::tr!("invalid regex: {e}", "regex inválida: {e}"))
+        };
 
         let (label, subject) = if let Some(code) = c.status {
             no_predicate(c)?;
@@ -56,7 +61,10 @@ impl Assertion {
         } else if let Some(codes) = &c.status_in {
             no_predicate(c)?;
             if codes.is_empty() {
-                return Err("status_in no puede estar vacío".into());
+                return Err(crate::tr!(
+                    "status_in cannot be empty",
+                    "status_in no puede estar vacío"
+                ));
             }
             (
                 format!("status in {codes:?}"),
@@ -82,8 +90,12 @@ impl Assertion {
             )
         } else {
             let name = c.header.as_deref().expect("hay un sujeto");
-            let header =
-                HeaderName::try_from(name).map_err(|e| format!("header `{name}` inválido: {e}"))?;
+            let header = HeaderName::try_from(name).map_err(|e| {
+                crate::tr!(
+                    "invalid header `{name}`: {e}",
+                    "header `{name}` inválido: {e}"
+                )
+            })?;
             let (desc, pred) = predicate(c, true)?;
             (
                 format!("header {name} {desc}"),
@@ -121,21 +133,24 @@ impl Assertion {
                 if codes.contains(&status) {
                     Ok(())
                 } else {
-                    Err(format!("respondió {status}"))
+                    Err(crate::tr!("responded {status}", "respondió {status}"))
                 }
             }
             Subject::BodyContains(text) => {
                 if String::from_utf8_lossy(body).contains(text.as_str()) {
                     Ok(())
                 } else {
-                    Err("el body no lo contiene".into())
+                    Err(crate::tr!(
+                        "the body does not contain it",
+                        "el body no lo contiene"
+                    ))
                 }
             }
             Subject::BodyMatches(re) => {
                 if re.is_match(&String::from_utf8_lossy(body)) {
                     Ok(())
                 } else {
-                    Err("el body no coincide".into())
+                    Err(crate::tr!("the body does not match", "el body no coincide"))
                 }
             }
             Subject::Json(path, pred) => {
@@ -157,29 +172,29 @@ impl Assertion {
 fn compare(pred: &Predicate, found: Option<Value>, scope: &dyn Scope) -> Result<(), String> {
     match (pred, found) {
         (Predicate::Exists(true), Some(_)) | (Predicate::Exists(false), None) => Ok(()),
-        (Predicate::Exists(true), None) => Err("no existe".into()),
+        (Predicate::Exists(true), None) => Err(crate::tr!("does not exist", "no existe")),
         (Predicate::Exists(false), Some(_)) => Err("existe".into()),
-        (_, None) => Err("no existe".into()),
+        (_, None) => Err(crate::tr!("does not exist", "no existe")),
         (Predicate::Equals(expected), Some(v)) => {
             let expected = expected.render(scope)?;
             if v == expected {
                 Ok(())
             } else {
-                Err(format!("vale {v}"))
+                Err(crate::tr!("is {v}", "vale {v}"))
             }
         }
         (Predicate::Contains(text), Some(v)) => {
             if to_text(&v).contains(text.as_str()) {
                 Ok(())
             } else {
-                Err(format!("vale {v}"))
+                Err(crate::tr!("is {v}", "vale {v}"))
             }
         }
         (Predicate::Matches(re), Some(v)) => {
             if re.is_match(&to_text(&v)) {
                 Ok(())
             } else {
-                Err(format!("vale {v}"))
+                Err(crate::tr!("is {v}", "vale {v}"))
             }
         }
     }
@@ -187,7 +202,10 @@ fn compare(pred: &Predicate, found: Option<Value>, scope: &dyn Scope) -> Result<
 
 fn no_predicate(c: &Check) -> Result<(), String> {
     if c.exists.is_some() || c.equals.is_some() || c.contains.is_some() || c.matches.is_some() {
-        Err("exists, equals, contains y matches solo van con `json` o `header`".into())
+        Err(crate::tr!(
+            "exists, equals, contains and matches only go with `json` or `header`",
+            "exists, equals, contains y matches solo van con `json` o `header`"
+        ))
     } else {
         Ok(())
     }
@@ -204,7 +222,10 @@ fn predicate(c: &Check, header: bool) -> Result<(String, Predicate), String> {
     .filter(|p| **p)
     .count();
     if count != 1 {
-        return Err("usá exactamente uno de: exists, equals, contains, matches".into());
+        return Err(crate::tr!(
+            "use exactly one of: exists, equals, contains, matches",
+            "usá exactamente uno de: exists, equals, contains, matches"
+        ));
     }
     if let Some(e) = c.exists {
         Ok((
@@ -222,7 +243,10 @@ fn predicate(c: &Check, header: bool) -> Result<(String, Predicate), String> {
         ))
     } else if let Some(text) = &c.contains {
         if !header {
-            return Err("`contains` va con `header`; para JSON usá `equals` o `matches`".into());
+            return Err(crate::tr!(
+                "`contains` goes with `header`; for JSON use `equals` or `matches`",
+                "`contains` va con `header`; para JSON usá `equals` o `matches`"
+            ));
         }
         Ok((
             format!("contains {text:?}"),
@@ -230,7 +254,8 @@ fn predicate(c: &Check, header: bool) -> Result<(String, Predicate), String> {
         ))
     } else {
         let r = c.matches.as_deref().expect("hay un predicado");
-        let re = Regex::new(r).map_err(|e| format!("regex inválida: {e}"))?;
+        let re =
+            Regex::new(r).map_err(|e| crate::tr!("invalid regex: {e}", "regex inválida: {e}"))?;
         Ok((format!("matches /{r}/"), Predicate::Matches(re)))
     }
 }

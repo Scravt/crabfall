@@ -3,7 +3,7 @@
 use crabfall_core::{
     approval::{self, Approval, MemoryKey, Rejection},
     config::Environment,
-    engine::plan::Plan,
+    engine::plan::{DEFAULT_USER_AGENT, Inputs, Plan},
     validate::parse_scenario,
 };
 
@@ -160,4 +160,111 @@ fn approval_signed_with_another_key_is_rejected() {
         &other_key,
     );
     assert!(matches!(result, Err(Rejection::Tampered(_))));
+}
+
+#[test]
+fn an_allowance_lets_the_same_plan_run_until_it_expires() {
+    let a = approved();
+    let allowance = approval::allow(&a, 1_000, &key()).unwrap();
+    assert!(approval::allows(&allowance, &a, 999, &key()));
+    assert!(!approval::allows(&allowance, &a, 1_000, &key()));
+}
+
+#[test]
+fn an_allowance_does_not_survive_a_new_plan_or_an_edit() {
+    let a = approved();
+    let allowance = approval::allow(&a, 1_000, &key()).unwrap();
+
+    let e = env(ENV);
+    let changed = SCENARIO.replace("rate: 10/s", "rate: 20/s");
+    let other = approval::approve(
+        &plan(&changed, &e),
+        &e,
+        "local",
+        "gonzalo",
+        "2026-10-12T00:00:00Z",
+        &key(),
+    )
+    .unwrap();
+    assert!(!approval::allows(&allowance, &other, 0, &key()));
+
+    let mut extended = allowance.clone();
+    extended.until = 9_999;
+    assert!(!approval::allows(&extended, &a, 2_000, &key()));
+
+    let other_key = MemoryKey(b"otra-clave".to_vec());
+    assert!(!approval::allows(&allowance, &a, 0, &other_key));
+}
+
+#[test]
+fn a_var_by_flag_invalidates_but_a_secret_value_does_not() {
+    const WITH_VARS: &str = "version: 1
+name: checkout
+vars: { id: 7 }
+flows:
+  main:
+    steps:
+      - name: item
+        request:
+          method: GET
+          url: /products/{{id}}
+          headers: { Authorization: \"Bearer {{env.TOKEN}}\" }
+load:
+  executor: constant_rate
+  rate: 10/s
+  duration: 10s
+  max_vus: 10
+";
+    let e = env(ENV);
+    let build = |vars: &[(&str, serde_json::Value)], token: &str| {
+        let inputs = Inputs {
+            vars: vars
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.clone()))
+                .collect(),
+            secrets: [("TOKEN".to_string(), Some(token.to_string()))].into(),
+            ..Default::default()
+        };
+        Plan::build(&parse_scenario(WITH_VARS).unwrap(), &e, &inputs).unwrap()
+    };
+    let a = approval::approve(
+        &build(&[], "uno"),
+        &e,
+        "local",
+        "gonzalo",
+        "2026-10-12T00:00:00Z",
+        &key(),
+    )
+    .unwrap();
+    let verify = |plan: &Plan| approval::verify(Some(&a), plan, &e, "local", &key());
+
+    // Otro valor del secreto no cambia la firma: no entra en el plan canónico.
+    assert_eq!(verify(&build(&[], "dos")), Ok(()));
+    // `--var id=7` repite el valor del escenario: el plan es el mismo.
+    assert_eq!(verify(&build(&[("id", 7.into())], "uno")), Ok(()));
+    // `--var id=8` cambia el tráfico: hay que aprobar de nuevo, con el diff.
+    let Err(Rejection::Changed(diff)) = verify(&build(&[("id", 8.into())], "uno")) else {
+        panic!("tenía que rechazar");
+    };
+    assert!(
+        diff.contains("-      7") && diff.contains("+      8"),
+        "{diff}"
+    );
+}
+
+#[test]
+fn the_default_user_agent_is_signed_without_the_version() {
+    let e = env(ENV);
+    let canonical = plan(SCENARIO, &e).canonical(&e).to_string();
+    assert!(canonical.contains("crabfall/<version>"), "{canonical}");
+    assert!(!canonical.contains(DEFAULT_USER_AGENT), "{canonical}");
+
+    // Uno puesto en el escenario se firma tal cual.
+    let custom = SCENARIO.replace(
+        "url: /products }",
+        "url: /products, headers: { User-Agent: mi-cliente/1 } }",
+    );
+    let canonical = plan(&custom, &e).canonical(&e).to_string();
+    assert!(canonical.contains("mi-cliente/1"), "{canonical}");
+    assert!(!canonical.contains("crabfall/<version>"), "{canonical}");
 }

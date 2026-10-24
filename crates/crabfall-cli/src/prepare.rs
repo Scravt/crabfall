@@ -10,6 +10,7 @@ use crabfall_core::{
     config::{Config, Environment},
     data::Dataset,
     engine::plan::{Inputs, Plan},
+    overrides::Overrides,
     project::{Project, describe},
     scenario::Scenario,
     validate,
@@ -23,67 +24,110 @@ pub struct Prepared {
     pub env_name: String,
     pub env: Environment,
     pub path: PathBuf,
-    pub plan: Plan,
+    pub plan: std::sync::Arc<Plan>,
     /// `--var` y ajustes de la CLI aplicados, como flags (`--rate 100/s`), listos para repetir.
     pub tweaks: Vec<String>,
 }
 
 /// Imprime los errores en stderr y devuelve el código de salida si algo falla.
 pub fn prepare(target: &crate::Target) -> Result<Prepared, u8> {
-    let (arg, env_name, vars) = (&target.scenario, target.env.as_deref(), &target.vars);
-    let fail = |code: u8, msg: String| {
-        eprintln!("✗ {msg}");
-        code
-    };
+    let overrides = target.tweaks.overrides();
+    prepare_with(
+        &target.scenario,
+        target.env.as_deref(),
+        &target.vars,
+        &overrides,
+    )
+    .map_err(|lines| {
+        for line in lines {
+            eprintln!("{line}");
+        }
+        exit::INVALID
+    })
+}
 
+/// Proyecto, entorno, escenario con los ajustes y plan. Si algo falla, el porqué en líneas
+/// (la primera con ✗), listas para mostrar en la terminal o en la TUI.
+pub fn prepare_with(
+    arg: &str,
+    env_name: Option<&str>,
+    vars: &[String],
+    overrides: &Overrides,
+) -> Result<Prepared, Vec<String>> {
     let project = std::env::current_dir()
         .ok()
         .and_then(|cwd| Project::discover(&cwd))
         .ok_or_else(|| {
-            fail(
-                exit::INVALID,
-                "no encontré .crabfall/ en este directorio ni en los superiores".into(),
-            )
+            vec![format!(
+                "✗ {}",
+                crabfall_core::tr!(
+                    "no .crabfall/ found in this directory or its parents",
+                    "no encontré .crabfall/ en este directorio ni en los superiores"
+                )
+            )]
         })?;
-    let config = project.load_config().map_err(|e| fail(exit::INVALID, e))?;
-    let (env_name, env) = config
-        .environment(env_name)
-        .map_err(|e| fail(exit::INVALID, e))?;
+    prepare_in(project, arg, env_name, vars, overrides)
+}
+
+/// Como `prepare_with`, en un proyecto ya encontrado (la TUI, los tests).
+pub fn prepare_in(
+    project: Project,
+    arg: &str,
+    env_name: Option<&str>,
+    vars: &[String],
+    overrides: &Overrides,
+) -> Result<Prepared, Vec<String>> {
+    let fail = |msg: String| vec![format!("✗ {msg}")];
+    let config = project.load_config().map_err(fail)?;
+    let (env_name, env) = config.environment(env_name).map_err(fail)?;
     let env = env.clone();
 
     let path = Project::scenario_path(Some(&project), arg);
     let text = std::fs::read_to_string(&path).map_err(|e| {
-        fail(
-            exit::INVALID,
-            format!("no se pudo leer {}: {e}", display(&path)),
-        )
+        fail(crabfall_core::tr!(
+            "could not read {}: {e}",
+            "no se pudo leer {}: {e}",
+            display(&path)
+        ))
     })?;
     let mut scenario = validate::parse_scenario(&text).map_err(|report| {
-        eprintln!(
+        let mut lines = vec![crabfall_core::tr!(
+            "✗ {} is not valid (run `crabfall validate`):",
             "✗ {} no es válido (corré `crabfall validate`):",
             display(&path)
+        )];
+        lines.extend(
+            report
+                .errors
+                .iter()
+                .chain(&report.todos)
+                .map(|issue| format!("  {}", describe(issue))),
         );
-        for issue in report.errors.iter().chain(&report.todos) {
-            eprintln!("  {}", describe(issue));
-        }
-        exit::INVALID
+        lines
     })?;
-    let overrides = target.tweaks.overrides();
     let problems = overrides.apply(&mut scenario);
     if !problems.is_empty() {
-        eprintln!("✗ los ajustes no sirven para {}:", scenario.name);
-        for issue in &problems {
-            eprintln!("  {}", describe(issue));
-        }
-        return Err(exit::INVALID);
+        let mut lines = vec![crabfall_core::tr!(
+            "✗ the tweaks do not fit {}:",
+            "✗ los ajustes no sirven para {}:",
+            scenario.name
+        )];
+        lines.extend(
+            problems
+                .iter()
+                .map(|issue| format!("  {}", describe(issue))),
+        );
+        return Err(lines);
     }
-    let inputs = inputs(&project, &config, &scenario, vars).map_err(|e| fail(exit::INVALID, e))?;
+    let inputs = inputs(&project, &config, &scenario, vars).map_err(fail)?;
     let plan = Plan::build(&scenario, &env, &inputs).map_err(|errors| {
-        eprintln!("✗ no se puede armar {} en `{env_name}`:", scenario.name);
-        for e in errors {
-            eprintln!("  {e}");
-        }
-        exit::INVALID
+        let mut lines = vec![crabfall_core::tr!(
+            "✗ {} cannot be built in `{env_name}`:",
+            "✗ no se puede armar {} en `{env_name}`:",
+            scenario.name
+        )];
+        lines.extend(errors.into_iter().map(|e| format!("  {e}")));
+        lines
     })?;
 
     Ok(Prepared {
@@ -91,7 +135,7 @@ pub fn prepare(target: &crate::Target) -> Result<Prepared, u8> {
         env_name,
         env,
         path,
-        plan,
+        plan: std::sync::Arc::new(plan),
         tweaks: vars
             .iter()
             .map(|v| format!("--var {v}"))
@@ -111,9 +155,12 @@ pub fn inputs(
 ) -> Result<Inputs, String> {
     let mut parsed = BTreeMap::new();
     for var in vars {
-        let (name, raw) = var
-            .split_once('=')
-            .ok_or_else(|| format!("--var `{var}`: usá nombre=valor"))?;
+        let (name, raw) = var.split_once('=').ok_or_else(|| {
+            crabfall_core::tr!(
+                "--var `{var}`: use name=value",
+                "--var `{var}`: usá nombre=valor"
+            )
+        })?;
         // `42` es un número, `true` un booleano y el resto un string, como en YAML.
         let value = validate::parse_yaml::<Value>(raw)
             .ok()

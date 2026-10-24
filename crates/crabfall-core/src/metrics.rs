@@ -69,8 +69,16 @@ fn round(x: f64) -> f64 {
 
 /// Lo que produce cada request.
 pub enum Outcome {
-    Response { status: u16, timings: Timings },
-    Failure { kind: FailureKind, message: String },
+    Response {
+        status: u16,
+        timings: Timings,
+        /// Lo que dijo del rate limit, si fue un 429.
+        limit: Option<Box<crate::ratelimit::Sample>>,
+    },
+    Failure {
+        kind: FailureKind,
+        message: String,
+    },
 }
 
 struct CheckCount {
@@ -82,6 +90,7 @@ struct CheckCount {
 
 struct StepStats {
     requests: u64,
+    rate_limit: Option<crate::ratelimit::Summary>,
     traffic: Traffic,
     statuses: BTreeMap<u16, u64>,
     failures: BTreeMap<FailureKind, u64>,
@@ -99,6 +108,7 @@ impl StepStats {
         Self {
             requests: 0,
             traffic: Traffic::default(),
+            rate_limit: None,
             statuses: BTreeMap::new(),
             failures: BTreeMap::new(),
             error_samples: Vec::new(),
@@ -244,8 +254,15 @@ impl Collector {
         s.requests += 1;
         add(&mut s.traffic, traffic);
         match outcome {
-            Outcome::Response { status, timings } => {
+            Outcome::Response {
+                status,
+                timings,
+                limit,
+            } => {
                 *s.statuses.entry(status).or_default() += 1;
+                if let Some(l) = limit {
+                    s.rate_limit.get_or_insert_default().add(&l);
+                }
                 record(&mut s.latency, latency);
                 record(&mut s.ttfb, timings.ttfb);
                 for (h, d) in [
@@ -288,6 +305,29 @@ impl Collector {
 
     /// Serie por segundo, global y por paso.
     pub fn series(&self, plan: &Plan) -> Series {
+        let seconds: Vec<LiveSecond> = (0..self.windows.len()).map(|t| self.second(t)).collect();
+        let steps = plan
+            .steps()
+            .map(|p| StepSeries {
+                name: p.name.clone(),
+                points: seconds.iter().map(|s| s.steps[p.id].clone()).collect(),
+            })
+            .collect();
+        Series {
+            window_s: 1,
+            points: seconds.into_iter().map(|s| s.point).collect(),
+            steps,
+        }
+    }
+
+    /// Segundos con datos hasta ahora.
+    pub fn seconds(&self) -> usize {
+        self.windows.len()
+    }
+
+    /// El segundo `t` de la serie, global y por paso (en el orden de `plan.steps()`).
+    /// Un segundo sin eventos sale en cero.
+    pub fn second(&self, t: usize) -> LiveSecond {
         let quantiles = |h: &Option<Histogram<u64>>| match h {
             Some(h) if !h.is_empty() => {
                 let ms = |q: f64| Some(round(h.value_at_quantile(q) as f64 / 1000.0));
@@ -295,53 +335,37 @@ impl Collector {
             }
             _ => (None, None, None),
         };
-        let points = self
-            .windows
-            .iter()
-            .enumerate()
-            .map(|(t, w)| {
-                let (p50, p95, p99) = quantiles(&w.latency);
-                Point {
-                    t: t as u32,
-                    started: w.started,
-                    dropped: w.dropped,
-                    requests: w.requests,
-                    errors: w.errors,
-                    bytes_sent: w.traffic.sent,
-                    bytes_received: w.traffic.received,
-                    p50,
-                    p95,
-                    p99,
-                }
-            })
-            .collect();
-        let steps = plan
-            .steps()
-            .map(|p| StepSeries {
-                name: p.name.clone(),
-                points: self
-                    .windows
-                    .iter()
-                    .enumerate()
-                    .map(|(t, w)| {
-                        let s = &w.steps[p.id];
-                        let (p50, p95, p99) = quantiles(&s.latency);
-                        StepPoint {
-                            t: t as u32,
-                            requests: s.requests,
-                            errors: s.errors,
-                            p50,
-                            p95,
-                            p99,
-                        }
-                    })
-                    .collect(),
-            })
-            .collect();
-        Series {
-            window_s: 1,
-            points,
-            steps,
+        let empty = Window::new(self.steps.len());
+        let w = self.windows.get(t).unwrap_or(&empty);
+        let (p50, p95, p99) = quantiles(&w.latency);
+        LiveSecond {
+            point: Point {
+                t: t as u32,
+                started: w.started,
+                dropped: w.dropped,
+                requests: w.requests,
+                errors: w.errors,
+                bytes_sent: w.traffic.sent,
+                bytes_received: w.traffic.received,
+                p50,
+                p95,
+                p99,
+            },
+            steps: w
+                .steps
+                .iter()
+                .map(|s| {
+                    let (p50, p95, p99) = quantiles(&s.latency);
+                    StepPoint {
+                        t: t as u32,
+                        requests: s.requests,
+                        errors: s.errors,
+                        p50,
+                        p95,
+                        p99,
+                    }
+                })
+                .collect(),
         }
     }
 
@@ -432,6 +456,7 @@ impl Collector {
                     connect_ms: Percentiles::from(&s.connect),
                     tls_ms: Percentiles::from(&s.tls),
                     dns_ms: Percentiles::from(&s.dns),
+                    rate_limit: s.rate_limit,
                 }
             })
             .collect()
@@ -509,6 +534,9 @@ pub struct StepResult {
     pub connect_ms: Option<Percentiles>,
     pub tls_ms: Option<Percentiles>,
     pub dns_ms: Option<Percentiles>,
+    /// Lo que dijeron sus respuestas 429 del rate limit (`Retry-After` y la política).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rate_limit: Option<crate::ratelimit::Summary>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -542,6 +570,12 @@ pub struct Totals {
 pub struct RunResult {
     /// Verdadero si la corrida terminó y pasaron todos los thresholds.
     pub passed: bool,
+    /// El segundo en que la persona frenó la corrida, si la frenó (ADR-015).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stopped_at_s: Option<f64>,
+    /// La carga terminó porque un dataset `unique` se quedó sin filas.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data_exhausted: Option<DataExhausted>,
     pub duration_s: f64,
     /// Por qué no se generó carga, si el `setup` falló.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -564,6 +598,13 @@ pub struct RunResult {
     pub findings: Vec<crate::diagnose::Finding>,
     /// Serie por segundo: la materia prima del diagnóstico.
     pub series: Series,
+}
+
+/// Un dataset `unique` que se quedó sin filas, y en qué segundo.
+#[derive(Debug, Clone, Serialize)]
+pub struct DataExhausted {
+    pub dataset: String,
+    pub at_s: f64,
 }
 
 /// Cómo les fue a los VUs con `vu_setup`. No entra en las métricas de carga.
@@ -619,6 +660,8 @@ impl RunResult {
         Self {
             passed: false,
             duration_s: 0.0,
+            stopped_at_s: None,
+            data_exhausted: None,
             aborted: Some(reason),
             setup,
             vu_setup: None,
@@ -634,6 +677,14 @@ impl RunResult {
     }
 }
 
+/// Un segundo cerrado de la corrida, global y por paso: lo que se publica en vivo.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct LiveSecond {
+    pub point: Point,
+    /// En el orden de `Plan::steps`.
+    pub steps: Vec<StepPoint>,
+}
+
 /// Serie por segundo. `t` es el segundo desde el inicio de la carga.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Series {
@@ -642,7 +693,7 @@ pub struct Series {
     pub steps: Vec<StepSeries>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Point {
     pub t: u32,
     /// Iteraciones iniciadas en la ventana.
@@ -669,7 +720,7 @@ pub struct StepSeries {
     pub points: Vec<StepPoint>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StepPoint {
     pub t: u32,
     pub requests: u64,

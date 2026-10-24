@@ -1,17 +1,17 @@
 # Crabfall
 
-Herramienta de pruebas de carga en Rust, pensada para usarse junto a Claude Code:
-Claude diseña el escenario y analiza los resultados; una persona aprueba y ejecuta la carga.
+A load testing tool in Rust, built to be used together with Claude Code:
+Claude designs the scenario and analyzes the results; a person approves and runs the load.
 
-Estado: **rebanada 13** (bytes por segundo). Ya funcionan: diseño con Claude, aprobación firmada, escenarios con `setup`, `extract`, checks y thresholds, tres executors, diagnóstico, comparación de corridas, datasets, pausas entre pasos, ajustes de la corrida por flag, un reporte HTML por corrida, login por usuario virtual (`vu_setup`), renovación de tokens durante la carga (`vu_refresh`), subida de archivos (`multipart`) y bytes enviados y recibidos por segundo. Ver el [roadmap](docs/roadmap.md).
+Status: **v0.2.0** (slices 0 to 25; see [What's next](#whats-next)). Already working: design with Claude, signed approval (HMAC-SHA256 with the key in the system keyring; see [Approval](#approval-no-load-without-a-person)), runs requested by the agent and confirmed by a person in a window ([`--ask`](#letting-the-agent-ask-for-a-run---ask)), scenarios with `setup`, `extract`, checks and thresholds, three executors, diagnosis, run comparison, datasets, pauses between steps, per-run tweaks by flag, an HTML report per run, login per virtual user (`vu_setup`), token renewal during the load (`vu_refresh`), file uploads (`multipart`), bytes sent and received per second, an HTTP client with cookies, redirects, compression and forms, and output in English or Spanish. See the [roadmap](docs/roadmap.md) (in Spanish).
 
-## Uso
+## Usage
 
 ```bash
-cargo install --path crates/crabfall-cli    # instala `crabfall` en ~/.cargo/bin
+cargo install --path crates/crabfall-cli    # installs `crabfall` in ~/.cargo/bin
 ```
 
-En el repo a probar, creá `.crabfall/config.yaml`:
+In the repo under test, create `.crabfall/config.yaml`:
 
 ```yaml
 version: 1
@@ -20,10 +20,10 @@ environments:
   local:
     base_url: http://localhost:3000
     allowed_hosts: [localhost]
-    limits: { max_rps: 200 }      # opcional: requests/s, max_vus, max_duration
+    limits: { max_rps: 200 }      # optional: requests/s, max_vus, max_duration
 ```
 
-y un escenario en `.crabfall/scenarios/smoke.yaml`:
+and a scenario in `.crabfall/scenarios/smoke.yaml`:
 
 ```yaml
 version: 1
@@ -41,19 +41,103 @@ load:
 ```
 
 ```bash
-crabfall validate smoke              # --json para agentes
-crabfall check smoke                 # cada flow una vez, solo contra loopback
-crabfall approve smoke --env local   # resumen de riesgo; pide tipear el host
-crabfall run smoke --env local       # resultados en .crabfall/runs/<id>/results.json
+crabfall validate smoke              # --json for agents
+crabfall check smoke                 # each flow once, only against loopback
+crabfall approve smoke --env local   # risk summary; asks you to type the host
+crabfall run smoke --env local       # results in .crabfall/runs/<id>/results.json
+crabfall run smoke --env local --ask # asks first: what Claude uses, in a window
 ```
 
-`crabfall run` solo ejecuta escenarios aprobados. La aprobación firma el escenario junto con el entorno resuelto: cualquier cambio en el tráfico la invalida y `crabfall run` muestra qué cambió. Se aprueba en una terminal interactiva; la clave de firma vive en el keyring del sistema ([ADR-004](docs/adr/ADR-004-aprobacion.md)).
+### Approval: no load without a person
 
-Para que cada iteración use datos distintos (usuarios, IDs), declarás archivos CSV o JSON en `data:` y los usás como `{{dataset.columna}}`:
+`crabfall run` only runs a scenario that a person approved, exactly as it is now. The guard lives in the `crabfall` binary, not in Claude Code's permissions, because Claude can edit any file in the repo ([ADR-004](docs/adr/ADR-004-aprobacion.md)).
+
+1. **What gets signed: the canonical plan.** `crabfall approve` resolves the scenario against the environment and the flags, and builds a canonical JSON of the traffic it will send:
+   - each request with its URL already resolved against `base_url`, method, headers, body and timeout; the flow weights; `setup`, `extract`, `vu_setup` and `vu_refresh`;
+   - the resolved load (executor, rate, duration, VUs, stages, pauses), including every tweak by flag;
+   - the environment's `base_url`, `allowed_hosts`, `vars` and `limits`;
+   - the SHA-256 of every dataset and every uploaded file (their content, not just their path);
+   - the `user-agent`; the default one is signed as `crabfall/<version>`, so upgrading Crabfall keeps your approvals.
+
+   Secret values never enter, only their names. `description`, `checks`, `thresholds` and `source` are left out: they don't change the traffic. The SHA-256 of that JSON is the plan's **fingerprint**.
+2. **The key.** The first approval generates 32 random bytes and stores them in the system keyring (Windows Credential Manager, macOS Keychain, Secret Service on Linux) as `crabfall` / `approval-key`. The key is never written in the repo.
+3. **The signature.** HMAC-SHA256 with that key over the format version, scenario, environment, fingerprint, date and approver. It goes in `.crabfall/approvals/<scenario>.<env>.json`, together with the approved plan (used for the diff). Approvals are not committed: the key belongs to one machine.
+4. **The person.** `crabfall approve` refuses unless stdin and stderr are an interactive terminal. It shows the risk summary (hosts, rate, VUs, duration, steps that write, data, the diff against the last approval), refuses plans over the environment's `limits`, and asks you to **type the target host**: a `y` is not enough.
+5. **The verification.** Every `crabfall run` recomputes the HMAC with the key from the keyring, checks that the stored plan matches its fingerprint, rebuilds the plan from what is on disk now and compares fingerprints. If anything differs, it refuses with exit code `3` and shows the diff between what was approved and what there is now.
+
+What that stops:
+
+| Attempt | Result |
+| --- | --- |
+| Editing the scenario after approving it (rate, a URL, a body) | The fingerprint changes: refused, with the diff |
+| Leaving the scenario alone and pointing the environment elsewhere (`base_url`, `allowed_hosts`, `limits`, `vars`) | The environment is in the fingerprint: refused |
+| Changing a dataset row or the uploaded file | Their SHA-256 is in the fingerprint: refused |
+| Running with other flags (`--rate 500/s` approved as `--rate 50/s`) | The tweaks are in the fingerprint: refused |
+| Writing or editing an approval file by hand, or copying another scenario's | Without the key there is no valid HMAC; scenario and environment are signed |
+| `yes \| crabfall approve`, `echo host \| crabfall approve` | No interactive terminal: refused |
+| Claude running `crabfall approve` or `crabfall run` | The `PreToolUse` hook from `crabfall claude install` blocks it first (an extra layer, not the guard); only `crabfall run --ask` gets through, and a person confirms it in a window |
+
+Updating Crabfall invalidates the approvals too, since the `user-agent` changes: the traffic is different. Approvals do not expire; they last until something changes.
+
+What it does **not** stop: someone acting deliberately with your user account. Any process running as you can read the keyring key, emulate a terminal, or send load without Crabfall (a `curl` loop). `approved_by` is a signed label, not an authentication. The guard prevents accidents and misuse of this tool; it does not replace trust in the agent or the security of the machine. Without a person or a keyring, approving in CI is not supported yet.
+
+### Letting the agent ask for a run: `--ask`
+
+So that Claude can iterate (run, compare against the baseline, change the API's code, run again) without you typing each command, it runs `crabfall run <name> --env <env> --ask` ([ADR-017](docs/adr/ADR-017-confirmacion-en-ventana.md)):
+
+1. Crabfall builds and checks the plan and the `limits` first: errors go back to Claude without bothering you.
+2. It opens a **new console window** with the risk summary. If the plan has no valid approval (first time, or it changed), it shows the diff and asks you to type the host, as `crabfall approve` does. If it is approved, answering `y` is enough.
+3. Instead of `y`, you can answer a number of **minutes (1-120)**: the same plan runs without asking for that long. After typing the host, the same question comes as an optional step (Enter just runs it). The allowance is signed with the same key, is tied to the plan's fingerprint (any change to the scenario asks again; a change on the server, like dropping an index, doesn't) and is revoked by deleting `.crabfall/approvals/<scenario>.<env>.allow.json`.
+4. **The load runs in that window**, with its progress: Ctrl+C stops it, whatever Claude does. At the end it shows the summary and closes after 30 s (or Enter).
+5. Claude's command prints where the results are and exits with the run's code; Claude reads them with `crabfall findings --json` and `crabfall compare --baseline --json`.
+
+Nobody answering in 5 minutes cancels it (exit code `3`), and so does closing the window. `--window`, the flag the window uses internally, refuses unless its console is new and visible, so it cannot confirm anything from Claude's console or a shared terminal. In a terminal, `--ask` asks right there.
+
+The window opens on Windows (a new console) and on Linux with a desktop (`DISPLAY` or `WAYLAND_DISPLAY`; WSL2 with WSLg works). On Linux it uses `$TERMINAL` if set, or the first of `x-terminal-emulator`, gnome-terminal, ptyxis, konsole, xfce4-terminal, mate-terminal, kitty, alacritty, wezterm, foot and xterm; there `--window` checks that it runs straight under a known terminal, in a session of its own. On Linux the approval key lives in the Secret Service (GNOME Keyring or KWallet), which has to be running and unlocked. On macOS, and without a desktop (SSH, Claude Code on the web), `--ask` refuses and asks you to run the command.
+
+Against a deliberately malicious agent this is no stronger than the rest: same-user processes can type into that window (`SendInput`), read the keyring key or send load without Crabfall. What would resist is keeping the agent away from the target and the key (Claude Code's sandbox with a network allowlist, a container or a VM), or making the target require a short-lived token issued off the agent's machine; ADR-017 compares the options.
+
+The only thing that needs no approval is `crabfall check`: each flow once, in series, at most 50 requests, and only to hosts that resolve to loopback, redirects included.
+
+### Terminal UI
+
+Run `crabfall` without a subcommand, in a terminal, to open the TUI ([ADR-015](docs/adr/ADR-015-tui.md)):
+
+- **Pick** a scenario and the environment (`e`), with each scenario's approval state, its last run and its full description.
+- **Tweak** rate, duration, VUs, pauses, renewal and thresholds; the plan is rebuilt as you type, and it shows the equivalent `crabfall` command.
+- **Check** (`c`), **approve** (`a`, typing the host) and **run** (`r`). A line at the top shows these three steps and what to do next; below the tweaks, what the selected one means, with an example.
+- **Watch it live**: the last second against what you asked for, p95 and errors per second, the steps, and warnings as they happen. `q` stops it, the same way Ctrl+C does.
+- **Results** in tabs, and `o` opens the HTML report.
+- **History** (`h`): the scenario's runs, newest first. Enter chooses a run and Enter on another compares them; `c` compares the selected one with the previous run; `b` sets it as the baseline.
+- **Help**: `?` on any screen explains it; the bottom lines always show its keys, wrapped to fit a narrow terminal. After a run, the summary lists what to do next; `m` goes back to the menu from any screen.
+
+The HTML report is still the place to analyze and share a run; the TUI is for operating it.
+
+To stop a run, press Ctrl+C: it stops starting iterations, waits for the ones in progress and saves what ran, marked as stopped. A second Ctrl+C cuts them right away.
+
+### Language
+
+Crabfall prints in English by default. To use Spanish, any of these works, from highest to lowest priority ([ADR-016](docs/adr/ADR-016-idioma.md)):
+
+```bash
+crabfall run smoke --env local --lang es    # one command
+export CRABFALL_LANG=es                     # this shell
+```
+
+```yaml
+# .crabfall/config.yaml: this project
+language: es
+```
+
+Everything follows it: the terminal output, validation errors, findings, the help and the HTML report. The scenario keys (`flows`, `load`, `checks`…) are always in English.
+
+### Data per iteration
+
+For each iteration to use different data (users, IDs), declare CSV or JSON files in `data:` and use them as `{{dataset.column}}`:
 
 ```yaml
 data:
-  users: { file: data/users.csv }    # .crabfall/data/users.csv, con encabezado user,password
+  users: { file: data/users.csv }    # .crabfall/data/users.csv, with header user,password
 flows:
   main:
     steps:
@@ -62,12 +146,14 @@ flows:
           method: POST
           url: /auth/login
           json: { user: "{{users.user}}", password: "{{users.password}}" }
-        think: 1s-3s                  # pausa después del paso, como una persona
+        think: 1s-3s                  # pause after the step, like a person
 ```
 
-Cada iteración toma una fila, en orden o al azar (`pick: random`). Editar el archivo invalida la aprobación ([ADR-007](docs/adr/ADR-007-datasets.md)). `think` también va en `defaults` para todos los pasos; no cuenta en la latencia y `crabfall check` lo ignora.
+Each iteration takes a row, in order, at random (`pick: random`) or each row only once (`pick: unique`, for example to register users; when the rows run out, the load ends there). Editing the file invalidates the approval ([ADR-007](docs/adr/ADR-007-datasets.md)). `think` also goes in `defaults` for every step; it does not count in the latency and `crabfall check` ignores it.
 
-Para APIs con sesión, `vu_setup` corre una vez por usuario virtual, antes de la carga: cada VU hace su login con su fila del dataset y usa su token en todas sus iteraciones, sin medir el login en cada una:
+### Sessions
+
+For APIs with sessions, `vu_setup` runs once per virtual user, before the load: each VU logs in with its dataset row and uses its token in all its iterations, without measuring the login in each one:
 
 ```yaml
 vu_setup:
@@ -78,90 +164,136 @@ defaults:
   headers: { Authorization: "Bearer {{token}}" }
 ```
 
-Se prepara un VU por cada `vus` (o `max_vus`); el resumen de `crabfall approve` muestra cuántos logins son ([ADR-010](docs/adr/ADR-010-setup-por-vu.md)).
+One VU is prepared per `vus` (or `max_vus`); the `crabfall approve` summary shows how many logins that is ([ADR-010](docs/adr/ADR-010-setup-por-vu.md)).
 
-Si el token vence durante la carga, `vu_refresh` lo renueva en segundo plano, sin cortar iteraciones ni sumarse a sus métricas. Con un refresh token:
+If the token expires during the load, `vu_refresh` renews it in the background, without cutting iterations or adding to their metrics. With a refresh token:
 
 ```yaml
 vu_refresh:
-  every: 4m             # menos que la vida del token
+  every: 4m             # less than the token lifetime
   steps:
     - name: refresh
       request: { method: POST, url: /auth/refresh, json: { refresh_token: "{{refresh_token}}" } }
       extract: { token: { json: $.access_token }, refresh_token: { json: $.refresh_token } }
 ```
 
-Sin `steps`, repite `vu_setup` (login de nuevo). `--refresh-every 4m` lo ajusta por flag. Un VU que no puede renovar deja de iterar ([ADR-011](docs/adr/ADR-011-renovacion-de-sesion.md)).
+Without `steps`, it repeats `vu_setup` (logs in again). `--refresh-every 4m` sets it by flag. A VU that cannot renew stops iterating ([ADR-011](docs/adr/ADR-011-renovacion-de-sesion.md)).
 
-Para subir archivos, `multipart` arma un body `multipart/form-data` con archivos de `.crabfall/` y campos de texto:
+### Uploads and traffic
+
+To upload files, `multipart` builds a `multipart/form-data` body with files from `.crabfall/` and text fields:
 
 ```yaml
 request:
   method: POST
   url: /files
   multipart:
-    file: { file: files/adjunto.bin, filename: "adjunto-{{$uuid}}.bin" }
-    description: "subido por {{users.email}}"
+    file: { file: files/attachment.bin, filename: "attachment-{{$uuid}}.bin" }
+    description: "uploaded by {{users.email}}"
 ```
 
-El archivo se lee una vez y va entero en cada request (hasta 100 MB). El tipo sale de la extensión, o de `content_type`. La aprobación firma su contenido ([ADR-012](docs/adr/ADR-012-multipart.md)).
+The file is read once and sent whole in each request (up to 100 MB). Its type comes from the extension, or from `content_type`. The approval signs its content ([ADR-012](docs/adr/ADR-012-multipart.md)).
 
-Con archivos grandes conviene mirar el tráfico: `crabfall run` muestra los bytes enviados y recibidos por el socket (headers, body y TLS), con el promedio y el pico por segundo, y el reporte los grafica ([ADR-013](docs/adr/ADR-013-trafico.md)):
+With large files, watch the traffic: `crabfall run` shows the bytes sent and received on the socket (headers, body and TLS), with the average and the peak per second, and the report charts them ([ADR-013](docs/adr/ADR-013-trafico.md)):
 
 ```
-tráfico      enviados 137.4 MB (2.1 MB/s, pico 4.3 MB/s = 36 Mbit/s)  recibidos 137.6 MB (2.1 MB/s, pico 4.1 MB/s = 34 Mbit/s)
+traffic      sent 137.4 MB (2.1 MB/s, peak 4.3 MB/s = 36 Mbit/s)  received 137.6 MB (2.1 MB/s, peak 4.1 MB/s = 34 Mbit/s)
 ```
 
-### Ajustes sin editar el YAML
+### Cookies, redirects and compression
 
-`validate`, `check`, `approve` y `run` aceptan flags que pisan al escenario para esa corrida. Son lo que tendría un panel de personalización:
+Crabfall behaves like a real client ([ADR-014](docs/adr/ADR-014-cliente-http-real.md)):
+
+- **Cookies:** each VU keeps the cookies the server sends and sends them back, from its `vu_setup` to its last iteration. An API with cookie sessions works without `extract`. `cookies: false` at the root turns them off.
+- **Redirects:** each step follows up to 10, only to hosts in `allowed_hosts`; the latency includes every hop. `redirects: 0` in the request (or in `defaults`) follows none.
+- **Compression:** each request asks for `gzip, br`; checks and `extract` see the decompressed body and the bytes count the compressed one. `accept-encoding: identity` in the headers asks for no compression.
+
+For a classic form, `form` builds an `application/x-www-form-urlencoded` body:
+
+```yaml
+request:
+  method: POST
+  url: /login
+  form: { username: "{{users.email}}", password: "{{users.password}}", remember: true }
+```
+
+`crabfall approve` shows how the client will behave in an `HTTP` line. When a server answers 429, Crabfall reads its `Retry-After` and declared policy, and the finding states the limit with numbers.
+
+### Tweaks without editing the YAML
+
+`validate`, `check`, `approve` and `run` accept flags that override the scenario for that run:
 
 ```bash
 crabfall run checkout --env local --rate 100/s --duration 2m --think 1s-3s
 crabfall run checkout --executor constant_vus --vus 20 --duration 5m
 crabfall run checkout --executor ramping_rate --stages 50/s:1m,200/s:3m,0/s:30s
-crabfall run login-users --data users=data/otros.csv --pick users=random
+crabfall run login-users --data users=data/others.csv --pick users=random
 crabfall run shop-per-user --duration 10m --refresh-every 4m
 crabfall run checkout --threshold "http.latency.p95<300ms" --threshold "http.error_rate<1%"
 ```
 
-Lista completa en `crabfall run --help`. Los que cambian el tráfico los firma la aprobación: pasá los mismos a `crabfall approve` y a `crabfall run`. `--threshold` reemplaza a los del YAML y no hace falta volver a aprobar ([ADR-008](docs/adr/ADR-008-think-time-y-ajustes.md)).
+Full list in `crabfall run --help`. The approval signs the ones that change the traffic: pass the same ones to `crabfall approve` and `crabfall run`. `--threshold` replaces the YAML ones and needs no new approval ([ADR-008](docs/adr/ADR-008-think-time-y-ajustes.md)).
 
-## Con Claude Code
+## With Claude Code
 
 ```bash
-crabfall claude install              # en el repo a probar: skill, hook y permisos en .claude/
+crabfall claude install              # in the repo under test: skill, hook and permissions in .claude/
 ```
 
-Después, en una sesión de Claude Code: *"armame una prueba de carga del flujo de compra"*. Claude lee el código, escribe el escenario, lo verifica con `crabfall validate` y `crabfall check` (solo contra loopback) y te pasa los comandos `crabfall approve` y `crabfall run` para que los ejecutes vos. No puede aprobar ni ejecutar por su cuenta (ADR-001, ADR-004).
+Then, in a Claude Code session: *"build me a load test of the checkout flow"*. Claude reads the code, writes the scenario, checks it with `crabfall validate` and `crabfall check` (only against loopback) and hands you the `crabfall approve` and `crabfall run` commands to run yourself. It cannot approve or run on its own ([ADR-001](docs/adr/ADR-001-claude-first.md), ADR-004): when it wants to run, it uses `crabfall run --ask`, and you confirm each run in a window (or allow the same plan for some minutes) while it compares the results and keeps working on the code ([`--ask`](#letting-the-agent-ask-for-a-run---ask)).
 
-`crabfall findings [--json]` muestra los hallazgos de la última corrida (o de una por id). `crabfall compare [base] [nueva] [--json]` compara dos corridas (por defecto, la última con la anterior del mismo escenario): qué mejoró, qué empeoró y si el cambio es consistente o puede ser ruido ([ADR-006](docs/adr/ADR-006-comparacion.md)). `crabfall schema` imprime el JSON Schema del escenario.
+`crabfall findings [--json]` shows the findings of the last run (or of one by id). `crabfall compare [base] [new] [--json]` compares two runs (by default, the last one with the previous one of the same scenario): what improved, what got worse and whether the change is consistent or may be noise ([ADR-006](docs/adr/ADR-006-comparacion.md)). To compare against an accepted reference instead of the previous run, set a baseline with `crabfall baseline [run]` (it goes in `.crabfall/baselines/`; commit it to share it) and use `crabfall compare --baseline`. In the TUI history, `b` sets it. `crabfall schema` prints the JSON Schema of the scenario.
 
-Cada `crabfall run` deja además `report.html` al lado de `results.json`: un archivo que se abre sin conexión, con gráficos por segundo (iteraciones, latencia, p95 por paso), los hallazgos con la ventana sombreada, la comparación con la corrida anterior y las tablas. `crabfall report [corrida] --open` lo regenera y lo abre en el navegador ([ADR-009](docs/adr/ADR-009-reporte-html.md)).
+Each `crabfall run` also leaves `report.html` next to `results.json`: a file that opens offline, with per-second charts (iterations, latency, p95 per step, traffic), the findings with their window shaded, the comparison with the previous run and the tables. `crabfall report [run] --open` regenerates it and opens it in the browser ([ADR-009](docs/adr/ADR-009-reporte-html.md)).
 
-Códigos de salida: `0` ok · `1` `check` con pasos fallidos, thresholds no cumplidos, `setup` fallido o `compare` con regresiones · `2` escenario o configuración inválidos · `3` rechazado (sin aprobación válida, host no permitido, límites, sin terminal) · `4` error al guardar o al acceder al keyring.
+Exit codes: `0` ok · `1` `check` with failed steps, thresholds not met, `setup` failed or `compare` with regressions · `2` invalid scenario or configuration · `3` refused (no valid approval, host not allowed, limits, no terminal, or nobody confirmed `--ask`) · `4` error saving or accessing the keyring.
 
-Formato completo del escenario: [ADR-002](docs/adr/ADR-002-formato-escenario.md).
+Full scenario format: [ADR-002](docs/adr/ADR-002-formato-escenario.md).
 
-## Desarrollo
+## What's next
+
+Still to try for real (the code is done): TLS, compression behind Caddy and the bandwidth diagnosis against a remote server; the skill in a fresh Claude Code session; the TUI with someone who has never seen it.
+
+**v0.3:**
+- An MCP server.
+- Importers: OpenAPI, curl, Postman.
+- More diagnosis rules, after comparing what other tools detect, and deciding whether rules can be customized or stay fixed in the engine.
+
+**Later, in no particular order:** the `--ask` window on macOS; defenses against a deliberately malicious agent (running it in a sandbox, a short-lived token required by the target); approving in CI without a person, and a GitHub Action; correlation with server metrics (OTLP, Prometheus); HTTP/2, WebSockets, gRPC, Kafka; choosing when to renew a session from `expires_in`; a desktop GUI. New load models (`ramping_vus`, fixed iterations, per-VU arrival) come last.
+
+Details, in Spanish, in the [roadmap](docs/roadmap.md).
+
+## Development
 
 ```bash
 cargo test --workspace
-cargo run --release -p lab-server -- --port 3999   # servidor de laboratorio
+cargo run --release -p lab-server -- --port 3999   # lab server
 ```
 
-Para probar contra una API más realista: [shop-api](../shop-api) (repo aparte), con escenarios en su `.crabfall/`.
+The tests check the Spanish messages, so `.cargo/config.toml` sets `CRABFALL_LANG=es` for processes started by cargo in this workspace; English has its own tests (`tests/english.rs` in both crates). An installed `crabfall` still defaults to English.
 
-## Documentación
+CI (`.github/workflows/ci.yml`) runs `cargo fmt --check` and `clippy` on Linux, and the tests on Linux and Windows, on every push to `main` or `dev` and on every pull request. Warnings count as errors. On Windows the diagnosis pathologies are skipped (`CRABFALL_SKIP_TIMING_TESTS=1`): they measure real time and that 2-core runner cannot keep the load schedule. The engine tests still run there, without requiring the absence of the "scheduler fell behind" warning.
+
+To test against more realistic APIs: [shop-api](../shop-api) (local, with planted performance problems) and [market-api](../market-api) (Postgres, JWT, rate limit and uploads), separate repos with scenarios in their `.crabfall/`.
+
+## Documentation
+
+The architecture decision records and the roadmap are in Spanish.
 
 - [Roadmap](docs/roadmap.md)
 - [ADR-001 — Claude-first](docs/adr/ADR-001-claude-first.md)
-- [ADR-002 — Formato del escenario](docs/adr/ADR-002-formato-escenario.md)
-- [ADR-003 — hyper y scheduler](docs/adr/ADR-003-hyper-y-scheduler.md)
-- [ADR-004 — Aprobación y modelo de amenaza](docs/adr/ADR-004-aprobacion.md)
-- [ADR-005 — Diagnóstico](docs/adr/ADR-005-diagnostico.md)
-- [ADR-006 — Comparar corridas](docs/adr/ADR-006-comparacion.md)
+- [ADR-002 — Scenario format](docs/adr/ADR-002-formato-escenario.md)
+- [ADR-003 — hyper and the scheduler](docs/adr/ADR-003-hyper-y-scheduler.md)
+- [ADR-004 — Approval and threat model](docs/adr/ADR-004-aprobacion.md)
+- [ADR-005 — Diagnosis](docs/adr/ADR-005-diagnostico.md)
+- [ADR-006 — Comparing runs](docs/adr/ADR-006-comparacion.md)
 - [ADR-007 — Datasets](docs/adr/ADR-007-datasets.md)
-- [ADR-008 — Think time y ajustes por flag](docs/adr/ADR-008-think-time-y-ajustes.md)
-- [ADR-009 — Reporte HTML](docs/adr/ADR-009-reporte-html.md)
-- [ADR-010 — Setup por VU](docs/adr/ADR-010-setup-por-vu.md)
+- [ADR-008 — Think time and tweaks by flag](docs/adr/ADR-008-think-time-y-ajustes.md)
+- [ADR-009 — HTML report](docs/adr/ADR-009-reporte-html.md)
+- [ADR-010 — Setup per VU](docs/adr/ADR-010-setup-por-vu.md)
+- [ADR-011 — Session renewal](docs/adr/ADR-011-renovacion-de-sesion.md)
+- [ADR-012 — File uploads (multipart)](docs/adr/ADR-012-multipart.md)
+- [ADR-013 — Bytes sent and received](docs/adr/ADR-013-trafico.md)
+- [ADR-014 — Cookies, redirects, compression and forms](docs/adr/ADR-014-cliente-http-real.md)
+- [ADR-015 — Terminal TUI](docs/adr/ADR-015-tui.md)
+- [ADR-016 — Output language](docs/adr/ADR-016-idioma.md)

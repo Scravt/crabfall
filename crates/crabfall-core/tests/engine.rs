@@ -18,6 +18,16 @@ use crabfall_core::{
 use serde_json::{Value, json};
 use tokio::net::TcpListener;
 
+/// Sin avisos, salvo con `CRABFALL_SKIP_TIMING_TESTS=1`: el runner de Windows del CI (2 núcleos)
+/// a veces no sostiene el calendario y el motor avisa, con razón, que el scheduler llegó tarde.
+/// Las cuentas se verifican igual; solo se saltea el aviso.
+fn assert_no_warnings(warnings: &[String]) {
+    if std::env::var("CRABFALL_SKIP_TIMING_TESTS").is_ok_and(|v| v == "1") {
+        return;
+    }
+    assert!(warnings.is_empty(), "{warnings:?}");
+}
+
 /// Devuelve lo que recibió: target, header Authorization y body.
 async fn echo(request: axum::extract::Request) -> Json<Value> {
     let (parts, body) = request.into_parts();
@@ -100,7 +110,7 @@ async fn keeps_rate_and_splits_flows_by_weight() {
     assert_eq!(r.totals.planned, 200);
     assert_eq!(r.totals.started, 200);
     assert_eq!(r.totals.dropped, 0);
-    assert!(r.warnings.is_empty(), "{:?}", r.warnings);
+    assert_no_warnings(&r.warnings);
 
     let by_name = |n: &str| r.steps.iter().find(|s| s.name == n).unwrap();
     assert_eq!(by_name("ok").requests, 150);
@@ -526,7 +536,7 @@ async fn ramping_rate_follows_its_stages() {
         (r.totals.planned, r.totals.started, r.totals.dropped),
         (100, 100, 0)
     );
-    assert!(r.warnings.is_empty(), "{:?}", r.warnings);
+    assert_no_warnings(&r.warnings);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -624,14 +634,14 @@ fn datasets_hand_rows_in_order_only_to_flows_that_use_them() {
     let (s, inputs) = data_scenario("", "");
     let plan = Plan::build(&s, &environment("http://127.0.0.1:1"), &inputs).unwrap();
     let ids: Vec<Value> = (0..3)
-        .map(|_| plan.row_vars(&plan.flows[0])["users.id"].clone())
+        .map(|_| plan.row_vars(&plan.flows[0]).unwrap()["users.id"].clone())
         .collect();
     assert_eq!(ids, [json!("1"), json!("2"), json!("1")]);
     assert_eq!(
-        plan.row_vars(&plan.flows[0])["users.email"],
+        plan.row_vars(&plan.flows[0]).unwrap()["users.email"],
         json!("beto@x.com")
     );
-    assert!(plan.row_vars(&plan.flows[1]).is_empty());
+    assert!(plan.row_vars(&plan.flows[1]).unwrap().is_empty());
 }
 
 #[test]
@@ -1227,5 +1237,266 @@ async fn bytes_sent_before_a_timeout_still_count() {
         "{} bytes en {} requests",
         hang.bytes_sent,
         hang.requests
+    );
+}
+
+/// `/ok` responde ya; `/hang` tarda 5 s (para ver qué pasa con las iteraciones en curso).
+async fn stop_server() -> String {
+    let app = Router::new().route("/ok", get(|| async { "ok" })).route(
+        "/hang",
+        get(|| async {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            "tarde"
+        }),
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    format!("http://127.0.0.1:{}", addr.port())
+}
+
+fn stop_plan(base: &str, path: &str, root: &str, load: &str) -> Arc<Plan> {
+    let yaml = format!(
+        "version: 1\nname: stop\n{root}flows:\n  main:\n    steps:\n      - name: a\n        request: {{ method: GET, url: {path} }}\nload: {load}\n"
+    );
+    let s = parse_scenario(&yaml).unwrap_or_else(|r| panic!("{r:?}"));
+    Arc::new(Plan::build(&s, &environment(base), &Default::default()).unwrap())
+}
+
+/// Corre el plan y pide frenar `times` veces después de `after`.
+async fn run_and_stop(
+    plan: Arc<Plan>,
+    after: Duration,
+    times: u32,
+) -> (crabfall_core::metrics::RunResult, Arc<Progress>) {
+    let progress = Arc::new(Progress::default());
+    let p = progress.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(after).await;
+        for _ in 0..times {
+            p.stop();
+        }
+    });
+    let r = engine::run(plan, progress.clone()).await;
+    (r, progress)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn stopping_the_open_model_keeps_what_ran() {
+    let base = stop_server().await;
+    let plan = stop_plan(
+        &base,
+        "/ok",
+        "",
+        "{ executor: constant_rate, rate: 20/s, duration: 30s, max_vus: 5 }",
+    );
+    let (r, progress) = run_and_stop(plan, Duration::from_millis(1200), 1).await;
+    let at = r.stopped_at_s.expect("se frenó");
+    assert!((1.0..2.0).contains(&at), "frenó en {at}");
+    assert!(r.duration_s < 4.0, "duró {}", r.duration_s);
+    assert!(!r.passed);
+    assert!(
+        r.warnings[0].contains("Frenada por la persona"),
+        "{:?}",
+        r.warnings
+    );
+    let t = &r.totals;
+    assert!((15..=35).contains(&t.started), "{} iteraciones", t.started);
+    assert_eq!(t.planned, t.started + t.dropped);
+    assert_eq!(progress.phase(), engine::Phase::Done);
+    assert_eq!(progress.busy.load(std::sync::atomic::Ordering::Relaxed), 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn stopping_the_closed_model_ends_every_vu() {
+    let base = stop_server().await;
+    let plan = stop_plan(
+        &base,
+        "/ok",
+        "defaults: { think: 100ms }\n",
+        "{ executor: constant_vus, vus: 3, duration: 30s }",
+    );
+    let (r, _) = run_and_stop(plan, Duration::from_secs(1), 1).await;
+    assert!(r.stopped_at_s.is_some());
+    assert!(r.duration_s < 4.0, "duró {}", r.duration_s);
+    assert!(r.totals.started > 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn stopping_twice_cuts_the_iterations_in_flight() {
+    let base = stop_server().await;
+    // Con graceful_stop de 30 s, frenar una vez esperaría los 5 s de /hang; dos veces, no.
+    let plan = stop_plan(
+        &base,
+        "/hang",
+        "",
+        "{ executor: constant_rate, rate: 5/s, duration: 30s, max_vus: 10, graceful_stop: 30s }",
+    );
+    let (r, _) = run_and_stop(plan, Duration::from_millis(600), 2).await;
+    assert!(r.duration_s < 2.5, "duró {}", r.duration_s);
+    assert!(r.totals.interrupted > 0, "{:?}", r.totals);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn stopping_during_vu_setup_aborts_before_the_load() {
+    let base = stop_server().await;
+    let plan = stop_plan(
+        &base,
+        "/ok",
+        "vu_setup:\n  - name: login\n    request: { method: GET, url: /hang }\n",
+        "{ executor: constant_vus, vus: 2, duration: 30s }",
+    );
+    let (r, progress) = run_and_stop(plan, Duration::from_millis(200), 1).await;
+    let why = r.aborted.as_deref().expect("abortada");
+    assert!(why.contains("antes de la carga"), "{why}");
+    assert!(r.duration_s < 1.0, "no esperó a los logins en curso");
+    assert_eq!(r.totals.started, 0);
+    assert!(progress.load_start().is_none());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_live_series_is_the_final_one() {
+    let base = stop_server().await;
+    let plan = stop_plan(
+        &base,
+        "/ok",
+        "",
+        "{ executor: constant_rate, rate: 20/s, duration: 3s, max_vus: 5 }",
+    );
+    let progress = Arc::new(Progress::default());
+    let watcher = {
+        let p = progress.clone();
+        // Mientras corre, la serie ya tiene segundos cerrados.
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(2600)).await;
+            p.live().len()
+        })
+    };
+    let r = engine::run(plan, progress.clone()).await;
+    assert!(watcher.await.unwrap() >= 1, "nada publicado en vivo");
+    let live = progress.live();
+    let series = &r.series;
+    assert!(
+        live.len() >= series.points.len(),
+        "{} vs {}",
+        live.len(),
+        series.points.len()
+    );
+    for (i, point) in series.points.iter().enumerate() {
+        assert_eq!(&live[i].point, point, "segundo {i}");
+        assert_eq!(
+            live[i].steps[0], series.steps[0].points[i],
+            "segundo {i} del paso"
+        );
+    }
+    assert!(progress.load_start().is_some());
+}
+
+/// Un servidor que anota los ids que le llegan en `/u/{id}`.
+async fn id_recorder() -> (String, Arc<std::sync::Mutex<Vec<String>>>) {
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let log = seen.clone();
+    let app = Router::new().route(
+        "/u/{id}",
+        get(
+            move |axum::extract::Path(id): axum::extract::Path<String>| {
+                let log = log.clone();
+                async move {
+                    log.lock().unwrap().push(id);
+                    "ok"
+                }
+            },
+        ),
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    (format!("http://127.0.0.1:{}", addr.port()), seen)
+}
+
+fn unique_plan(base: &str, root: &str, load: &str, rows: usize) -> Result<Plan, Vec<String>> {
+    let yaml = format!(
+        "version: 1\nname: unique\ndata:\n  users: {{ file: data/users.csv, pick: unique }}\n{root}flows:\n  main:\n    steps:\n      - name: a\n        request: {{ method: GET, url: \"/u/{{{{users.id}}}}\" }}\nload: {load}\n"
+    );
+    let s = parse_scenario(&yaml).unwrap_or_else(|r| panic!("{r:?}"));
+    let csv: String = std::iter::once("id".to_string())
+        .chain((1..=rows).map(|i| i.to_string()))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let users =
+        crabfall_core::data::Dataset::parse("users", &s.data["users"], csv.as_bytes()).unwrap();
+    let inputs = Inputs {
+        data: [("users".to_string(), users)].into(),
+        ..Default::default()
+    };
+    Plan::build(&s, &environment(base), &inputs)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn unique_rows_are_used_once_and_end_the_open_model() {
+    let (base, seen) = id_recorder().await;
+    let plan = unique_plan(
+        &base,
+        "",
+        "{ executor: constant_rate, rate: 20/s, duration: 30s, max_vus: 5 }",
+        5,
+    )
+    .unwrap();
+    assert_eq!(plan.unique_shortfalls(), [("users".to_string(), 5, 600)]);
+    let r = engine::run(Arc::new(plan), Arc::new(Progress::default())).await;
+    let d = r.data_exhausted.as_ref().expect("se acabaron las filas");
+    assert_eq!(d.dataset, "users");
+    assert!(d.at_s < 1.0, "terminó en {}", d.at_s);
+    assert!(r.stopped_at_s.is_none(), "no la frenó la persona");
+    assert_eq!(r.totals.started, 5);
+    assert!(
+        r.warnings[0].contains("se quedó sin filas"),
+        "{:?}",
+        r.warnings
+    );
+    let mut ids = seen.lock().unwrap().clone();
+    ids.sort();
+    assert_eq!(ids, ["1", "2", "3", "4", "5"]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn unique_rows_end_the_closed_model_too() {
+    let (base, seen) = id_recorder().await;
+    let plan = unique_plan(
+        &base,
+        "",
+        "{ executor: constant_vus, vus: 3, duration: 30s }",
+        7,
+    )
+    .unwrap();
+    let r = engine::run(Arc::new(plan), Arc::new(Progress::default())).await;
+    assert!(r.data_exhausted.is_some());
+    assert!(r.duration_s < 3.0, "duró {}", r.duration_s);
+    let mut ids = seen.lock().unwrap().clone();
+    ids.sort_by_key(|i| i.parse::<u32>().unwrap());
+    assert_eq!(ids, ["1", "2", "3", "4", "5", "6", "7"]);
+}
+
+#[test]
+fn unique_rows_must_cover_every_vu_in_vu_setup() {
+    let root =
+        "vu_setup:\n  - name: login\n    request: { method: GET, url: \"/u/{{users.id}}\" }\n";
+    let errors = unique_plan(
+        "http://127.0.0.1:1",
+        root,
+        "{ executor: constant_vus, vus: 4, duration: 5s }",
+        3,
+    )
+    .err()
+    .expect("faltan filas");
+    assert!(errors[0].contains("3 filas para 4 VUs"), "{errors:?}");
+    assert!(
+        unique_plan(
+            "http://127.0.0.1:1",
+            root,
+            "{ executor: constant_vus, vus: 3, duration: 5s }",
+            3
+        )
+        .is_ok()
     );
 }

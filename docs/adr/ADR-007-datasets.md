@@ -72,3 +72,10 @@ El resumen de `crabfall approve` y el encabezado de `crabfall run` muestran cada
 
 - **A favor:** escenarios con usuarios e IDs reales sin lógica en el YAML. La firma cubre los datos. Los errores nombran la columna y la fila.
 - **En contra:** el archivo entero se carga en memoria (está bien hasta decenas de MB). Los datos de prueba suelen tener credenciales de usuarios de prueba: si no se quieren versionar, hay que agregar el archivo al `.gitignore` del proyecto. `crabfall` no lo decide.
+
+## `pick: unique` (20 oct 2026)
+
+- **Qué hace:** cada fila se usa una sola vez en toda la corrida, por ejemplo para registrar usuarios o consumir cupones. El contador es del plan: lo comparten todos los VUs.
+- **Cuando se acaban:** la fila se toma al despachar la iteración, antes de contarla como iniciada. Si no quedan, la carga termina en orden (no se inician más iteraciones y se espera a las que están en curso), con `data_exhausted` (dataset y segundo) en `results.json` y un aviso al principio. No cuenta como falla: es el final natural de "una fila por iteración". Tampoco es un freno de la persona (`stopped_at_s` queda vacío).
+- **En `vu_setup`:** cada VU toma una fila distinta, así que el plan exige al menos una por VU; si no, no se arma.
+- **Para quien aprueba:** si el dataset tiene menos filas que las iteraciones planificadas, el resumen lo dice ("unique, 50 filas para ≈600 iteraciones: la carga termina cuando se acaben").
