@@ -270,15 +270,34 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente. Al cerrar
 - [x] Tests: los argumentos de cada terminal, `/proc/<pid>/stat` con nombres raros, qué padres valen; CI ya corre en Linux
 - Listo: en WSL2 (Ubuntu 24.04 con WSLg y GNOME Keyring), `smoke --ask` contra `market-api` abrió la ventana en gnome-terminal (vía `x-terminal-emulator`); el usuario tipeó el host, dio unos minutos de permiso, y la siguiente corrida en xterm salió sin preguntar. Revocado el permiso, volvió a preguntar; cerrar el xterm sin responder devolvió código 3 y "la ventana se cerró sin respuesta", sin corrida nueva (24 oct 2026). En WSLg las terminales se ven gris sobre negro: son sus colores por defecto.
 
-## Primera versión
+## Versiones
 
-**v0.1.0** (19 oct 2026): las rebanadas 0 a 13 con el nombre Crabfall (binario `crabfall`, carpeta `.crabfall/`), en `main` y en GitHub (privado). Lo que queda abierto de esas rebanadas: TLS contra un servidor real (1), la skill en una sesión nueva de Claude Code (2). La rebanada 13 se cerró después, con la corrida de `upload`.
+**v0.1.0** (19 oct 2026): las rebanadas 0 a 13 con el nombre Crabfall (binario `crabfall`, carpeta `.crabfall/`), en `main` y en GitHub (privado). La rebanada 13 se cerró después, con la corrida de `upload`.
+
+**v0.2.0** (24 oct 2026): las rebanadas 14 a 25. Cliente HTTP real (cookies, redirects, compresión, formularios), lo que dice el servidor en un 429, inglés y español, frenar y ver en vivo, la TUI con historial, comparación y ayuda, diagnóstico de ancho de banda, `pick: unique`, la corrida base fija, y el agente que pide la corrida con `--ask` y una persona que la confirma en una ventana, en Windows y Linux.
+
+**Lo que queda abierto** (pruebas reales; el código está hecho):
+- Contra un servidor remoto (`market-api` en un VPS por hora; elegido Vultr en Santiago o São Paulo, con `sslip.io` en lugar de un dominio; en suspenso): TLS real (1), la compresión detrás de Caddy (14) y el diagnóstico de ancho de banda con un enlace real (20).
+- La skill en una sesión nueva de Claude Code, que la carga sola (2).
+- La TUI con alguien que no la conoce (23), para más adelante.
+
+## Próxima versión (v0.3)
+
+- **Servidor MCP.**
+- **Importadores:** OpenAPI, curl, Postman.
+- **Reglas de diagnóstico:** antes, un estudio comparativo de qué detectan otras herramientas (k6, Gatling, Locust, Artillery, JMeter y las de APM), y decidir si las reglas se pueden personalizar (umbrales, reglas propias) o quedan fijas en el motor.
 
 ## Backlog (sin orden)
 
 **Al final: modelos de carga nuevos** (`ramping_vus`, iteraciones fijas, arrival por VU). Hoy alcanzan `constant_rate`, `ramping_rate` y `constant_vus`.
 
-contra un agente malicioso (ADR-017): guía para correr el agente con el sandbox de Claude Code y egress restringido, y un token de vida corta exigido por el target (FIDO2 o teléfono, verificado fuera de la máquina); la ventana de `--ask` en macOS; más reglas de diagnóstico, aprobar en CI sin una persona (para que la base fija sirva en un pipeline), servidor MCP, importadores (OpenAPI, curl, Postman), HTTP/2, GUI con Tauri (después de la TUI), leer `expires_in` para elegir solo cuándo renovar, GitHub Action, correlación con métricas del servidor (OTLP, Prometheus), WebSockets, gRPC, Kafka.
+- La ventana de `--ask` en macOS (Terminal vía `osascript`); hoy no hay dónde probarla.
+- Defensas contra un agente malicioso (ADR-017): guía para correr el agente con el sandbox de Claude Code y egress restringido, y un token de vida corta exigido por el target (FIDO2 o teléfono, verificado fuera de la máquina).
+- Aprobar en CI sin una persona, para que la base fija sirva en un pipeline, y una GitHub Action.
+- Correlación con métricas del servidor (OTLP, Prometheus); ver D4.
+- HTTP/2, WebSockets, gRPC, Kafka.
+- Leer `expires_in` para elegir solo cuándo renovar.
+- GUI con Tauri (después de la TUI).
 
 ## Decisiones abiertas
 
@@ -318,6 +337,7 @@ contra un agente malicioso (ADR-017): guía para correr el agente con el sandbox
 | 19 oct 2026 | Nombre: Crabfall; binario `crabfall`, carpeta `.crabfall/`, crates `crabfall-core` y `crabfall-cli` (D2) | — |
 | 19 oct 2026 | TUI en la terminal en lugar de la GUI con Tauri, por ahora; los modelos de carga nuevos van al final | Este documento |
 | 19 oct 2026 | Primera versión v0.1.0: `dev` se mergea a `main`; repo privado en GitHub | — |
+| 24 oct 2026 | v0.2.0: las rebanadas 14 a 25 a `main`; para la v0.3, MCP, importadores y reglas de diagnóstico después de compararlas con otras herramientas | Versiones |
 | 19 oct 2026 | Cliente HTTP real por defecto: cookies por VU, redirects hacia `allowed_hosts`, gzip y br; `check` nunca sale de loopback | ADR-014 |
 | 19 oct 2026 | TUI: `crabfall` sin argumentos; aprueba con el host tipeado; frena en orden y guarda; el HTML queda para analizar y compartir | ADR-015 |
 | 19 oct 2026 | Salida en inglés por defecto y en español a pedido; README y skill en inglés, ADRs y roadmap en español | ADR-016 |
