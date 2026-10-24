@@ -6,7 +6,6 @@ mod view;
 
 use std::{
     collections::BTreeMap,
-    path::PathBuf,
     sync::{Arc, mpsc},
     time::{Duration, Instant},
 };
@@ -761,22 +760,13 @@ impl App {
     /// Las corridas de este escenario en este entorno, de la más reciente a la más vieja.
     fn open_history(&mut self, d: Box<Detail>) -> Screen {
         let env = self.env_name().to_string();
-        let mut ids: Vec<String> = std::fs::read_dir(self.project.runs_dir())
+        let rows: Vec<HistoryRow> = crate::runs::all(&self.project)
             .into_iter()
-            .flatten()
-            .filter_map(Result::ok)
-            .filter(|e| e.path().join("results.json").is_file())
-            .map(|e| e.file_name().to_string_lossy().into_owned())
-            .collect();
-        ids.sort_unstable_by(|a, b| b.cmp(a));
-        let rows: Vec<HistoryRow> = ids
-            .into_iter()
-            .filter_map(|id| {
-                let file = self.project.runs_dir().join(&id).join("results.json");
-                let doc = crate::runs::read(&file).ok()?;
-                (doc["scenario"] == d.name.as_str() && doc["environment"] == env.as_str())
-                    .then_some(HistoryRow { id, doc })
+            .rev()
+            .filter(|(_, doc)| {
+                doc["scenario"] == d.name.as_str() && doc["environment"] == env.as_str()
             })
+            .map(|(id, doc)| HistoryRow { id, doc })
             .collect();
         if rows.is_empty() {
             self.error(tr!(
@@ -929,24 +919,13 @@ fn status(project: &Project, name: &str, env: &str) -> Status {
 
 /// La última corrida de cada (escenario, entorno).
 fn last_runs(project: &Project) -> BTreeMap<(String, String), (String, serde_json::Value)> {
-    let mut ids: Vec<String> = std::fs::read_dir(project.runs_dir())
-        .into_iter()
-        .flatten()
-        .filter_map(Result::ok)
-        .filter(|e| e.path().join("results.json").is_file())
-        .map(|e| e.file_name().to_string_lossy().into_owned())
-        .collect();
-    ids.sort();
     let mut out = BTreeMap::new();
-    for id in ids {
-        let file: PathBuf = project.runs_dir().join(&id).join("results.json");
-        if let Ok(doc) = crate::runs::read(&file) {
-            let key = (
-                doc["scenario"].as_str().unwrap_or_default().to_string(),
-                doc["environment"].as_str().unwrap_or_default().to_string(),
-            );
-            out.insert(key, (id, doc));
-        }
+    for (id, doc) in crate::runs::all(project) {
+        let key = (
+            doc["scenario"].as_str().unwrap_or_default().to_string(),
+            doc["environment"].as_str().unwrap_or_default().to_string(),
+        );
+        out.insert(key, (id, doc));
     }
     out
 }
