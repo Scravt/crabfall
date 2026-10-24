@@ -123,6 +123,8 @@ You can freely use: `crabfall validate`, `crabfall check` (only against loopback
 
    **Tweaks by flag.** To vary a run without touching the YAML ("the same at twice the rate", "try it with 20 users", "with other users"), use flags instead of editing the scenario: `--rate`, `--duration`, `--vus`, `--max-vus`, `--start-rate`, `--stages 100/s:1m,0/s:30s`, `--graceful-stop`, `--executor`, `--think 1s-3s`, `--refresh-every 4m`, `--data users=data/others.csv`, `--pick users=random` and `--threshold "http.latency.p95<300ms"` (list in `crabfall run --help`; `--threshold` replaces the YAML ones and needs no new approval). Validate them with `crabfall validate <name> <flags> --json`: the error says which flag is missing or extra. The same flags go in `crabfall approve` and in `crabfall run`, because the approval signs them. Hand over both commands with the full flags. If a tweak will always be used, it belongs in the YAML.
 
+**MCP.** If the project registers the `crabfall` MCP server, its tools (`list_scenarios`, `validate`, `check`, `request_run`, `findings`, `compare`, `schema`) are the same commands with structured results: use whichever is available. `request_run` is `crabfall run --ask`, with the same rules.
+
 ## Analyzing results
 
 Always start with `crabfall findings --json` (the most recent run; `crabfall findings <id> --json` for another one). It is a compact summary: totals, thresholds, findings and metrics per step. Open `.crabfall/runs/<id>/results.json` only if you need the per-second series (`series`). For the person there is a graphical report in `.crabfall/runs/<id>/report.html` (`crabfall run` generates it; `crabfall report <id>` regenerates it): mention it when you wrap up the analysis. You read the JSON, not the HTML.

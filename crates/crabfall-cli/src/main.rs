@@ -6,6 +6,7 @@ mod claude;
 mod compare;
 mod findings;
 mod hook;
+mod mcp;
 mod prepare;
 mod report;
 mod run;
@@ -224,6 +225,12 @@ enum Command {
         #[command(flatten)]
         target: Target,
     },
+    /// MCP server on stdio for agents other than Claude Code (or alongside it): validate, check, findings, compare, schema, and asking a person for a run.
+    Mcp {
+        /// Project folder (the one with .crabfall/). Default: the current one or a parent.
+        #[arg(long, value_name = "DIR")]
+        project: Option<std::path::PathBuf>,
+    },
     /// Runs an approved scenario and saves the results.
     Run {
         #[command(flatten)]
@@ -287,6 +294,7 @@ fn main() -> ExitCode {
         }
         Command::Check { target, json } => check::cmd_check(&target, json),
         Command::Approve { target } => approve::cmd_approve(&target),
+        Command::Mcp { project } => mcp::cmd_mcp(project.as_deref()),
         Command::Run {
             target,
             json,
@@ -462,6 +470,10 @@ fn spanish_help(command: clap::Command) -> clap::Command {
                     a.help("Compara contra la base del escenario (crabfall baseline) en lugar de la corrida anterior; el único argumento es entonces la corrida nueva")
                 })
                 .mut_arg("json", |a| a.help("Salida JSON para agentes"))
+        })
+        .mut_subcommand("mcp", |c| {
+            c.about("Servidor MCP por stdio para agentes que no son Claude Code (o junto con él): validate, check, findings, compare, schema, y pedirle una corrida a una persona")
+                .mut_arg("project", |a| a.help("Carpeta del proyecto (la que tiene .crabfall/). Por defecto, la actual o una superior"))
         })
         .mut_subcommand("report", |c| {
             c.about("Reporte HTML de una corrida (por defecto, la más reciente): gráficos, hallazgos y comparación")

@@ -294,6 +294,16 @@ Each slice works end to end before moving on to the next. Closing it updates the
 - [x] Tests: validation with paths, flags added to the scenario and described, the environment and the scenario combined without changing the signature, the compare warning, and the long-tail lab re-diagnosed with each setting
 - Done: on `market-api`, slice 26's 100-VU run repeated with `--diagnosis-off time_split` ran with the same approval (the settings aren't signed: the window only asked for `y`), showed `diagnosis: off time_split` in the header, gave no findings and recorded `"diagnosis": {"off": ["time_split"]}`. `crabfall compare` against the earlier run said "the diagnosis settings differ (the usual → off time_split): findings may appear or disappear because of that", with the same load and no significant changes (995 it/s; 24 Oct 2026).
 
+**29. MCP server** (ADR-019)
+- [x] `crabfall mcp [--project DIR]`: MCP over stdio (JSON-RPC, one message per line), written without an SDK; negotiates `2025-06-18`, `2025-03-26` and `2024-11-05`; instructions for the agent in `initialize`
+- [x] Tools that run the same CLI with `--json` in the project: `schema`, `validate`, `check`, `request_run` (`run --ask`), `findings`, `compare`; plus `list_scenarios`, read with the core
+- [x] No approve, no run without a person, no baseline; unknown tweaks, a scenario starting with `-` and internal flags are rejected before running anything; annotations (`readOnlyHint`, `destructiveHint`)
+- [x] Results with the CLI's JSON in `structuredContent`, the exit code and its meaning, and stderr
+- [x] Help in both languages; README with the configuration for Claude Code, Cursor, VS Code and Claude Desktop
+- [x] Tests: units, and a client over stdio against a temporary project and a loopback server, including `request_run` refused before the window (it never opens one)
+- [x] Read-only sessions against `market-api` and `shop-api`: the 17 scenarios validate, latest runs and baselines are listed, and `compare` returns slice 27's saturation (24 Oct 2026)
+- Done when: a real MCP client (Claude Code through `.mcp.json`, Cursor or another) designs, checks and analyzes with it, and a person confirms a `request_run`. **Pending:** that session, with the person.
+
 ## Versions
 
 **v0.1.0** (19 Oct 2026): slices 0 to 13 under the name Crabfall (`crabfall` binary, `.crabfall/` folder), on `main` and on GitHub (private at the time). Slice 13 was closed afterwards, with the `upload` run.
@@ -307,7 +317,7 @@ Each slice works end to end before moving on to the next. Closing it updates the
 
 ## Next version (v0.3)
 
-- **MCP server.**
+- **MCP server:** `crabfall mcp`, slice 29 ([ADR-019](adr/ADR-019-mcp.md)); the test with a real client is pending.
 - **Importers:** OpenAPI, curl, Postman.
 - **Diagnosis rules:** the [comparative study](studies/diagnosis-comparison.md) (k6, Gatling, NeoLoad, LoadRunner, Azure, Locust, JMeter, Artillery, Dynatrace) is done (24 Oct 2026), and its recommendations were accepted ([ADR-018](adr/ADR-018-diagnosis-v03.md)): deterministic rules; server vs payload (`time_split`, slice 26); turning rules off and tuning a few named margins, recorded in the results; contagion between steps if there's time, and best practices as `validate` warnings; no custom rules. Saturation with fixed VUs turned out not to be detectable with `constant_vus` (the concurrency never changes): it comes with `ramping_vus`, and meanwhile `fixed_concurrency` says what a closed model can't show.
 
@@ -373,4 +383,5 @@ Each slice works end to end before moving on to the next. Closing it updates the
 | 24 Oct 2026 | Diagnosis v0.3: `time_split` and `fixed_concurrency`; saturation in the closed model waits for `ramping_vus`, because with fixed VUs the concurrency never changes | ADR-018 |
 | 24 Oct 2026 | Closed-model saturation by comparing runs with different VUs (`scaling` in `compare`); there, latency changes aren't regressions | ADR-018 §5 |
 | 24 Oct 2026 | Diagnosis settings: rules off and two named margins, by scenario, environment or flag; not signed; recorded and warned about in `compare` | ADR-018 §3 |
+| 24 Oct 2026 | MCP server: each tool runs the same CLI with `--json`; no approve or run without a person; `request_run` is `run --ask` | ADR-019 |
 | 24 Oct 2026 | All the documentation in English (ADRs, roadmap, studies); the test repos (`market-api`, `shop-api`) public on GitHub; MIT OR Apache-2.0 license files | ADR-016 |
