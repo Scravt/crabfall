@@ -75,6 +75,7 @@ fn summary(doc: &Value, file: &std::path::Path) -> Value {
                 "failures": s["failures"],
                 "latency_ms": pick(&s["latency_ms"], &["p50", "p95", "p99", "max"]),
                 "ttfb_ms": pick(&s["ttfb_ms"], &["p50", "p95", "p99"]),
+                "receive_ms": pick(&s["receive_ms"], &["p50", "p95", "p99"]),
                 "checks": s["checks"],
             })
         })

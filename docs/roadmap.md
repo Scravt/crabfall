@@ -270,6 +270,14 @@ Each slice works end to end before moving on to the next. Closing it updates the
 - [x] Tests: each terminal's arguments, `/proc/<pid>/stat` with odd names, which parents are valid; CI already runs on Linux
 - Done: in WSL2 (Ubuntu 24.04 with WSLg and GNOME Keyring), `smoke --ask` against `market-api` opened the window in gnome-terminal (through `x-terminal-emulator`); the user typed the host, gave a few minutes of allowance, and the next run in xterm went ahead without asking. With the allowance revoked, it asked again; closing the xterm without answering returned code 3 and "the window closed without an answer", with no new run (24 Oct 2026). In WSLg the terminals look gray on black: those are their default colors.
 
+**26. Where a slow step's time goes** (ADR-018)
+- [x] `receive_ms` per step: the time reading the body, next to `ttfb_ms`; in `results.json` and `crabfall findings --json`
+- [x] `time_split`: for a step with ≥ 100 responses and p50 ≥ 50 ms, the part that takes ≥ 60% of the p50: the server (TTFB, `info`, only without saturation), downloading the body or getting a connection (`medium`); with an upload, the title says TTFB includes sending the body
+- [x] `fixed_concurrency` (`info`): with `constant_vus` and a step at p50 ≥ 100 ms, the run can't show whether that's the limit; it suggests a rate ramp
+- [x] Readable evidence names in the report, both languages; the skill knows how to read both findings
+- [x] Lab: a body written in pieces (download dominates), a handler that waits (server dominates, plus `fixed_concurrency`), a fast server (neither)
+- Done when: on `market-api`, a real run shows where a slow step's time goes. **Pending:** that run.
+
 ## Versions
 
 **v0.1.0** (19 Oct 2026): slices 0 to 13 under the name Crabfall (`crabfall` binary, `.crabfall/` folder), on `main` and on GitHub (private at the time). Slice 13 was closed afterwards, with the `upload` run.
@@ -285,7 +293,7 @@ Each slice works end to end before moving on to the next. Closing it updates the
 
 - **MCP server.**
 - **Importers:** OpenAPI, curl, Postman.
-- **Diagnosis rules:** the [comparative study](studies/diagnosis-comparison.md) (k6, Gatling, NeoLoad, LoadRunner, Azure, Locust, JMeter, Artillery, Dynatrace) is done (24 Oct 2026), and its recommendations were accepted: deterministic rules; saturation with fixed VUs and server vs payload first, contagion between steps if there's time, and best practices as `validate` warnings; rules can be turned off and a few named margins tuned, recorded in the results; no custom rules. To be written into an ADR, with its lab.
+- **Diagnosis rules:** the [comparative study](studies/diagnosis-comparison.md) (k6, Gatling, NeoLoad, LoadRunner, Azure, Locust, JMeter, Artillery, Dynatrace) is done (24 Oct 2026), and its recommendations were accepted ([ADR-018](adr/ADR-018-diagnosis-v03.md)): deterministic rules; server vs payload (`time_split`, slice 26); turning rules off and tuning a few named margins, recorded in the results; contagion between steps if there's time, and best practices as `validate` warnings; no custom rules. Saturation with fixed VUs turned out not to be detectable with `constant_vus` (the concurrency never changes): it comes with `ramping_vus`, and meanwhile `fixed_concurrency` says what a closed model can't show.
 
 ## Backlog (unordered)
 
@@ -345,4 +353,5 @@ Each slice works end to end before moving on to the next. Closing it updates the
 | 24 Oct 2026 | The default `user-agent` is signed without the version: upgrading Crabfall doesn't invalidate approvals | ADR-004 |
 | 24 Oct 2026 | v0.2.0: slices 14 to 25 to `main`; for v0.3, MCP, importers and diagnosis rules after comparing them with other tools | Versions |
 | 24 Oct 2026 | Diagnosis for v0.3: deterministic rules; they can be turned off and a few margins tuned, recorded in the results; no custom rules | [Study](studies/diagnosis-comparison.md) |
+| 24 Oct 2026 | Diagnosis v0.3: `time_split` and `fixed_concurrency`; saturation in the closed model waits for `ramping_vus`, because with fixed VUs the concurrency never changes | ADR-018 |
 | 24 Oct 2026 | All the documentation in English (ADRs, roadmap, studies); the test repos (`market-api`, `shop-api`) public on GitHub; MIT OR Apache-2.0 license files | ADR-016 |

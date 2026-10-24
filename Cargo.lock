@@ -772,6 +772,7 @@ dependencies = [
  "csv",
  "fastrand",
  "flate2",
+ "futures-util",
  "getrandom 0.4.3",
  "hdrhistogram",
  "hmac",
