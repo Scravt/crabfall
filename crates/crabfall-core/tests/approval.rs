@@ -3,7 +3,7 @@
 use crabfall_core::{
     approval::{self, Approval, MemoryKey, Rejection},
     config::Environment,
-    engine::plan::{Inputs, Plan},
+    engine::plan::{DEFAULT_USER_AGENT, Inputs, Plan},
     validate::parse_scenario,
 };
 
@@ -250,4 +250,21 @@ load:
         diff.contains("-      7") && diff.contains("+      8"),
         "{diff}"
     );
+}
+
+#[test]
+fn the_default_user_agent_is_signed_without_the_version() {
+    let e = env(ENV);
+    let canonical = plan(SCENARIO, &e).canonical(&e).to_string();
+    assert!(canonical.contains("crabfall/<version>"), "{canonical}");
+    assert!(!canonical.contains(DEFAULT_USER_AGENT), "{canonical}");
+
+    // Uno puesto en el escenario se firma tal cual.
+    let custom = SCENARIO.replace(
+        "url: /products }",
+        "url: /products, headers: { User-Agent: mi-cliente/1 } }",
+    );
+    let canonical = plan(&custom, &e).canonical(&e).to_string();
+    assert!(canonical.contains("mi-cliente/1"), "{canonical}");
+    assert!(!canonical.contains("crabfall/<version>"), "{canonical}");
 }

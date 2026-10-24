@@ -57,7 +57,7 @@ crabfall run smoke --env local --ask # asks first: what Claude uses, in a window
    - the resolved load (executor, rate, duration, VUs, stages, pauses), including every tweak by flag;
    - the environment's `base_url`, `allowed_hosts`, `vars` and `limits`;
    - the SHA-256 of every dataset and every uploaded file (their content, not just their path);
-   - the `user-agent`, which carries the Crabfall version.
+   - the `user-agent`; the default one is signed as `crabfall/<version>`, so upgrading Crabfall keeps your approvals.
 
    Secret values never enter, only their names. `description`, `checks`, `thresholds` and `source` are left out: they don't change the traffic. The SHA-256 of that JSON is the plan's **fingerprint**.
 2. **The key.** The first approval generates 32 random bytes and stores them in the system keyring (Windows Credential Manager, macOS Keychain, Secret Service on Linux) as `crabfall` / `approval-key`. The key is never written in the repo.
