@@ -285,7 +285,7 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente. Al cerrar
 
 - **Servidor MCP.**
 - **Importadores:** OpenAPI, curl, Postman.
-- **Reglas de diagnóstico:** antes, un estudio comparativo de qué detectan otras herramientas (k6, Gatling, Locust, Artillery, JMeter y las de APM), y decidir si las reglas se pueden personalizar (umbrales, reglas propias) o quedan fijas en el motor.
+- **Reglas de diagnóstico:** [estudio comparativo](estudios/diagnostico-comparativo.md) hecho el 24 oct 2026; faltan las decisiones. Antes, un estudio comparativo de qué detectan otras herramientas (k6, Gatling, Locust, Artillery, JMeter y las de APM), y decidir si las reglas se pueden personalizar (umbrales, reglas propias) o quedan fijas en el motor.
 
 ## Backlog (sin orden)
 
