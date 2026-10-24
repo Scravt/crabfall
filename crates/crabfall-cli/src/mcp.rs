@@ -288,17 +288,10 @@ impl Server {
     }
 }
 
-/// La corrida más reciente de cada escenario, por id (que ordena por fecha).
+/// La corrida más reciente de cada escenario (en el orden de `runs::all`).
 fn latest_runs(project: &Project) -> Map<String, Value> {
     let mut latest: Map<String, Value> = Map::new();
-    let mut dirs: Vec<PathBuf> = std::fs::read_dir(project.runs_dir())
-        .map(|d| d.filter_map(|e| e.ok().map(|e| e.path())).collect())
-        .unwrap_or_default();
-    dirs.sort();
-    for dir in dirs {
-        let Ok(doc) = crate::runs::read(&dir.join("results.json")) else {
-            continue;
-        };
+    for (_, doc) in crate::runs::all(project) {
         if let Some(scenario) = doc["scenario"].as_str() {
             latest.insert(
                 scenario.to_string(),

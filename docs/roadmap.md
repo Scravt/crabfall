@@ -302,6 +302,8 @@ Each slice works end to end before moving on to the next. Closing it updates the
 - [x] Help in both languages; README with the configuration for Claude Code, Cursor, VS Code and Claude Desktop
 - [x] Tests: units, and a client over stdio against a temporary project and a loopback server, including `request_run` refused before the window (it never opens one)
 - [x] Read-only sessions against `market-api` and `shop-api`: the 17 scenarios validate, latest runs and baselines are listed, and `compare` returns slice 27's saturation (24 Oct 2026)
+- [x] Fixed along the way, because `list_scenarios` showed it: runs are ordered by `started_at` (an absolute instant), not by id. The id comes from each machine's local clock, so on `market-api` a WSL run (UTC) passed as newer than a later Windows one (UTC−3). `latest`, the previous run for `compare`, the TUI history and the MCP use the same order (`runs::all`)
+- [x] `.mcp.json` in `market-api` and `shop-api`, with the skill refreshed
 - Done when: a real MCP client (Claude Code through `.mcp.json`, Cursor or another) designs, checks and analyzes with it, and a person confirms a `request_run`. **Pending:** that session, with the person.
 
 ## Versions
@@ -333,7 +335,6 @@ Each slice works end to end before moving on to the next. Closing it updates the
 - Reading `expires_in` to choose when to renew on its own.
 - A Tauri GUI (after the TUI).
 - Run phases (NeoLoad style) and the trend across many runs (diagnosis study, points 5 and 6).
-- Run ids come from each machine's clock (WSL in UTC, Windows in local time), so `latest` can pick the wrong run when both run against the same project.
 
 ## Open decisions
 
