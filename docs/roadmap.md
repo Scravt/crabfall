@@ -78,7 +78,7 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente. Al cerrar
 - [x] `crabfall approve` y la verificación en `crabfall run`, con firma, keyring y TTY (ADR-004)
 - [x] `limits` y `allowed_hosts` en `config.yaml` (hecho en la rebanada 1)
 - [x] Hook `PreToolUse` (`crabfall hook pre-tool-use`), adelantado a la rebanada 2
-- [x] Tests de la guarda (lista en ADR-004; falta `--var`, que todavía no existe)
+- [x] Tests de la guarda (lista en ADR-004; `--var` agregado el 24 oct 2026: otro valor invalida la aprobación con el diff, el mismo valor del escenario no, y el valor de un secreto tampoco)
 - Listo cuando: apruebo un escenario de `shop-api` en mi terminal, lo ejecuto, y cualquier edición posterior hace que `crabfall run` lo rechace mostrando el diff. **Pendiente de probar a mano:** la parte interactiva no se puede probar desde la shell de Claude, que no tiene terminal.
 
 **4. Escenario completo**
