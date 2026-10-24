@@ -285,7 +285,7 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente. Al cerrar
 
 - **Servidor MCP.**
 - **Importadores:** OpenAPI, curl, Postman.
-- **Reglas de diagnóstico:** [estudio comparativo](estudios/diagnostico-comparativo.md) hecho el 24 oct 2026; faltan las decisiones. Antes, un estudio comparativo de qué detectan otras herramientas (k6, Gatling, Locust, Artillery, JMeter y las de APM), y decidir si las reglas se pueden personalizar (umbrales, reglas propias) o quedan fijas en el motor.
+- **Reglas de diagnóstico:** el [estudio comparativo](estudios/diagnostico-comparativo.md) (k6, Gatling, NeoLoad, LoadRunner, Azure, Locust, JMeter, Artillery, Dynatrace) está hecho (24 oct 2026); faltan las decisiones: qué reglas entran y si se pueden apagar o ajustar.
 
 ## Backlog (sin orden)
 
