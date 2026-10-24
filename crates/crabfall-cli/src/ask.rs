@@ -399,11 +399,22 @@ fn claim_console() -> Result<(), String> {
         )
     };
     let mut ids = [0u32; 4];
-    // SAFETY: el buffer vive durante la llamada y su largo es el que se pasa.
+    // SAFETY: `GetConsoleProcessList` escribe a lo sumo `ids.len()` DWORD en el puntero.
+    // `ids` es un arreglo local de `u32` (el mismo tamaño y alineación que DWORD), vive
+    // durante toda la llamada y nadie más lo toma prestado; el largo es el del arreglo, así
+    // que no puede escribir afuera. Si hay más procesos que lugar, devuelve cuántos son sin
+    // escribir, y con error devuelve 0: los dos casos dan `attached != 1` y se rechaza.
     let attached = unsafe { GetConsoleProcessList(ids.as_mut_ptr(), ids.len() as u32) };
-    // SAFETY: sin argumentos; devuelve null si no hay consola.
+    // SAFETY: `GetConsoleWindow` no recibe argumentos ni toca memoria del proceso; devuelve
+    // el HWND de la consola o null si no hay, y el null se revisa antes de usarlo.
     let window = unsafe { GetConsoleWindow() };
-    if attached != 1 || window.is_null() || unsafe { IsWindowVisible(window) } == 0 {
+    if attached != 1
+        || window.is_null()
+        // SAFETY: solo se llega acá con un HWND no nulo (el `||` corta antes). Win32 valida
+        // el HWND: uno que ya no existe da FALSE, no comportamiento indefinido. No se pasa
+        // memoria de Rust.
+        || unsafe { IsWindowVisible(window) } == 0
+    {
         return Err(refused());
     }
     let open = |name: &str| {
@@ -422,7 +433,18 @@ fn claim_console() -> Result<(), String> {
     .encode_utf16()
     .chain([0])
     .collect();
-    // SAFETY: los handles quedan abiertos para siempre (`into_raw_handle`) y el título termina en 0.
+    // SAFETY:
+    // - `SetStdHandle` guarda el handle tal cual. Cada uno sale de `into_raw_handle`, que le
+    //   saca la propiedad al `File`: nadie lo cierra después, así que el handle que queda como
+    //   estándar es válido mientras viva el proceso, sin doble cierre. `error` es un duplicado
+    //   (`try_clone`, DuplicateHandle) y no el mismo handle que `output`.
+    // - La std de Rust en Windows pide el handle estándar con `GetStdHandle` en cada lectura
+    //   y escritura, no lo guarda: lo que se lea o escriba después usa la consola nueva. Los
+    //   handles anteriores (los nulos que puso `delegate`) solo quedan sin cerrar.
+    // - `SetConsoleTitleW` lee un string UTF-16 terminado en 0: `title` termina en 0 y vive
+    //   hasta después de la llamada.
+    // - Las cuatro funciones devuelven si fallaron y eso no se revisa: un fallo deja la
+    //   ventana sin consola o sin título, pero no corrompe memoria.
     unsafe {
         SetStdHandle(STD_INPUT_HANDLE, input.into_raw_handle());
         SetStdHandle(STD_OUTPUT_HANDLE, output.into_raw_handle());

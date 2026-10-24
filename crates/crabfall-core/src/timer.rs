@@ -4,6 +4,11 @@
 /// se redondea hacia arriba. Pedimos 1 ms para todo el proceso. En otros sistemas no hace nada.
 pub fn high_resolution() {
     #[cfg(windows)]
+    // SAFETY: `timeBeginPeriod` recibe un entero por valor y no toca memoria del proceso: no
+    // hay punteros ni invariantes de Rust en juego. Con un valor fuera de rango devuelve
+    // TIMERR_NOCANDO y no cambia nada (se ignora: el timer queda como estaba). La API pide un
+    // `timeEndPeriod` por cada llamada; no se hace porque el pedido vale para todo el proceso y
+    // Windows lo deshace al terminar. Llamarla de nuevo (una vez por corrida) solo suma pedidos.
     unsafe {
         windows_sys::Win32::Media::timeBeginPeriod(1);
     }
