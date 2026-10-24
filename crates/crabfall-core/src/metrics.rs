@@ -601,6 +601,9 @@ pub struct RunResult {
     pub scheduler_lag_ms: Option<Percentiles>,
     pub steps: Vec<StepResult>,
     pub warnings: Vec<String>,
+    /// Los ajustes del diagnóstico, si no son los de siempre (ADR-018 §3).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diagnosis: Option<crate::diagnose::Settings>,
     /// Hallazgos del diagnóstico, de más a menos grave.
     pub findings: Vec<crate::diagnose::Finding>,
     /// Serie por segundo: la materia prima del diagnóstico.
@@ -678,6 +681,7 @@ impl RunResult {
             scheduler_lag_ms: None,
             steps: Collector::new(plan, Instant::now()).finish(plan),
             warnings: vec![],
+            diagnosis: plan.diagnosis_record(),
             findings: vec![],
             series: Series::default(),
         }

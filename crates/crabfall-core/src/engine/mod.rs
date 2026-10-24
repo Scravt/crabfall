@@ -851,10 +851,11 @@ async fn run_load(plan: Arc<Plan>, progress: Arc<Progress>) -> RunResult {
         scheduler_lag_ms: scheduler_lag,
         steps,
         warnings,
+        diagnosis: plan.diagnosis_record(),
         findings: vec![],
         series,
     };
-    result.findings = crate::diagnose::diagnose(&plan.load, &result);
+    result.findings = crate::diagnose::diagnose(&plan.load, &result, &plan.diagnosis);
     result
 }
 

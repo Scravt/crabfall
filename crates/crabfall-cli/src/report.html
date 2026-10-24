@@ -470,6 +470,12 @@ function header() {
   row(L("Load", "Carga"), describeLoad(run.load));
   row(L("Pauses", "Pausas"), run.load && run.load.think);
   row(L("Tweaks", "Ajustes"), (run.tweaks || []).join(" "));
+  const diag = run.diagnosis || {};
+  row(L("Diagnosis", "Diagnóstico"), [
+    (diag.off || []).length && L(`off: ${diag.off.join(", ")}`, `apagadas: ${diag.off.join(", ")}`),
+    diag.latency_margin_ms != null && L(`latency margin ${diag.latency_margin_ms} ms`, `margen de latencia ${diag.latency_margin_ms} ms`),
+    diag.min_requests != null && L(`min requests ${diag.min_requests}`, `requests mínimas ${diag.min_requests}`),
+  ].filter(Boolean).join(" · "));
   row(L("Scenario", "Escenario"), run.scenario_file);
   row(L("Approved", "Aprobada"), run.approval && `${run.approval.approved_by} · ${when(run.approval.approved_at)}`);
 

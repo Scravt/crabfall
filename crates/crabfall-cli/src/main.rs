@@ -115,6 +115,15 @@ pub struct Tweaks {
     /// Pass criterion, as in the results: "http.latency.p95<300ms", "http.latency.p99{step=login}<1s", "http.error_rate<1%", "http.rps>=40". If you pass any, they replace the scenario's. They do not change the traffic: no new approval needed. Can be repeated.
     #[arg(long = "threshold", value_name = "METRIC<LIMIT")]
     thresholds: Vec<crabfall_core::scenario::Threshold>,
+    /// Diagnosis rules to turn off, by finding id (long_tail, new_connections…), added to the scenario's. For known noise, not to make a run pass. No new approval needed. Comma-separated or repeated.
+    #[arg(long = "diagnosis-off", value_name = "RULE", value_delimiter = ',')]
+    diagnosis_off: Vec<String>,
+    /// Instead of the 50ms the diagnosis adds to "3× the baseline" (breaking point, bandwidth) and asks between p50 and p99 (long tail). No new approval needed.
+    #[arg(long, value_name = "50ms")]
+    latency_margin: Option<crabfall_core::units::HumanDuration>,
+    /// The fewest requests a step needs for long_tail, new_connections and time_split, instead of 200/100. No new approval needed.
+    #[arg(long, value_name = "N")]
+    min_requests: Option<u64>,
 }
 
 impl Tweaks {
@@ -133,6 +142,9 @@ impl Tweaks {
             data: self.data.clone(),
             pick: self.pick.clone(),
             thresholds: self.thresholds.clone(),
+            diagnosis_off: self.diagnosis_off.clone(),
+            latency_margin: self.latency_margin,
+            min_requests: self.min_requests,
         }
     }
 }
@@ -368,6 +380,18 @@ fn spanish_help(command: clap::Command) -> clap::Command {
             "thresholds",
             "Criterio de la corrida, como en los resultados: \"http.latency.p95<300ms\", \"http.latency.p99{step=login}<1s\", \"http.error_rate<1%\", \"http.rps>=40\". Si pasás alguno, reemplazan a los del escenario. No cambian el tráfico: no hace falta volver a aprobar. Se puede repetir",
         ),
+        (
+            "diagnosis_off",
+            "Reglas del diagnóstico que se apagan, por id del hallazgo (long_tail, new_connections…), sumadas a las del escenario. Para ruido conocido, no para que una corrida pase. No hace falta volver a aprobar. Separadas por comas o repetido",
+        ),
+        (
+            "latency_margin",
+            "En lugar de los 50ms que el diagnóstico suma a \"3× la base\" (quiebre, ancho de banda) y pide entre p50 y p99 (cola larga). No hace falta volver a aprobar",
+        ),
+        (
+            "min_requests",
+            "Requests mínimas de un paso para long_tail, new_connections y time_split, en lugar de 200/100. No hace falta volver a aprobar",
+        ),
     ];
     const TWEAKS: &[&str] = &[
         "executor",
@@ -383,6 +407,9 @@ fn spanish_help(command: clap::Command) -> clap::Command {
         "data",
         "pick",
         "thresholds",
+        "diagnosis_off",
+        "latency_margin",
+        "min_requests",
     ];
     let target = |mut c: clap::Command| {
         for (id, help) in TARGET {
