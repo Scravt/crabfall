@@ -1,30 +1,30 @@
-# ADR-001 — Claude-first: CLI con salida JSON + skill y hook de Claude Code
+# ADR-001 — Claude-first: a CLI with JSON output + a Claude Code skill and hook
 
-Estado: **aceptado** · 12 oct 2026 · revisado 12 oct 2026 (forma de instalación)
+Status: **accepted** · 12 Oct 2026 · revised 12 Oct 2026 (installation)
 
-## Contexto
+## Context
 
-La herramienta tiene que poder usarse con un agente que diseñe escenarios y analice resultados. El plan original apuntaba a un servidor MCP genérico desde el inicio, además de importadores (OpenAPI, curl, Postman) y una GUI.
+The tool has to work with an agent that designs scenarios and analyzes results. The original plan aimed at a generic MCP server from the start, plus importers (OpenAPI, curl, Postman) and a GUI.
 
-Somos una sola persona y el cliente que vamos a usar es Claude Code, que ya tiene shell y lee y escribe archivos del repo.
+We are one person, and the client we will use is Claude Code, which already has a shell and reads and writes the repo's files.
 
-## Decisión
+## Decision
 
-1. **Un núcleo, interfaces delgadas.** Toda la lógica (escenario, motor, métricas, diagnóstico) vive en una librería. Las interfaces solo la llaman.
-2. **La primera interfaz es la CLI `crabfall`**, y cada comando que Claude usa tiene salida `--json` estable (hoy `validate`, `check` y `run`; más adelante `findings`). `crabfall schema` imprime el JSON Schema del escenario, generado desde los tipos.
-3. **La integración con Claude se instala con `crabfall claude install`** en el repo del usuario:
-   - el *skill* `crabfall` en `.claude/skills/crabfall/SKILL.md` (fuente: `integrations/claude/`), que enseña el formato de escenario (ADR-002) y el ciclo diseñar → validar → `check` → la persona ejecuta → analizar. Se invoca como `/crabfall` o solo, cuando el pedido encaja;
-   - en `.claude/settings.json`, un hook `PreToolUse` que llama a `crabfall hook pre-tool-use` y bloquea `crabfall run` y `crabfall approve` cuando los invoca Claude (defensa adicional; la guarda real está en el binario, ver ADR-004);
-   - en el mismo archivo, permisos para que Claude use `crabfall validate`, `crabfall check` y `crabfall schema` sin pedir confirmación.
+1. **One core, thin interfaces.** All the logic (scenario, engine, metrics, diagnosis) lives in a library. The interfaces only call it.
+2. **The first interface is the `crabfall` CLI**, and every command Claude uses has stable `--json` output (today `validate`, `check` and `run`; later `findings`). `crabfall schema` prints the scenario's JSON Schema, generated from the types.
+3. **The Claude integration is installed with `crabfall claude install`** in the user's repo:
+   - the `crabfall` *skill* in `.claude/skills/crabfall/SKILL.md` (source: `integrations/claude/`), which teaches the scenario format (ADR-002) and the cycle design → validate → `check` → the person runs it → analyze. It is invoked as `/crabfall`, or on its own when the request fits;
+   - in `.claude/settings.json`, a `PreToolUse` hook that calls `crabfall hook pre-tool-use` and blocks `crabfall run` and `crabfall approve` when Claude invokes them (an extra defense; the real guard is in the binary, see ADR-004);
+   - in the same file, permissions so Claude can use `crabfall validate`, `crabfall check` and `crabfall schema` without asking.
 
-   Se descartó por ahora empaquetarlo como plugin de marketplace: los archivos de proyecto son el mecanismo más simple y estable, y no dependen del formato de plugins. Se revisa al publicar.
-4. **No hay importadores en la primera versión.** Claude lee el OpenAPI, el curl o el código y escribe el YAML. Lo que hace falta es que `validate` dé errores precisos.
-5. **El MCP queda para después**, como otra interfaz delgada sobre el mismo núcleo, cuando haga falta soportar otros clientes (Cursor, etc.).
+   Packaging it as a marketplace plugin was ruled out for now: project files are the simplest and most stable mechanism, and they don't depend on the plugin format. To be revisited when publishing.
+4. **No importers in the first version.** Claude reads the OpenAPI spec, the curl command or the code and writes the YAML. What matters is that `validate` gives precise errors.
+5. **MCP comes later**, as another thin interface over the same core, when other clients (Cursor, etc.) need support.
 
-## Consecuencias
+## Consequences
 
-- Hay menos que construir antes de que la herramienta sirva: motor + CLI + skill.
-- La salida JSON de la CLI pasa a ser un contrato: se versiona igual que el escenario.
-- Sin MCP, otros agentes pueden usar la CLI por shell, pero sin el skill.
-- Si Claude escribe mal los escenarios con frecuencia, se mejora el skill y los mensajes de `validate` antes de pensar en importadores.
-- `crabfall` tiene que estar en el PATH (`cargo install --path crates/crabfall-cli`): el skill y el hook lo invocan como `crabfall`. Si no está, el hook falla abierto; la guarda del binario sigue valiendo.
+- There is less to build before the tool is useful: engine + CLI + skill.
+- The CLI's JSON output becomes a contract: it is versioned like the scenario.
+- Without MCP, other agents can use the CLI through a shell, but without the skill.
+- If Claude often writes bad scenarios, the skill and the `validate` messages get better before importers are considered.
+- `crabfall` has to be on the PATH (`cargo install --path crates/crabfall-cli`): the skill and the hook invoke it as `crabfall`. If it isn't, the hook fails open; the binary's guard still holds.

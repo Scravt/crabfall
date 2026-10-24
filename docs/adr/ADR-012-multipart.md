@@ -1,12 +1,12 @@
-# ADR-012 — Bodies multipart (subir archivos)
+# ADR-012 — Multipart bodies (file uploads)
 
-Estado: **aceptado** · 18 oct 2026
+Status: **accepted** · 18 Oct 2026
 
-## Contexto
+## Context
 
-Hasta ahora, un paso podía mandar JSON (`json`) o texto (`body`). Subir archivos, que es común en APIs reales (avatares, adjuntos, importaciones), necesita `multipart/form-data`. `market-api` tiene `POST /files` y no había forma de cargarlo.
+Until now, a step could send JSON (`json`) or text (`body`). Uploading files, which is common in real APIs (avatars, attachments, imports), needs `multipart/form-data`. `market-api` has `POST /files` and there was no way to load it.
 
-## Decisión
+## Decision
 
 ### `multipart`
 
@@ -15,30 +15,30 @@ request:
   method: POST
   url: /files
   multipart:
-    file: { file: files/adjunto.bin, filename: "adjunto-{{$uuid}}.bin", content_type: application/octet-stream }
-    description: "subido por {{users.email}}"
+    file: { file: files/attachment.bin, filename: "attachment-{{$uuid}}.bin", content_type: application/octet-stream }
+    description: "uploaded by {{users.email}}"
 ```
 
-- **Campos:** cada clave es el nombre de un campo. Un string es un campo de texto y admite `{{variables}}`.
-- **Archivos:** un objeto con `file`, que se toma relativo a `.crabfall/` como los datasets, sin rutas absolutas ni `..`.
-  - `filename` es opcional, por defecto el nombre del archivo, y admite variables.
-  - `content_type` es opcional y por defecto sale de la extensión: los tipos comunes, y si no, `application/octet-stream`.
-- **Exclusiones:** excluye a `json` y a `body`. El `content-type` del request lo pone Crabfall, porque lleva el boundary, así que definirlo a mano es un error de validación.
-- **Formato:** el body sigue la RFC 7578. En los nombres, las comillas y los saltos de línea se codifican como en los navegadores (`%22`, `%0D`, `%0A`).
+- **Fields:** each key is a field name. A string is a text field and accepts `{{variables}}`.
+- **Files:** an object with `file`, taken relative to `.crabfall/` like datasets, without absolute paths or `..`.
+  - `filename` is optional, defaults to the file's name, and accepts variables.
+  - `content_type` is optional and defaults to the extension's: the common types, and otherwise `application/octet-stream`.
+- **Exclusions:** it excludes `json` and `body`. Crabfall sets the request's `content-type`, because it carries the boundary, so setting it by hand is a validation error.
+- **Format:** the body follows RFC 7578. In names, quotes and line breaks are encoded as browsers do (`%22`, `%0D`, `%0A`).
 
-### Los archivos
+### The files
 
-- **Lectura:** se leen una vez, al armar el plan, y se mandan enteros en cada request. No se leen del disco en cada iteración, para que el disco del generador no entre en la medición.
-- **Tamaño:** hasta 100 MB por archivo, porque viven en memoria y se copian al armar cada body.
-- **Boundary:** es aleatorio y fijo por paso, y se verifica que no aparezca dentro de ningún archivo.
-- **Lo que se descartó:** el streaming desde disco, porque complica el cliente y no hace falta con archivos de este tamaño. También un `file` con variables (`files/{{x}}.jpg`), porque obligaría a cargar y firmar un conjunto abierto de archivos. Si hace falta variar el archivo, se usan varios pasos o varios escenarios.
+- **Reading:** they are read once, when building the plan, and sent whole on each request. They aren't read from disk on every iteration, so the generator's disk stays out of the measurement.
+- **Size:** up to 100 MB per file, because they live in memory and are copied when building each body.
+- **Boundary:** random and fixed per step, and checked not to appear inside any file.
+- **What was ruled out:** streaming from disk, because it complicates the client and isn't needed with files this size. Also a `file` with variables (`files/{{x}}.jpg`), because it would mean loading and signing an open set of files. If the file needs to vary, use several steps or several scenarios.
 
-### Firma y resúmenes
+### Signature and summaries
 
-- **Firma:** el plan canónico incluye, por campo, el texto (su plantilla) o el archivo, con su ruta, su SHA-256, el `filename` y el `content_type`. Cambiar el contenido del archivo invalida la aprobación, igual que con los datasets (ADR-007). El boundary no se firma porque no está en el escenario. Los escenarios sin `multipart` firman igual que antes.
-- **Resúmenes:** `approve` muestra cada archivo con su tamaño y el paso que lo sube (`Archivos  files/adjunto.bin (1.0 MB) en upload_file`), y el encabezado de `run` también. Quien aprueba ve cuántos bytes va a mandar cada request.
+- **Signature:** the canonical plan includes, per field, the text (its template) or the file, with its path, its SHA-256, the `filename` and the `content_type`. Changing the file's content invalidates the approval, as with datasets (ADR-007). The boundary isn't signed because it isn't in the scenario. Scenarios without `multipart` sign as before.
+- **Summaries:** `approve` shows each file with its size and the step that uploads it (`Files  files/attachment.bin (1.0 MB) in upload_file`), and so does the `run` header. Whoever approves sees how many bytes each request will send.
 
-## Consecuencias
+## Consequences
 
-- **A favor:** se pueden cargar endpoints de subida con archivos reales, y los checks pueden comparar el `sha256` que devuelve el servidor con el del archivo.
-- **En contra:** con archivos grandes, el ancho de banda del generador puede ser el límite. Desde el ADR-013 los resultados muestran los bytes por segundo, pero ninguna regla lo diagnostica todavía.
+- **For:** upload endpoints can be loaded with real files, and checks can compare the `sha256` the server returns with the file's.
+- **Against:** with large files, the generator's bandwidth can be the limit. Since ADR-013 the results show bytes per second, and since 20 Oct 2026 `bandwidth_limit` diagnoses it (ADR-005).
