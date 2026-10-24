@@ -204,6 +204,9 @@ async fn open(target: &Target) -> Result<(Conn, Duration, Duration), BoxError> {
 /// se redondea hacia arriba. Pedimos 1 ms para todo el proceso.
 fn high_resolution_timer() {
     #[cfg(windows)]
+    // SAFETY: `timeBeginPeriod` recibe un entero por valor y no toca memoria del proceso; con
+    // un valor fuera de rango devuelve un error que se ignora. Windows deshace el pedido al
+    // terminar el proceso (ver `crabfall_core::timer`).
     unsafe {
         windows_sys::Win32::Media::timeBeginPeriod(1);
     }
