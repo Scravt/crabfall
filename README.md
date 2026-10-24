@@ -297,3 +297,9 @@ The architecture decision records and the roadmap are in Spanish.
 - [ADR-014 — Cookies, redirects, compression and forms](docs/adr/ADR-014-cliente-http-real.md)
 - [ADR-015 — Terminal TUI](docs/adr/ADR-015-tui.md)
 - [ADR-016 — Output language](docs/adr/ADR-016-idioma.md)
+
+## License
+
+Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or [MIT license](LICENSE-MIT), at your option. Copyright 2026 Gonzalo Martínez.
+
+Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in this work, as defined in the Apache-2.0 license, shall be dual licensed as above, without any additional terms or conditions.
