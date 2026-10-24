@@ -63,7 +63,7 @@ pub fn delegate(as_json: bool) -> u8 {
             ANSWER_TIMEOUT.as_secs() / 60
         )
     );
-    if let Err(e) = open_window(&args) {
+    if let Err(e) = open_window(&args, &file) {
         eprintln!(
             "{}",
             tr!(
@@ -78,6 +78,7 @@ pub fn delegate(as_json: bool) -> u8 {
         .ok()
         .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok());
     let _ = std::fs::remove_file(&file);
+    let _ = std::fs::remove_file(pid_path(&file));
     let Some(answer) = answer else {
         eprintln!(
             "{}",
@@ -119,6 +120,9 @@ pub fn delegate(as_json: bool) -> u8 {
 
 /// Del lado de la ventana: toma la consola, corre y deja la respuesta en `file`.
 pub fn in_window(file: &Path, run: impl FnOnce() -> Outcome) -> u8 {
+    // Para que `delegate` sepa si la ventana sigue abierta (en Linux la terminal puede volver
+    // enseguida, sin esperar a la ventana).
+    std::fs::write(pid_path(file), std::process::id().to_string()).ok();
     let claimed = claim_console();
     let outcome = match &claimed {
         Ok(()) => {
@@ -140,7 +144,11 @@ pub fn in_window(file: &Path, run: impl FnOnce() -> Outcome) -> u8 {
         "results": outcome.results,
         "report": outcome.report,
     });
-    std::fs::write(file, answer.to_string()).ok();
+    // Escrita aparte y renombrada: `delegate` puede estar mirando si ya está.
+    let partial = file.with_extension("partial");
+    if std::fs::write(&partial, answer.to_string()).is_ok() {
+        std::fs::rename(&partial, file).ok();
+    }
     if claimed.is_ok() {
         eprint!(
             "{}",
@@ -342,8 +350,13 @@ fn answer_line(timeout: Duration) -> Option<String> {
     lines.lock().unwrap().recv_timeout(timeout).ok()
 }
 
+/// Dónde deja la ventana su pid, al lado de la respuesta.
+fn pid_path(answer: &Path) -> PathBuf {
+    answer.with_extension("pid")
+}
+
 #[cfg(windows)]
-fn open_window(args: &[OsString]) -> std::io::Result<()> {
+fn open_window(args: &[OsString], _answer: &Path) -> std::io::Result<()> {
     use std::{os::windows::process::CommandExt, process::Stdio};
     const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
     std::process::Command::new(std::env::current_exe()?)
@@ -356,11 +369,14 @@ fn open_window(args: &[OsString]) -> std::io::Result<()> {
         .map(|_| ())
 }
 
-#[cfg(not(windows))]
-fn open_window(_: &[OsString]) -> std::io::Result<()> {
+#[cfg(target_os = "linux")]
+use linux::{claim_console, open_window};
+
+#[cfg(not(any(windows, target_os = "linux")))]
+fn open_window(_: &[OsString], _: &Path) -> std::io::Result<()> {
     Err(std::io::Error::other(pick(
-        "for now it only works on Windows; ask the person to run it in their terminal",
-        "por ahora solo funciona en Windows; pedile a la persona que lo corra en su terminal",
+        "for now it only works on Windows and Linux; ask the person to run it in their terminal",
+        "por ahora solo funciona en Windows y Linux; pedile a la persona que lo corra en su terminal",
     )))
 }
 
@@ -416,13 +432,16 @@ fn claim_console() -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 fn claim_console() -> Result<(), String> {
     Err(tr!(
-        "✗ `--window` is only for the window that `crabfall run --ask` opens, on Windows.",
-        "✗ `--window` es solo para la ventana que abre `crabfall run --ask`, en Windows."
+        "✗ `--window` is only for the window that `crabfall run --ask` opens, on Windows and Linux.",
+        "✗ `--window` es solo para la ventana que abre `crabfall run --ask`, en Windows y Linux."
     ))
 }
+
+#[cfg(target_os = "linux")]
+mod linux;
 
 #[cfg(test)]
 mod tests {
