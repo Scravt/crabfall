@@ -261,7 +261,14 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente. Al cerrar
 - [x] Hook: deja pasar `run --ask`, bloquea `run` sin `--ask` y `run --window`; skill, ayuda en los dos idiomas y README
 - [x] Tests: el permiso (vence, no sobrevive a otro plan, a una edición ni a otra clave), el hook y `--window` fuera de su ventana
 - [x] Investigación sobre agentes maliciosos: qué resiste y qué no, en ADR-017
-- Listo: en `market-api`, Claude corrió `search-ramp --ask`; el usuario tipeó el host en la ventana (el plan había cambiado por `X-Lab-Key`) y dio unos minutos de permiso. Claude comparó contra la base ("sin cambios"), borró los índices de trigramas y volvió a pedir la corrida: corrió sin preguntar dentro del permiso, porque el plan era el mismo, y dio "empeoró". Después se restauraron los índices (24 oct 2026). La prueba destapó un detalle, ya corregido: después de tipear el host, la pregunta de los minutos parecía un segundo paso para aprobar; ahora dice que es opcional y que Enter corre la carga. macOS y Linux, después.
+- Listo: en `market-api`, Claude corrió `search-ramp --ask`; el usuario tipeó el host en la ventana (el plan había cambiado por `X-Lab-Key`) y dio unos minutos de permiso. Claude comparó contra la base ("sin cambios"), borró los índices de trigramas y volvió a pedir la corrida: corrió sin preguntar dentro del permiso, porque el plan era el mismo, y dio "empeoró". Después se restauraron los índices (24 oct 2026). La prueba destapó un detalle, ya corregido: después de tipear el host, la pregunta de los minutos parecía un segundo paso para aprobar; ahora dice que es opcional y que Enter corre la carga. Linux en la rebanada 25; macOS, después.
+
+**25. La ventana de `--ask` en Linux** (ADR-017)
+- [x] Con escritorio (`DISPLAY` o `WAYLAND_DISPLAY`), la ventana se abre en `$TERMINAL` o en la primera terminal conocida (`x-terminal-emulator`, gnome-terminal, konsole, kitty, xterm…), cada una con su forma de recibir el comando; sin escritorio rechaza como antes
+- [x] El agente no espera a la terminal (gnome-terminal vuelve enseguida): la ventana deja su pid al lado de la respuesta, y el agente espera la respuesta o que ese proceso deje de existir; la respuesta se escribe aparte y se renombra
+- [x] `--window` en Linux: entrada y salida en una terminal, líder de su propia sesión y con una terminal conocida como padre (no `script`, `tmux` ni una shell)
+- [x] Tests: los argumentos de cada terminal, `/proc/<pid>/stat` con nombres raros, qué padres valen; CI ya corre en Linux
+- Listo: en WSL2 (Ubuntu 24.04 con WSLg y GNOME Keyring), `smoke --ask` contra `market-api` abrió la ventana en gnome-terminal (vía `x-terminal-emulator`); el usuario tipeó el host, dio unos minutos de permiso, y la siguiente corrida en xterm salió sin preguntar. Revocado el permiso, volvió a preguntar; cerrar el xterm sin responder devolvió código 3 y "la ventana se cerró sin respuesta", sin corrida nueva (24 oct 2026). En WSLg las terminales se ven gris sobre negro: son sus colores por defecto.
 
 ## Primera versión
 
@@ -271,7 +278,7 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente. Al cerrar
 
 **Al final: modelos de carga nuevos** (`ramping_vus`, iteraciones fijas, arrival por VU). Hoy alcanzan `constant_rate`, `ramping_rate` y `constant_vus`.
 
-contra un agente malicioso (ADR-017): guía para correr el agente con el sandbox de Claude Code y egress restringido, y un token de vida corta exigido por el target (FIDO2 o teléfono, verificado fuera de la máquina); la ventana de `--ask` en macOS y Linux; más reglas de diagnóstico, aprobar en CI sin una persona (para que la base fija sirva en un pipeline), servidor MCP, importadores (OpenAPI, curl, Postman), HTTP/2, GUI con Tauri (después de la TUI), leer `expires_in` para elegir solo cuándo renovar, GitHub Action, correlación con métricas del servidor (OTLP, Prometheus), WebSockets, gRPC, Kafka.
+contra un agente malicioso (ADR-017): guía para correr el agente con el sandbox de Claude Code y egress restringido, y un token de vida corta exigido por el target (FIDO2 o teléfono, verificado fuera de la máquina); la ventana de `--ask` en macOS; más reglas de diagnóstico, aprobar en CI sin una persona (para que la base fija sirva en un pipeline), servidor MCP, importadores (OpenAPI, curl, Postman), HTTP/2, GUI con Tauri (después de la TUI), leer `expires_in` para elegir solo cuándo renovar, GitHub Action, correlación con métricas del servidor (OTLP, Prometheus), WebSockets, gRPC, Kafka.
 
 ## Decisiones abiertas
 

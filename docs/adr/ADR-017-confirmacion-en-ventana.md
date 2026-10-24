@@ -43,7 +43,15 @@ El hook deja pasar `crabfall run ... --ask` y sigue bloqueando `run` sin `--ask`
 
 ### 6. Otros sistemas
 
-Por ahora, solo Windows. En macOS (Terminal vía `osascript`) y Linux (`$TERMINAL`, `x-terminal-emulator`) `--ask` sin terminal rechaza y pide que la persona corra el comando. Sin escritorio (SSH, Claude Code en la web) no hay dónde abrir la ventana: mismo rechazo.
+**Linux** (24 oct 2026), con escritorio (`DISPLAY` o `WAYLAND_DISPLAY`; WSL2 con WSLg sirve):
+
+- La ventana se abre en `$TERMINAL` o en la primera que haya de `x-terminal-emulator`, gnome-terminal, ptyxis, konsole, xfce4-terminal, mate-terminal, kitty, alacritty, wezterm, foot y xterm, cada una con su forma de recibir el comando.
+- Algunas vuelven enseguida (gnome-terminal abre la ventana desde su servidor), así que `delegate` no espera a la terminal: la ventana deja su pid al lado del archivo de respuesta, y el agente espera la respuesta o que ese proceso deje de existir (cerrar la ventana). Si en 20 s no aparece el pid, la terminal no abrió la ventana.
+- La respuesta se escribe aparte y se renombra, para no leerla a medias.
+- El equivalente de §4: entrada y salida en una terminal, el proceso es líder de su propia sesión (lo lanzó la terminal, no una shell) y su padre es una terminal conocida, o la de `$TERMINAL` si no es una shell ni algo como `script` o `tmux`, que dan una terminal sin mostrarla. Que la ventana se vea no se puede verificar en general.
+- La clave vive en el Secret Service (GNOME Keyring o KWallet), que tiene que estar corriendo y desbloqueado.
+
+**macOS** (Terminal vía `osascript`), después: `--ask` sin terminal rechaza y pide que la persona corra el comando. Sin escritorio (SSH, Claude Code en la web) no hay dónde abrir la ventana: mismo rechazo.
 
 ## Qué no cambia: el agente malicioso
 
