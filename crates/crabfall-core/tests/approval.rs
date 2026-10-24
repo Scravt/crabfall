@@ -3,7 +3,7 @@
 use crabfall_core::{
     approval::{self, Approval, MemoryKey, Rejection},
     config::Environment,
-    engine::plan::Plan,
+    engine::plan::{Inputs, Plan},
     validate::parse_scenario,
 };
 
@@ -194,4 +194,60 @@ fn an_allowance_does_not_survive_a_new_plan_or_an_edit() {
 
     let other_key = MemoryKey(b"otra-clave".to_vec());
     assert!(!approval::allows(&allowance, &a, 0, &other_key));
+}
+
+#[test]
+fn a_var_by_flag_invalidates_but_a_secret_value_does_not() {
+    const WITH_VARS: &str = "version: 1
+name: checkout
+vars: { id: 7 }
+flows:
+  main:
+    steps:
+      - name: item
+        request:
+          method: GET
+          url: /products/{{id}}
+          headers: { Authorization: \"Bearer {{env.TOKEN}}\" }
+load:
+  executor: constant_rate
+  rate: 10/s
+  duration: 10s
+  max_vus: 10
+";
+    let e = env(ENV);
+    let build = |vars: &[(&str, serde_json::Value)], token: &str| {
+        let inputs = Inputs {
+            vars: vars
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.clone()))
+                .collect(),
+            secrets: [("TOKEN".to_string(), Some(token.to_string()))].into(),
+            ..Default::default()
+        };
+        Plan::build(&parse_scenario(WITH_VARS).unwrap(), &e, &inputs).unwrap()
+    };
+    let a = approval::approve(
+        &build(&[], "uno"),
+        &e,
+        "local",
+        "gonzalo",
+        "2026-10-12T00:00:00Z",
+        &key(),
+    )
+    .unwrap();
+    let verify = |plan: &Plan| approval::verify(Some(&a), plan, &e, "local", &key());
+
+    // Otro valor del secreto no cambia la firma: no entra en el plan canónico.
+    assert_eq!(verify(&build(&[], "dos")), Ok(()));
+    // `--var id=7` repite el valor del escenario: el plan es el mismo.
+    assert_eq!(verify(&build(&[("id", 7.into())], "uno")), Ok(()));
+    // `--var id=8` cambia el tráfico: hay que aprobar de nuevo, con el diff.
+    let Err(Rejection::Changed(diff)) = verify(&build(&[("id", 8.into())], "uno")) else {
+        panic!("tenía que rechazar");
+    };
+    assert!(
+        diff.contains("-      7") && diff.contains("+      8"),
+        "{diff}"
+    );
 }
