@@ -17,7 +17,7 @@ use axum::{
 };
 use crabfall_core::{
     config::Environment,
-    diagnose::{Finding, Severity},
+    diagnose::{Finding, Settings, Severity},
     engine::{self, Progress, plan::Plan},
     metrics::RunResult,
     validate::parse_scenario,
@@ -243,6 +243,37 @@ async fn occasional_slow_requests_show_a_long_tail() {
 
     let f = find(&r, "long_tail");
     assert_eq!(f.severity, Severity::Medium);
+
+    // Los ajustes del diagnóstico (ADR-018 §3) sobre la misma corrida, sin volver a cargar.
+    let load = crabfall_core::load::LoadPlan::Open {
+        ramping: false,
+        segments: vec![],
+        max_vus: 100,
+        graceful_stop: Duration::from_secs(30),
+    };
+    let again = |s: Settings| ids_of(&crabfall_core::diagnose::diagnose(&load, &r, &s));
+    assert!(again(Settings::default()).contains(&"long_tail".to_string()));
+    let off = Settings {
+        off: vec!["long_tail".into()],
+        ..Default::default()
+    };
+    assert!(!again(off).contains(&"long_tail".to_string()));
+    // Un margen de 1 s: 150 ms entre p50 y p99 ya no es cola larga.
+    let wide = Settings {
+        latency_margin_ms: Some(1000.0),
+        ..Default::default()
+    };
+    assert!(!again(wide).contains(&"long_tail".to_string()));
+    // Con más requests mínimas de las que hubo (~300), tampoco.
+    let few = Settings {
+        min_requests: Some(10_000),
+        ..Default::default()
+    };
+    assert!(!again(few).contains(&"long_tail".to_string()));
+}
+
+fn ids_of(findings: &[Finding]) -> Vec<String> {
+    findings.iter().map(|f| f.id.clone()).collect()
 }
 
 #[tokio::test(flavor = "multi_thread")]

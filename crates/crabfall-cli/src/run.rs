@@ -240,6 +240,13 @@ pub fn print_plan(plan: &Plan, env_name: &str, tweaks: &[String]) {
         eprintln!("{}", crabfall_core::tr!("  file: {u}", "  archivo: {u}"));
     }
     eprintln!("  http: {}", plan.http_summary());
+    let diagnosis = plan.diagnosis.describe();
+    if !diagnosis.is_empty() {
+        eprintln!(
+            "{}",
+            crabfall_core::tr!("  diagnosis: {diagnosis}", "  diagnóstico: {diagnosis}")
+        );
+    }
     for d in &plan.data {
         eprintln!(
             "{}",

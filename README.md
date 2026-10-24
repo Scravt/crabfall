@@ -3,7 +3,7 @@
 A load testing tool in Rust, built to be used together with Claude Code:
 Claude designs the scenario and analyzes the results; a person approves and runs the load.
 
-Status: **v0.2.0** (slices 0 to 25), working on v0.3: slices 26 (where a slow step's time goes) and 27 (saturation with fixed VUs, by comparing runs) are done ([ADR-018](docs/adr/ADR-018-diagnosis-v03.md)); see [What's next](#whats-next). Already working: design with Claude, signed approval (HMAC-SHA256 with the key in the system keyring; see [Approval](#approval-no-load-without-a-person)), runs requested by the agent and confirmed by a person in a window ([`--ask`](#letting-the-agent-ask-for-a-run---ask)), scenarios with `setup`, `extract`, checks and thresholds, three executors, diagnosis, run comparison, datasets, pauses between steps, per-run tweaks by flag, an HTML report per run, login per virtual user (`vu_setup`), token renewal during the load (`vu_refresh`), file uploads (`multipart`), bytes sent and received per second, an HTTP client with cookies, redirects, compression and forms, and output in English or Spanish. See the [roadmap](docs/roadmap.md).
+Status: **v0.2.0** (slices 0 to 25), working on v0.3: slices 26 (where a slow step's time goes), 27 (saturation with fixed VUs, by comparing runs) and 28 (turning diagnosis rules off and tuning margins) are done ([ADR-018](docs/adr/ADR-018-diagnosis-v03.md)); see [What's next](#whats-next). Already working: design with Claude, signed approval (HMAC-SHA256 with the key in the system keyring; see [Approval](#approval-no-load-without-a-person)), runs requested by the agent and confirmed by a person in a window ([`--ask`](#letting-the-agent-ask-for-a-run---ask)), scenarios with `setup`, `extract`, checks and thresholds, three executors, diagnosis, run comparison, datasets, pauses between steps, per-run tweaks by flag, an HTML report per run, login per virtual user (`vu_setup`), token renewal during the load (`vu_refresh`), file uploads (`multipart`), bytes sent and received per second, an HTTP client with cookies, redirects, compression and forms, and output in English or Spanish. See the [roadmap](docs/roadmap.md).
 
 ## Usage
 
@@ -230,9 +230,10 @@ crabfall run checkout --executor ramping_rate --stages 50/s:1m,200/s:3m,0/s:30s
 crabfall run login-users --data users=data/others.csv --pick users=random
 crabfall run shop-per-user --duration 10m --refresh-every 4m
 crabfall run checkout --threshold "http.latency.p95<300ms" --threshold "http.error_rate<1%"
+crabfall run checkout --diagnosis-off long_tail --latency-margin 100ms --min-requests 50
 ```
 
-Full list in `crabfall run --help`. The approval signs the ones that change the traffic: pass the same ones to `crabfall approve` and `crabfall run`. `--threshold` replaces the YAML ones and needs no new approval ([ADR-008](docs/adr/ADR-008-think-time-and-tweaks.md)).
+Full list in `crabfall run --help`. The approval signs the ones that change the traffic: pass the same ones to `crabfall approve` and `crabfall run`. `--threshold` replaces the YAML ones and needs no new approval ([ADR-008](docs/adr/ADR-008-think-time-and-tweaks.md)). Neither do the diagnosis settings: `--diagnosis-off` turns rules off by finding id, `--latency-margin` replaces the 50 ms the rules add to "3× the baseline", and `--min-requests` lowers how many requests a step needs. They also go in a `diagnosis:` block in the scenario or in an environment of `config.yaml`; they are recorded in `results.json` and the report, and `compare` warns when two runs used different ones ([ADR-018](docs/adr/ADR-018-diagnosis-v03.md)).
 
 ## With Claude Code
 
@@ -257,7 +258,7 @@ Still to try for real (the code is done): TLS, compression behind Caddy and the 
 **v0.3:**
 - An MCP server.
 - Importers: OpenAPI, curl, Postman.
-- Diagnosis: after [comparing what other tools detect](docs/studies/diagnosis-comparison.md), where a slow step's time goes (done, slice 26), turning rules off and tuning a few margins per scenario, saturation in the closed model by comparing runs with different VUs (done, slice 27), and within a single run with `ramping_vus` ([ADR-018](docs/adr/ADR-018-diagnosis-v03.md)).
+- Diagnosis: after [comparing what other tools detect](docs/studies/diagnosis-comparison.md), where a slow step's time goes (done, slice 26), turning rules off and tuning a few margins per scenario (done, slice 28), saturation in the closed model by comparing runs with different VUs (done, slice 27), and within a single run with `ramping_vus` ([ADR-018](docs/adr/ADR-018-diagnosis-v03.md)).
 
 **Later, in no particular order:** the `--ask` window on macOS; defenses against a deliberately malicious agent (running it in a sandbox, a short-lived token required by the target); approving in CI without a person, and a GitHub Action; correlation with server metrics (OTLP, Prometheus); HTTP/2, WebSockets, gRPC, Kafka; choosing when to renew a session from `expires_in`; a desktop GUI. New load models (`ramping_vus`, fixed iterations, per-VU arrival) come last.
 

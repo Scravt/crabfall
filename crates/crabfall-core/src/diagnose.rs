@@ -47,9 +47,11 @@ pub struct Finding {
 }
 
 /// Umbrales de las reglas. Están juntos para poder ajustarlos con el laboratorio.
+/// Lo que se suma a "3× la base" (quiebre, ancho de banda) y la distancia mínima entre p50 y
+/// p99 de la cola larga. Se puede cambiar con `latency_margin` (ADR-018 §3).
+const DEFAULT_LATENCY_MARGIN_MS: f64 = 50.0;
 const MAX_LAG_P99_MS: f64 = 5.0;
 const DEGRADED_FACTOR: f64 = 3.0;
-const DEGRADED_MIN_DELTA_MS: f64 = 50.0;
 const ERROR_RATE_HIGH: f64 = 0.05;
 const ERROR_RATE_LOW: f64 = 0.01;
 const DROPPED_MAX_RATIO: f64 = 0.01;
@@ -57,7 +59,6 @@ const DRIFT_FACTOR: f64 = 2.0;
 const DRIFT_MIN_DELTA_MS: f64 = 20.0;
 const DRIFT_MIN_R2: f64 = 0.6;
 const TAIL_RATIO: f64 = 10.0;
-const TAIL_MIN_DELTA_MS: f64 = 50.0;
 const TAIL_MIN_REQUESTS: u64 = 200;
 const NEW_CONN_RATIO: f64 = 0.10;
 const NEW_CONN_MIN_REQUESTS: u64 = 100;
@@ -80,7 +81,68 @@ const SPLIT_UPLOAD_BYTES: f64 = 64.0 * 1024.0;
 /// `fixed_concurrency`: con VUs fijos, un paso así de lento merece repetir con una rampa.
 const FIXED_SLOW_P50_MS: f64 = 100.0;
 
-pub fn diagnose(load: &LoadPlan, r: &RunResult) -> Vec<Finding> {
+/// Las reglas que se pueden apagar, por el id de su hallazgo. `invalid_result` no: dice si los
+/// números valen.
+pub const RULES: &[&str] = &[
+    "breaking_point",
+    "capacity_exceeded",
+    "degradation_over_time",
+    "error_threshold",
+    "long_tail",
+    "new_connections",
+    "bandwidth_limit",
+    "time_split",
+    "fixed_concurrency",
+];
+
+/// Lo que la persona ajusta del diagnóstico (ADR-018 §3): reglas apagadas y dos márgenes con
+/// nombre. Sin ajustes valen las constantes de arriba. No cambia el tráfico: no se firma.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Settings {
+    /// Reglas apagadas, por el id de su hallazgo.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub off: Vec<String>,
+    /// En lugar de los 50 ms del quiebre, el ancho de banda y la cola larga.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latency_margin_ms: Option<f64>,
+    /// En lugar de las requests mínimas de `long_tail` (200), `new_connections` y `time_split` (100).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_requests: Option<u64>,
+}
+
+impl Settings {
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// Una línea: `off long_tail · latency margin 100 ms · min requests 50`; vacía sin ajustes.
+    pub fn describe(&self) -> String {
+        let mut parts = Vec::new();
+        if !self.off.is_empty() {
+            parts.push(crate::tr!("off {}", "apagadas {}", self.off.join(", ")));
+        }
+        if let Some(m) = self.latency_margin_ms {
+            parts.push(crate::tr!(
+                "latency margin {m} ms",
+                "margen de latencia {m} ms"
+            ));
+        }
+        if let Some(n) = self.min_requests {
+            parts.push(crate::tr!("min requests {n}", "requests mínimas {n}"));
+        }
+        parts.join(" · ")
+    }
+
+    fn margin(&self) -> f64 {
+        self.latency_margin_ms.unwrap_or(DEFAULT_LATENCY_MARGIN_MS)
+    }
+
+    fn min_requests(&self, default: u64) -> u64 {
+        self.min_requests.unwrap_or(default)
+    }
+}
+
+pub fn diagnose(load: &LoadPlan, r: &RunResult, settings: &Settings) -> Vec<Finding> {
     if r.aborted.is_some() {
         return vec![];
     }
@@ -93,7 +155,7 @@ pub fn diagnose(load: &LoadPlan, r: &RunResult) -> Vec<Finding> {
     out.extend(invalid_result(r));
     let mut saturated = false;
     if ramping {
-        if let Some(f) = breaking_point(r, points) {
+        if let Some(f) = breaking_point(r, points, settings.margin()) {
             saturated = true;
             out.push(f);
         }
@@ -104,7 +166,7 @@ pub fn diagnose(load: &LoadPlan, r: &RunResult) -> Vec<Finding> {
         }
         out.extend(degradation_over_time(r, points));
     }
-    out.extend(bandwidth_limit(points));
+    out.extend(bandwidth_limit(points, settings.margin()));
     for (step, series) in r.steps.iter().zip(&r.series.steps) {
         out.extend(error_threshold(
             step,
@@ -113,16 +175,18 @@ pub fn diagnose(load: &LoadPlan, r: &RunResult) -> Vec<Finding> {
             Session::of(r),
         ));
         if !saturated {
-            out.extend(long_tail(step));
+            out.extend(long_tail(step, settings));
         }
-        out.extend(new_connections(step, load.concurrency()));
-        out.extend(time_split(step, saturated));
+        out.extend(new_connections(step, load.concurrency(), settings));
+        out.extend(time_split(step, saturated, settings));
     }
     if let LoadPlan::Closed { vus, .. } = load
         && !saturated
     {
         out.extend(fixed_concurrency(r, *vus));
     }
+    // Las apagadas se calculan igual (la saturación decide otras reglas) pero no se muestran.
+    out.retain(|f| !settings.off.contains(&f.id));
     out.sort_by_key(|f| f.severity);
     out
 }
@@ -150,7 +214,7 @@ fn invalid_result(r: &RunResult) -> Option<Finding> {
 /// mientras la carga pide bastante más y la latencia sube: el límite puede ser el ancho de
 /// banda (ADR-013) y no el servidor. Lo que pedía la carga se estima con los bytes por
 /// iteración de antes del techo.
-fn bandwidth_limit(points: &[Point]) -> Option<Finding> {
+fn bandwidth_limit(points: &[Point], margin: f64) -> Option<Finding> {
     let bytes = |p: &Point| (p.bytes_sent + p.bytes_received) as f64;
     let peak = points.iter().map(bytes).fold(0.0, f64::max);
     if peak < BANDWIDTH_MIN_BYTES_PER_S {
@@ -180,7 +244,7 @@ fn bandwidth_limit(points: &[Point]) -> Option<Finding> {
     }
     let base = baseline(before, |p| p.p95)?;
     let after = median(window.iter().filter_map(|p| p.p95).collect())?;
-    if after < (base * DEGRADED_FACTOR).max(base + DEGRADED_MIN_DELTA_MS) {
+    if after < (base * DEGRADED_FACTOR).max(base + margin) {
         return None;
     }
     let size = |b: f64| format!("{}/s", crate::upload::size(b as usize));
@@ -248,7 +312,7 @@ fn baseline<T>(points: &[T], p95: impl Fn(&T) -> Option<f64>) -> Option<f64> {
     median(with_data[..n].to_vec())
 }
 
-fn degraded(p: &Point, base: f64) -> bool {
+fn degraded(p: &Point, base: f64, margin: f64) -> bool {
     let error_rate = if p.requests > 0 {
         p.errors as f64 / p.requests as f64
     } else {
@@ -256,7 +320,7 @@ fn degraded(p: &Point, base: f64) -> bool {
     };
     let slow = p
         .p95
-        .is_some_and(|v| v > (base * DEGRADED_FACTOR).max(base + DEGRADED_MIN_DELTA_MS));
+        .is_some_and(|v| v > (base * DEGRADED_FACTOR).max(base + margin));
     p.dropped > 0 || slow || error_rate >= ERROR_RATE_HIGH
 }
 
@@ -337,9 +401,9 @@ fn saturation_causes(affected: &[String]) -> Vec<String> {
     causes
 }
 
-fn breaking_point(r: &RunResult, points: &[Point]) -> Option<Finding> {
+fn breaking_point(r: &RunResult, points: &[Point], margin: f64) -> Option<Finding> {
     let base = baseline(points, |p: &Point| p.p95)?;
-    let flags: Vec<bool> = points.iter().map(|p| degraded(p, base)).collect();
+    let flags: Vec<bool> = points.iter().map(|p| degraded(p, base, margin)).collect();
     let t = first_sustained(&flags)?;
     let at = &points[t];
     let after = &points[t..];
@@ -756,11 +820,11 @@ fn error_threshold(
     })
 }
 
-fn long_tail(step: &StepResult) -> Option<Finding> {
+fn long_tail(step: &StepResult, settings: &Settings) -> Option<Finding> {
     let l = step.latency_ms?;
-    if l.count < TAIL_MIN_REQUESTS
+    if l.count < settings.min_requests(TAIL_MIN_REQUESTS)
         || l.p99 < l.p50 * TAIL_RATIO
-        || l.p99 - l.p50 < TAIL_MIN_DELTA_MS
+        || l.p99 - l.p50 < settings.margin()
     {
         return None;
     }
@@ -798,10 +862,10 @@ fn long_tail(step: &StepResult) -> Option<Finding> {
 
 /// El pool de conexiones es compartido y crece hasta la concurrencia: abrir una conexión
 /// por VU es normal. Solo cuentan las que exceden ese tope, que se reabrieron.
-fn new_connections(step: &StepResult, vus: u32) -> Option<Finding> {
+fn new_connections(step: &StepResult, vus: u32, settings: &Settings) -> Option<Finding> {
     let connects = step.connect_ms.map_or(0, |c| c.count);
     let reopened = connects.saturating_sub(u64::from(vus));
-    if step.requests < NEW_CONN_MIN_REQUESTS
+    if step.requests < settings.min_requests(NEW_CONN_MIN_REQUESTS)
         || (reopened as f64) < step.requests as f64 * NEW_CONN_RATIO
     {
         return None;
@@ -847,9 +911,10 @@ fn new_connections(step: &StepResult, vus: u32) -> Option<Finding> {
 /// leer el body (la respuesta o el enlace) o lo de antes de mandar (conseguir una conexión,
 /// esperar desde el instante planificado). Las medianas no se suman exacto: alcanzan para
 /// ver qué parte domina.
-fn time_split(step: &StepResult, saturated: bool) -> Option<Finding> {
+fn time_split(step: &StepResult, saturated: bool, settings: &Settings) -> Option<Finding> {
     let (latency, ttfb, receive) = (step.latency_ms?, step.ttfb_ms?, step.receive_ms?);
-    if latency.count < SPLIT_MIN_RESPONSES || latency.p50 < SPLIT_MIN_P50_MS {
+    if latency.count < settings.min_requests(SPLIT_MIN_RESPONSES) || latency.p50 < SPLIT_MIN_P50_MS
+    {
         return None;
     }
     let total = latency.p50;
@@ -1050,6 +1115,7 @@ mod tests {
             scheduler_lag_ms: Some(lag),
             steps: vec![],
             warnings: vec![],
+            diagnosis: None,
             findings: vec![],
             series: Series::default(),
         }
@@ -1071,9 +1137,9 @@ mod tests {
 
     #[test]
     fn late_generator_invalidates_the_result() {
-        let findings = diagnose(&load(), &result(12.0));
+        let findings = diagnose(&load(), &result(12.0), &Settings::default());
         assert_eq!(findings[0].id, "invalid_result");
-        assert!(diagnose(&load(), &result(2.0)).is_empty());
+        assert!(diagnose(&load(), &result(2.0), &Settings::default()).is_empty());
     }
 
     #[test]

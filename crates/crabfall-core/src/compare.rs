@@ -57,6 +57,9 @@ pub struct Run {
     /// El segundo en que la persona frenó la corrida (ADR-015).
     #[serde(default)]
     pub stopped_at_s: Option<f64>,
+    /// Los ajustes del diagnóstico, si los hubo (ADR-018 §3).
+    #[serde(default)]
+    pub diagnosis: Option<crate::diagnose::Settings>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -455,6 +458,21 @@ fn warnings(base: &Run, new: &Run, same_load: bool) -> Vec<String> {
                 r.run_id
             ));
         }
+    }
+    if base.diagnosis != new.diagnosis {
+        let say = |r: &Run| {
+            r.diagnosis
+                .as_ref()
+                .map(|d| d.describe())
+                .filter(|d| !d.is_empty())
+                .unwrap_or_else(|| crate::i18n::pick("the usual", "los de siempre").into())
+        };
+        out.push(crate::tr!(
+            "the diagnosis settings differ ({} → {}): findings may appear or disappear because of that",
+            "los ajustes del diagnóstico son distintos ({} → {}): los hallazgos pueden aparecer o desaparecer por eso",
+            say(base),
+            say(new)
+        ));
     }
     if base.scenario != new.scenario {
         out.push(crate::tr!(
@@ -1067,6 +1085,22 @@ mod tests {
                 .ends_with("(con hasta 20% de errores: parte de ese throughput falló)"),
             "{}",
             s.summary
+        );
+    }
+
+    #[test]
+    fn warns_when_the_diagnosis_settings_differ() {
+        let mut tuned = run("b", &[10.0; 8], json!([]));
+        tuned.diagnosis = Some(crate::diagnose::Settings {
+            off: vec!["long_tail".into()],
+            ..Default::default()
+        });
+        let c = compare(&run("a", &[10.0; 8], json!([])), &tuned).unwrap();
+        assert_eq!(
+            c.warnings,
+            [
+                "los ajustes del diagnóstico son distintos (los de siempre → apagadas long_tail): los hallazgos pueden aparecer o desaparecer por eso"
+            ]
         );
     }
 

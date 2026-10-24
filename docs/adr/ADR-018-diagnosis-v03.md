@@ -35,7 +35,7 @@ Medians aren't additive, so this is an approximation; it's only used to see whic
 
 With `constant_vus` and a slow step (latency p50 ≥ 100 ms), an `info` finding says that the run doesn't show whether that's the limit, and suggests repeating it with `--executor ramping_rate` to find the breaking point. The evidence has the VUs, iterations per second, the step and its p50. It isn't a detection: it's the honest version of rule 1 until `ramping_vus` exists.
 
-### 3. Turning rules off and tuning margins (next slice)
+### 3. Turning rules off and tuning margins (slice 28)
 
 - `diagnosis:` in the scenario or in the environment of `config.yaml`, and by flag (principle 7):
   ```yaml
@@ -47,6 +47,7 @@ With `constant_vus` and a slow step (latency p50 ≥ 100 ms), an `info` finding 
 - Only named settings with bounds, not the internal constants.
 - Not signed (it doesn't change the traffic), like `thresholds`. It goes into `results.json` and the report; `compare` warns if two runs used different settings.
 - The skill tells Claude not to turn off or loosen rules so a run "passes"; if it thinks something is noise, it proposes it to the person.
+- **As built:** the environment's settings apply first and the scenario's on top (its fields win, `off` adds up), then the flags `--diagnosis-off` (comma-separated or repeated, added), `--latency-margin` and `--min-requests`. `latency_margin` replaces the 50 ms in `breaking_point`, `bandwidth_limit` and `long_tail`; `min_requests` replaces 200 in `long_tail` and 100 in `new_connections` and `time_split`. Turned-off rules are still computed (saturation decides other rules) but not shown. `invalid_result` can't be turned off. They're shown in the `run` header, the report header, `crabfall findings --json` and `results.json` (`diagnosis`, only when not the defaults). The TUI form doesn't have them yet: like `--data` and `--pick`, CLI only.
 
 ### 4. What stays out
 

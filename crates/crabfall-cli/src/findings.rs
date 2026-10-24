@@ -93,6 +93,7 @@ fn summary(doc: &Value, file: &std::path::Path) -> Value {
         "totals": doc["totals"],
         "thresholds": doc["thresholds"],
         "warnings": doc["warnings"],
+        "diagnosis": doc["diagnosis"],
         "findings": doc["findings"],
         "steps": steps,
     })

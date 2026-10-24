@@ -286,6 +286,14 @@ Each slice works end to end before moving on to the next. Closing it updates the
 - [x] Tests: the real `market-api` numbers (saturated, verdict "no change"), a run that scales, one close to the limit going down in VUs, the cases where it doesn't apply (same VUs, another duration, an open model) and the errors caveat
 - Done: on `market-api`, `crabfall compare` of slice 26's two runs says "50 → 100 VUs (×2.0): throughput 992.7 → 1003.5 it/s (+1%) and each iteration 50.4 → 99.7 ms: saturated at ~1004 it/s: more VUs only add queue (Little's law)", with the verdict "no significant changes" instead of the misleading "worse" it gave before (24 Oct 2026).
 
+**28. Turning diagnosis rules off and tuning margins** (ADR-018 §3)
+- [x] `diagnosis:` in the scenario and in an environment of `config.yaml`: `off` (finding ids; not `invalid_result`), `latency_margin` (1 ms to 10 s, instead of 50 ms) and `min_requests` (10 to 100,000, instead of 200/100); the environment first, the scenario on top, `off` adds up
+- [x] Flags `--diagnosis-off`, `--latency-margin`, `--min-requests` on `validate`, `check`, `approve` and `run`; errors name the flag; help in both languages
+- [x] Not signed (they don't change the traffic); recorded in `results.json` (`diagnosis`) and shown in the `run` header, the report and `crabfall findings --json`; `compare` warns when two runs used different settings
+- [x] Skill: say when a run had settings, and never turn rules off or loosen them to make a run look healthy
+- [x] Tests: validation with paths, flags added to the scenario and described, the environment and the scenario combined without changing the signature, the compare warning, and the long-tail lab re-diagnosed with each setting
+- Done when: on `market-api`, a run with a rule turned off records it and `compare` warns against one without. **Pending:** that run.
+
 ## Versions
 
 **v0.1.0** (19 Oct 2026): slices 0 to 13 under the name Crabfall (`crabfall` binary, `.crabfall/` folder), on `main` and on GitHub (private at the time). Slice 13 was closed afterwards, with the `upload` run.
@@ -364,4 +372,5 @@ Each slice works end to end before moving on to the next. Closing it updates the
 | 24 Oct 2026 | Diagnosis for v0.3: deterministic rules; they can be turned off and a few margins tuned, recorded in the results; no custom rules | [Study](studies/diagnosis-comparison.md) |
 | 24 Oct 2026 | Diagnosis v0.3: `time_split` and `fixed_concurrency`; saturation in the closed model waits for `ramping_vus`, because with fixed VUs the concurrency never changes | ADR-018 |
 | 24 Oct 2026 | Closed-model saturation by comparing runs with different VUs (`scaling` in `compare`); there, latency changes aren't regressions | ADR-018 §5 |
+| 24 Oct 2026 | Diagnosis settings: rules off and two named margins, by scenario, environment or flag; not signed; recorded and warned about in `compare` | ADR-018 §3 |
 | 24 Oct 2026 | All the documentation in English (ADRs, roadmap, studies); the test repos (`market-api`, `shop-api`) public on GitHub; MIT OR Apache-2.0 license files | ADR-016 |
