@@ -238,7 +238,7 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente. Al cerrar
 - [x] En la TUI, `b` en el historial fija la base y la fila la marca
 - [x] Ayuda en los dos idiomas, README, skill (Claude la prefiere para preguntar si algo empeoró, pero no la mueve)
 - [x] Tests: fijar, comparar contra la base aunque haya corridas en el medio, sin base, argumentos de más, y la tecla `b`
-- Listo cuando: en `market-api`, fijo como base la corrida de `search-ramp` con índice y una corrida sin índice da "empeoró" contra la base. Fijar la base con `b` en el historial funciona (`20261022-202949`, con índice, versionada en `market-api`). **Pendiente:** la corrida sin índice.
+- Listo: en `market-api`, la base de `search-ramp` se fijó con `b` en el historial (`20261022-202949`, con índice, versionada en `market-api`). Contra ella, una corrida con índice dio "sin cambios" (p95 de `search` 10,7 → 10,6 ms) y otra sin los índices de trigramas dio "empeoró": p95 10,7 → 3322 ms en 60 de 60 segundos, 8,1% de iteraciones descartadas y un punto de quiebre nuevo en ~102 it/s (24 oct 2026).
 
 **23. Ayuda en la TUI** (ADR-015)
 - [x] `?` en cualquier pantalla abre su ayuda (qué es, cómo se usa, cada tecla); cualquier tecla la cierra; editando un valor, `?` se escribe
@@ -261,7 +261,7 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente. Al cerrar
 - [x] Hook: deja pasar `run --ask`, bloquea `run` sin `--ask` y `run --window`; skill, ayuda en los dos idiomas y README
 - [x] Tests: el permiso (vence, no sobrevive a otro plan, a una edición ni a otra clave), el hook y `--window` fuera de su ventana
 - [x] Investigación sobre agentes maliciosos: qué resiste y qué no, en ADR-017
-- Listo cuando: en `market-api`, Claude corre `search-ramp --ask`, la persona confirma en la ventana, Claude compara contra la base, cambia algo y vuelve a correr. **Pendiente:** la prueba con la persona. macOS y Linux, después.
+- Listo: en `market-api`, Claude corrió `search-ramp --ask`; el usuario tipeó el host en la ventana (el plan había cambiado por `X-Lab-Key`) y dio unos minutos de permiso. Claude comparó contra la base ("sin cambios"), borró los índices de trigramas y volvió a pedir la corrida: corrió sin preguntar dentro del permiso, porque el plan era el mismo, y dio "empeoró". Después se restauraron los índices (24 oct 2026). La prueba destapó un detalle, ya corregido: después de tipear el host, la pregunta de los minutos parecía un segundo paso para aprobar; ahora dice que es opcional y que Enter corre la carga. macOS y Linux, después.
 
 ## Primera versión
 
