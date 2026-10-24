@@ -273,8 +273,8 @@ fn main() -> ExitCode {
     let code = match command {
         Command::Validate { target, json } => cmd_validate(&target, json),
         Command::Claude {
-            action: ClaudeAction::Install,
-        } => claude::cmd_install(),
+            action: ClaudeAction::Install { mcp },
+        } => claude::cmd_install(mcp),
         Command::Hook {
             event: HookEvent::PreToolUse,
         } => hook::cmd_pre_tool_use(),
@@ -441,6 +441,7 @@ fn spanish_help(command: clap::Command) -> clap::Command {
             c.about("Integra Crabfall con Claude Code en este repo: skill, hook y permisos")
                 .mut_subcommand("install", |c| {
                     c.about("Escribe .claude/skills/crabfall/SKILL.md y agrega el hook y los permisos a .claude/settings.json")
+                        .mut_arg("mcp", |a| a.help("Registra también el servidor MCP en .mcp.json, y permite sus herramientas que no generan carga"))
                 })
         })
         .mut_subcommand("validate", |c| {
@@ -630,7 +631,11 @@ fn issue(message: String) -> Issue {
 #[derive(Subcommand)]
 enum ClaudeAction {
     /// Writes .claude/skills/crabfall/SKILL.md and adds the hook and the permissions to .claude/settings.json.
-    Install,
+    Install {
+        /// Also registers the MCP server in .mcp.json, and allows its tools that send no load.
+        #[arg(long)]
+        mcp: bool,
+    },
 }
 
 #[derive(Subcommand)]

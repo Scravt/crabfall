@@ -41,7 +41,7 @@ Each tool runs `crabfall <command> … --json` as a child process in the project
 
 ### 4. Claude Code and the hook
 
-With Claude Code, the CLI and the skill are still the main path (ADR-001). If a project also registers the server (`.mcp.json`), the `PreToolUse` hook doesn't see MCP calls, but it doesn't need to: the server only exposes what the hook lets through, and the guard is in the binary either way.
+With Claude Code, the CLI and the skill are still the main path (ADR-001). `crabfall claude install --mcp` also registers the server in `.mcp.json` (keeping other servers) and allows the tools that send no load (`mcp__crabfall__validate`, …); `request_run` isn't allowed, so Claude Code asks before each one, besides the window. The agent can't enable it on its own: Claude Code asks the person to approve a project's servers. If a project registers the server, the `PreToolUse` hook doesn't see MCP calls, but it doesn't need to: the server only exposes what the hook lets through, and the guard is in the binary either way.
 
 ### 5. What it doesn't change
 

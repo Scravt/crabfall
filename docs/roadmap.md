@@ -304,6 +304,7 @@ Each slice works end to end before moving on to the next. Closing it updates the
 - [x] Read-only sessions against `market-api` and `shop-api`: the 17 scenarios validate, latest runs and baselines are listed, and `compare` returns slice 27's saturation (24 Oct 2026)
 - [x] Fixed along the way, because `list_scenarios` showed it: runs are ordered by `started_at` (an absolute instant), not by id. The id comes from each machine's local clock, so on `market-api` a WSL run (UTC) passed as newer than a later Windows one (UTC−3). `latest`, the previous run for `compare`, the TUI history and the MCP use the same order (`runs::all`)
 - [x] `.mcp.json` in `market-api` and `shop-api`, with the skill refreshed
+- [x] `crabfall claude install --mcp`: also writes the `crabfall` server to `.mcp.json` (keeping other servers) and allows the MCP tools that send no load; `request_run` keeps asking. README with the connection steps, client by client
 - Done when: a real MCP client (Claude Code through `.mcp.json`, Cursor or another) designs, checks and analyzes with it, and a person confirms a `request_run`. **Pending:** that session, with the person.
 
 ## Versions

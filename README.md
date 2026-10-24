@@ -239,6 +239,7 @@ Full list in `crabfall run --help`. The approval signs the ones that change the 
 
 ```bash
 crabfall claude install              # in the repo under test: skill, hook and permissions in .claude/
+crabfall claude install --mcp        # the same, and registers the MCP server in .mcp.json
 ```
 
 Then, in a Claude Code session: *"build me a load test of the checkout flow"*. Claude reads the code, writes the scenario, checks it with `crabfall validate` and `crabfall check` (only against loopback) and hands you the `crabfall approve` and `crabfall run` commands to run yourself. It cannot approve or run on its own ([ADR-001](docs/adr/ADR-001-claude-first.md), ADR-004): when it wants to run, it uses `crabfall run --ask`, and you confirm each run in a window (or allow the same plan for some minutes) while it compares the results and keeps working on the code ([`--ask`](#letting-the-agent-ask-for-a-run---ask)).
@@ -249,9 +250,9 @@ Each `crabfall run` also leaves `report.html` next to `results.json`: a file tha
 
 Exit codes: `0` ok · `1` `check` with failed steps, thresholds not met, `setup` failed or `compare` with regressions · `2` invalid scenario or configuration · `3` refused (no valid approval, host not allowed, limits, no terminal, or nobody confirmed `--ask`) · `4` error saving or accessing the keyring.
 
-### With other agents: MCP
+### With MCP: Claude Code, Cursor, VS Code and other agents
 
-`crabfall mcp` is an MCP server over stdio for any agent that speaks MCP ([ADR-019](docs/adr/ADR-019-mcp.md)). Its tools run the same CLI with `--json`, so the same rules and the same guard apply:
+`crabfall mcp` is an MCP server over stdio ([ADR-019](docs/adr/ADR-019-mcp.md)). Its tools run the same CLI with `--json`, so the same rules and the same guard apply:
 
 | Tool | What it does |
 | --- | --- |
@@ -261,13 +262,30 @@ Exit codes: `0` ok · `1` `check` with failed steps, thresholds not met, `setup`
 | `request_run` | `crabfall run --ask`: a person confirms in a window and the load runs there |
 | `findings` / `compare` | a run's summary; two runs, or against the baseline |
 
-There's no tool to approve or to run without a person. Tools take `scenario`, `env`, `vars` and `tweaks` (`{ "rate": "100/s", "diagnosis_off": ["long_tail"] }`). Register it in the project:
+There's no tool to approve or to run without a person. Tools take `scenario`, `env`, `vars` and `tweaks` (`{ "rate": "100/s", "diagnosis_off": ["long_tail"] }`).
 
-```json
-{ "mcpServers": { "crabfall": { "command": "crabfall", "args": ["mcp"] } } }
-```
+**Connecting it.** The agent doesn't connect it on its own: you register the server once per project, and the client asks you to approve it.
 
-That is `.mcp.json` for Claude Code and `.cursor/mcp.json` for Cursor; VS Code uses `.vscode/mcp.json` with `"servers"` instead of `"mcpServers"`. A client that doesn't start it in the project folder (Claude Desktop) needs `"args": ["mcp", "--project", "/path/to/repo"]`. `request_run` waits for the person and the run: raise the client's tool timeout if it cuts long calls.
+1. **Claude Code**, from the project folder (the one with `.crabfall/`):
+
+   ```bash
+   crabfall claude install --mcp
+   ```
+
+   Besides the skill, the hook and the permissions, it adds the `crabfall` server to `.mcp.json` (keeping any other servers there) and allows the tools that send no load; `request_run` still asks every time. `claude mcp add --scope project crabfall -- crabfall mcp` writes the same `.mcp.json`.
+2. **Open a Claude Code session** in that folder. It detects the server and asks whether to approve it: say yes. `/mcp` shows it connected with its tools.
+3. **Ask for something**: *"list the scenarios and analyze the latest search-ramp run"*. When the agent wants load, it calls `request_run` and the confirmation window opens on your screen.
+
+**Other clients** take the same server, in their own file:
+
+| Client | File | Content |
+| --- | --- | --- |
+| Claude Code | `.mcp.json` | `{ "mcpServers": { "crabfall": { "command": "crabfall", "args": ["mcp"] } } }` |
+| Cursor | `.cursor/mcp.json` | the same |
+| VS Code | `.vscode/mcp.json` | `{ "servers": { "crabfall": { "type": "stdio", "command": "crabfall", "args": ["mcp"] } } }` |
+| Claude Desktop | its `claude_desktop_config.json` | like Claude Code, with `"args": ["mcp", "--project", "/path/to/repo"]`: it doesn't start in the project folder |
+
+`crabfall` has to be on the PATH. `request_run` waits for the person and then the run: raise the client's tool timeout if it cuts long calls.
 
 Full scenario format: [ADR-002](docs/adr/ADR-002-scenario-format.md).
 
@@ -276,7 +294,7 @@ Full scenario format: [ADR-002](docs/adr/ADR-002-scenario-format.md).
 Still to try for real (the code is done): TLS, compression behind Caddy and the bandwidth diagnosis against a remote server; the skill in a fresh Claude Code session; the TUI with someone who has never seen it.
 
 **v0.3:**
-- An MCP server ([`crabfall mcp`](#with-other-agents-mcp), slice 29; to be tried with a real client).
+- An MCP server ([`crabfall mcp`](#with-mcp-claude-code-cursor-vs-code-and-other-agents), slice 29; to be tried with a real client).
 - Importers: OpenAPI, curl, Postman.
 - Diagnosis: after [comparing what other tools detect](docs/studies/diagnosis-comparison.md), where a slow step's time goes (done, slice 26), turning rules off and tuning a few margins per scenario (done, slice 28), saturation in the closed model by comparing runs with different VUs (done, slice 27), and within a single run with `ramping_vus` ([ADR-018](docs/adr/ADR-018-diagnosis-v03.md)).
 
