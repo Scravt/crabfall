@@ -1,18 +1,18 @@
 # ADR-007 — Datasets
 
-Estado: **aceptado** · 16 oct 2026
+Status: **accepted** · 16 Oct 2026
 
-## Contexto
+## Context
 
-Hoy todas las iteraciones mandan lo mismo: un usuario de `secrets`, IDs de `vars` o de `{{$randomInt}}`. Contra una API real eso no alcanza. Si todos entran con el mismo usuario, se mide la caché de una sola sesión, se chocan los locks de una misma fila y no se parece al tráfico real. ADR-002 reservó el campo `data` para resolverlo.
+Today every iteration sends the same thing: a user from `secrets`, IDs from `vars` or from `{{$randomInt}}`. Against a real API that isn't enough. If everyone logs in as the same user, you measure the cache of a single session, you hit the locks of the same row, and it doesn't look like real traffic. ADR-002 reserved the `data` field for this.
 
-## Decisión
+## Decision
 
-### Formato
+### Format
 
 ```yaml
 data:
-  users: { file: data/users.csv }                     # pick: sequential (por defecto)
+  users: { file: data/users.csv }                     # pick: sequential (default)
   products: { file: data/products.json, pick: random }
 
 flows:
@@ -27,55 +27,55 @@ flows:
         request: { method: GET, url: "/products/{{products.id}}" }
 ```
 
-- `file` es relativo a `.crabfall/`. Se aceptan dos formatos:
-  - **`.csv` con encabezado.** Todas las celdas son strings: inferir tipos rompe valores como `01234`.
-  - **`.json` con un arreglo de objetos.** Conserva los tipos. Las columnas son las claves del primer objeto, y todas las filas tienen que tener exactamente esas claves.
-- Los nombres de columna y de dataset usan letras, números y `_`. El dataset no puede llamarse `env`, porque `{{env.X}}` ya son los secretos.
+- `file` is relative to `.crabfall/`. Two formats are accepted:
+  - **`.csv` with a header.** Every cell is a string: inferring types breaks values like `01234`.
+  - **`.json` with an array of objects.** It keeps the types. The columns are the keys of the first object, and every row has to have exactly those keys.
+- Column and dataset names use letters, digits and `_`. A dataset can't be called `env`, because `{{env.X}}` are already the secrets.
 - `pick`:
-  - `sequential`: las filas en orden, compartidas entre todos los VUs. Al terminar, vuelve a empezar.
-  - `random`: una fila al azar en cada iteración.
+  - `sequential`: rows in order, shared among all VUs. At the end it starts over.
+  - `random`: a random row on each iteration.
 
-### Una fila por iteración
+### One row per iteration
 
-Cada iteración toma **una** fila de cada dataset que usa su flow y la ve en todos sus pasos como `{{dataset.columna}}`. Así el email y la contraseña siempre son de la misma fila. Un flow que no usa un dataset no consume filas, así que la secuencia no se saltea filas por culpa de otros flows. `crabfall check` usa la primera fila con `sequential`.
+Each iteration takes **one** row from every dataset its flow uses and sees it in all its steps as `{{dataset.column}}`. That way the email and the password always come from the same row. A flow that doesn't use a dataset doesn't consume rows, so the sequence doesn't skip rows because of other flows. `crabfall check` uses the first row with `sequential`.
 
-La sintaxis `{{dataset.columna}}` no choca con nada: los nombres de variable y de `extract` no llevan puntos, y `env.` ya está tomado por los secretos. Con un valor que es exactamente `"{{users.id}}"`, el tipo se conserva como en cualquier variable (ADR-002 §6).
+The `{{dataset.column}}` syntax doesn't collide with anything: variable and `extract` names have no dots, and `env.` is already taken by the secrets. With a value that is exactly `"{{users.id}}"`, the type is kept as with any variable (ADR-002 §6).
 
-### No se usan en `setup`
+### Not used in `setup`
 
-`setup` corre una sola vez, así que una fila ahí no tendría sentido. Si `setup` usa una columna, es un error que lo explica. Un login por usuario y por VU es otra cosa ("setup por VU") y queda en el backlog: hoy se hace con el login como primer paso del flow, como en el ejemplo.
+`setup` runs once, so a row there would make no sense. If `setup` uses a column, it's an error that explains this. One login per user and per VU is something else ("per-VU setup") and stays in the backlog: today it's done with the login as the first step of the flow, as in the example.
 
-### La aprobación firma el contenido
+### The approval signs the content
 
-Cambiar el archivo cambia el tráfico: otros usuarios, otros IDs. Por eso el plan canónico (ADR-004) incluye, por cada dataset, `name`, `file`, `pick` y el **SHA-256 del archivo**, pero no su contenido, que puede ser grande. Si se edita el CSV, `crabfall run` rechaza la aprobación igual que si se editara el escenario. La clave `data` solo aparece en el plan canónico cuando hay datasets, para no invalidar las aprobaciones de escenarios que no los usan.
+Changing the file changes the traffic: other users, other IDs. That's why the canonical plan (ADR-004) includes, for each dataset, `name`, `file`, `pick` and the **file's SHA-256**, but not its content, which can be large. If the CSV is edited, `crabfall run` rejects the approval just as if the scenario had been edited. The `data` key only appears in the canonical plan when there are datasets, so approvals of scenarios that don't use them aren't invalidated.
 
-El resumen de `crabfall approve` y el encabezado de `crabfall run` muestran cada dataset con su archivo, cantidad de filas y `pick`.
+The `crabfall approve` summary and the `crabfall run` header show each dataset with its file, row count and `pick`.
 
-### Errores
+### Errors
 
-`crabfall validate` (con proyecto), `crabfall check`, `crabfall approve` y `crabfall run` leen los archivos y reportan:
+`crabfall validate` (with a project), `crabfall check`, `crabfall approve` and `crabfall run` read the files and report:
 
-- archivo inexistente, sin filas, con una extensión que no es `.csv` ni `.json`, o que no es UTF-8;
-- columnas repetidas o con nombres inválidos, y filas con más o menos celdas (con el número de fila);
-- `{{users.pass}}` cuando `users` no tiene esa columna, listando las que tiene;
-- `{{x.y}}` cuando no existe el dataset `x`;
-- columnas usadas en `setup`.
+- a missing file, one with no rows, with an extension other than `.csv` or `.json`, or not UTF-8;
+- repeated or invalid column names, and rows with more or fewer cells (with the row number);
+- `{{users.pass}}` when `users` has no such column, listing the ones it has;
+- `{{x.y}}` when there is no dataset `x`;
+- columns used in `setup`.
 
-## Alternativas descartadas
+## Rejected alternatives
 
-- **Columnas sueltas (`{{email}}`), como Artillery:** dos datasets con la misma columna chocan, y en el YAML no se ve de dónde sale cada valor.
-- **Inferir tipos en CSV:** `01234` pasaría a ser `1234` y `true` a ser un booleano sin que nadie lo pida. Para tipos, JSON.
-- **`pick: unique`** (cada fila una sola vez y cortar al agotarse): obliga a definir qué pasa con las iteraciones que no tienen fila, y cómo se cuentan. Se agrega cuando un caso real lo pida, por ejemplo registrar usuarios nuevos.
-- **Firmar el contenido completo:** el hash alcanza para detectar el cambio. Para ver *qué* cambió en el archivo está git.
+- **Loose columns (`{{email}}`), like Artillery:** two datasets with the same column collide, and the YAML doesn't show where each value comes from.
+- **Inferring types in CSV:** `01234` would become `1234` and `true` a boolean without anyone asking. For types, JSON.
+- **`pick: unique`** (each row only once, stopping when they run out): it forces deciding what happens to iterations without a row, and how they're counted. To be added when a real case asks for it, for example registering new users.
+- **Signing the whole content:** the hash is enough to detect the change. To see *what* changed in the file, there's git.
 
-## Consecuencias
+## Consequences
 
-- **A favor:** escenarios con usuarios e IDs reales sin lógica en el YAML. La firma cubre los datos. Los errores nombran la columna y la fila.
-- **En contra:** el archivo entero se carga en memoria (está bien hasta decenas de MB). Los datos de prueba suelen tener credenciales de usuarios de prueba: si no se quieren versionar, hay que agregar el archivo al `.gitignore` del proyecto. `crabfall` no lo decide.
+- **For:** scenarios with real users and IDs without logic in the YAML. The signature covers the data. Errors name the column and the row.
+- **Against:** the whole file is loaded into memory (fine up to tens of MB). Test data usually has test users' credentials: if they shouldn't be versioned, the file has to go in the project's `.gitignore`. `crabfall` doesn't decide that.
 
-## `pick: unique` (20 oct 2026)
+## `pick: unique` (20 Oct 2026)
 
-- **Qué hace:** cada fila se usa una sola vez en toda la corrida, por ejemplo para registrar usuarios o consumir cupones. El contador es del plan: lo comparten todos los VUs.
-- **Cuando se acaban:** la fila se toma al despachar la iteración, antes de contarla como iniciada. Si no quedan, la carga termina en orden (no se inician más iteraciones y se espera a las que están en curso), con `data_exhausted` (dataset y segundo) en `results.json` y un aviso al principio. No cuenta como falla: es el final natural de "una fila por iteración". Tampoco es un freno de la persona (`stopped_at_s` queda vacío).
-- **En `vu_setup`:** cada VU toma una fila distinta, así que el plan exige al menos una por VU; si no, no se arma.
-- **Para quien aprueba:** si el dataset tiene menos filas que las iteraciones planificadas, el resumen lo dice ("unique, 50 filas para ≈600 iteraciones: la carga termina cuando se acaben").
+- **What it does:** each row is used only once in the whole run, for example to register users or redeem coupons. The counter belongs to the plan: all VUs share it.
+- **When they run out:** the row is taken when the iteration is dispatched, before it counts as started. If none are left, the load ends in order (no more iterations start and the ones in progress are awaited), with `data_exhausted` (dataset and second) in `results.json` and a warning at the top. It doesn't count as a failure: it's the natural end of "one row per iteration". It isn't a stop by the person either (`stopped_at_s` stays empty).
+- **In `vu_setup`:** each VU takes a different row, so the plan requires at least one per VU; otherwise it isn't built.
+- **For whoever approves:** if the dataset has fewer rows than the planned iterations, the summary says so ("unique, 50 rows for ≈600 iterations: the load ends when they run out").

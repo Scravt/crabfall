@@ -3,7 +3,7 @@
 A load testing tool in Rust, built to be used together with Claude Code:
 Claude designs the scenario and analyzes the results; a person approves and runs the load.
 
-Status: **v0.2.0** (slices 0 to 25; see [What's next](#whats-next)). Already working: design with Claude, signed approval (HMAC-SHA256 with the key in the system keyring; see [Approval](#approval-no-load-without-a-person)), runs requested by the agent and confirmed by a person in a window ([`--ask`](#letting-the-agent-ask-for-a-run---ask)), scenarios with `setup`, `extract`, checks and thresholds, three executors, diagnosis, run comparison, datasets, pauses between steps, per-run tweaks by flag, an HTML report per run, login per virtual user (`vu_setup`), token renewal during the load (`vu_refresh`), file uploads (`multipart`), bytes sent and received per second, an HTTP client with cookies, redirects, compression and forms, and output in English or Spanish. See the [roadmap](docs/roadmap.md) (in Spanish).
+Status: **v0.2.0** (slices 0 to 25; see [What's next](#whats-next)). Already working: design with Claude, signed approval (HMAC-SHA256 with the key in the system keyring; see [Approval](#approval-no-load-without-a-person)), runs requested by the agent and confirmed by a person in a window ([`--ask`](#letting-the-agent-ask-for-a-run---ask)), scenarios with `setup`, `extract`, checks and thresholds, three executors, diagnosis, run comparison, datasets, pauses between steps, per-run tweaks by flag, an HTML report per run, login per virtual user (`vu_setup`), token renewal during the load (`vu_refresh`), file uploads (`multipart`), bytes sent and received per second, an HTTP client with cookies, redirects, compression and forms, and output in English or Spanish. See the [roadmap](docs/roadmap.md).
 
 ## Usage
 
@@ -50,7 +50,7 @@ crabfall run smoke --env local --ask # asks first: what Claude uses, in a window
 
 ### Approval: no load without a person
 
-`crabfall run` only runs a scenario that a person approved, exactly as it is now. The guard lives in the `crabfall` binary, not in Claude Code's permissions, because Claude can edit any file in the repo ([ADR-004](docs/adr/ADR-004-aprobacion.md)).
+`crabfall run` only runs a scenario that a person approved, exactly as it is now. The guard lives in the `crabfall` binary, not in Claude Code's permissions, because Claude can edit any file in the repo ([ADR-004](docs/adr/ADR-004-approval.md)).
 
 1. **What gets signed: the canonical plan.** `crabfall approve` resolves the scenario against the environment and the flags, and builds a canonical JSON of the traffic it will send:
    - each request with its URL already resolved against `base_url`, method, headers, body and timeout; the flow weights; `setup`, `extract`, `vu_setup` and `vu_refresh`;
@@ -83,7 +83,7 @@ What it does **not** stop: someone acting deliberately with your user account. A
 
 ### Letting the agent ask for a run: `--ask`
 
-So that Claude can iterate (run, compare against the baseline, change the API's code, run again) without you typing each command, it runs `crabfall run <name> --env <env> --ask` ([ADR-017](docs/adr/ADR-017-confirmacion-en-ventana.md)):
+So that Claude can iterate (run, compare against the baseline, change the API's code, run again) without you typing each command, it runs `crabfall run <name> --env <env> --ask` ([ADR-017](docs/adr/ADR-017-window-confirmation.md)):
 
 1. Crabfall builds and checks the plan and the `limits` first: errors go back to Claude without bothering you.
 2. It opens a **new console window** with the risk summary. If the plan has no valid approval (first time, or it changed), it shows the diff and asks you to type the host, as `crabfall approve` does. If it is approved, answering `y` is enough.
@@ -117,7 +117,7 @@ To stop a run, press Ctrl+C: it stops starting iterations, waits for the ones in
 
 ### Language
 
-Crabfall prints in English by default. To use Spanish, any of these works, from highest to lowest priority ([ADR-016](docs/adr/ADR-016-idioma.md)):
+Crabfall prints in English by default. To use Spanish, any of these works, from highest to lowest priority ([ADR-016](docs/adr/ADR-016-language.md)):
 
 ```bash
 crabfall run smoke --env local --lang es    # one command
@@ -164,7 +164,7 @@ defaults:
   headers: { Authorization: "Bearer {{token}}" }
 ```
 
-One VU is prepared per `vus` (or `max_vus`); the `crabfall approve` summary shows how many logins that is ([ADR-010](docs/adr/ADR-010-setup-por-vu.md)).
+One VU is prepared per `vus` (or `max_vus`); the `crabfall approve` summary shows how many logins that is ([ADR-010](docs/adr/ADR-010-per-vu-setup.md)).
 
 If the token expires during the load, `vu_refresh` renews it in the background, without cutting iterations or adding to their metrics. With a refresh token:
 
@@ -177,7 +177,7 @@ vu_refresh:
       extract: { token: { json: $.access_token }, refresh_token: { json: $.refresh_token } }
 ```
 
-Without `steps`, it repeats `vu_setup` (logs in again). `--refresh-every 4m` sets it by flag. A VU that cannot renew stops iterating ([ADR-011](docs/adr/ADR-011-renovacion-de-sesion.md)).
+Without `steps`, it repeats `vu_setup` (logs in again). `--refresh-every 4m` sets it by flag. A VU that cannot renew stops iterating ([ADR-011](docs/adr/ADR-011-session-renewal.md)).
 
 ### Uploads and traffic
 
@@ -194,7 +194,7 @@ request:
 
 The file is read once and sent whole in each request (up to 100 MB). Its type comes from the extension, or from `content_type`. The approval signs its content ([ADR-012](docs/adr/ADR-012-multipart.md)).
 
-With large files, watch the traffic: `crabfall run` shows the bytes sent and received on the socket (headers, body and TLS), with the average and the peak per second, and the report charts them ([ADR-013](docs/adr/ADR-013-trafico.md)):
+With large files, watch the traffic: `crabfall run` shows the bytes sent and received on the socket (headers, body and TLS), with the average and the peak per second, and the report charts them ([ADR-013](docs/adr/ADR-013-traffic.md)):
 
 ```
 traffic      sent 137.4 MB (2.1 MB/s, peak 4.3 MB/s = 36 Mbit/s)  received 137.6 MB (2.1 MB/s, peak 4.1 MB/s = 34 Mbit/s)
@@ -202,7 +202,7 @@ traffic      sent 137.4 MB (2.1 MB/s, peak 4.3 MB/s = 36 Mbit/s)  received 137.6
 
 ### Cookies, redirects and compression
 
-Crabfall behaves like a real client ([ADR-014](docs/adr/ADR-014-cliente-http-real.md)):
+Crabfall behaves like a real client ([ADR-014](docs/adr/ADR-014-real-http-client.md)):
 
 - **Cookies:** each VU keeps the cookies the server sends and sends them back, from its `vu_setup` to its last iteration. An API with cookie sessions works without `extract`. `cookies: false` at the root turns them off.
 - **Redirects:** each step follows up to 10, only to hosts in `allowed_hosts`; the latency includes every hop. `redirects: 0` in the request (or in `defaults`) follows none.
@@ -232,7 +232,7 @@ crabfall run shop-per-user --duration 10m --refresh-every 4m
 crabfall run checkout --threshold "http.latency.p95<300ms" --threshold "http.error_rate<1%"
 ```
 
-Full list in `crabfall run --help`. The approval signs the ones that change the traffic: pass the same ones to `crabfall approve` and `crabfall run`. `--threshold` replaces the YAML ones and needs no new approval ([ADR-008](docs/adr/ADR-008-think-time-y-ajustes.md)).
+Full list in `crabfall run --help`. The approval signs the ones that change the traffic: pass the same ones to `crabfall approve` and `crabfall run`. `--threshold` replaces the YAML ones and needs no new approval ([ADR-008](docs/adr/ADR-008-think-time-and-tweaks.md)).
 
 ## With Claude Code
 
@@ -242,13 +242,13 @@ crabfall claude install              # in the repo under test: skill, hook and p
 
 Then, in a Claude Code session: *"build me a load test of the checkout flow"*. Claude reads the code, writes the scenario, checks it with `crabfall validate` and `crabfall check` (only against loopback) and hands you the `crabfall approve` and `crabfall run` commands to run yourself. It cannot approve or run on its own ([ADR-001](docs/adr/ADR-001-claude-first.md), ADR-004): when it wants to run, it uses `crabfall run --ask`, and you confirm each run in a window (or allow the same plan for some minutes) while it compares the results and keeps working on the code ([`--ask`](#letting-the-agent-ask-for-a-run---ask)).
 
-`crabfall findings [--json]` shows the findings of the last run (or of one by id). `crabfall compare [base] [new] [--json]` compares two runs (by default, the last one with the previous one of the same scenario): what improved, what got worse and whether the change is consistent or may be noise ([ADR-006](docs/adr/ADR-006-comparacion.md)). To compare against an accepted reference instead of the previous run, set a baseline with `crabfall baseline [run]` (it goes in `.crabfall/baselines/`; commit it to share it) and use `crabfall compare --baseline`. In the TUI history, `b` sets it. `crabfall schema` prints the JSON Schema of the scenario.
+`crabfall findings [--json]` shows the findings of the last run (or of one by id). `crabfall compare [base] [new] [--json]` compares two runs (by default, the last one with the previous one of the same scenario): what improved, what got worse and whether the change is consistent or may be noise ([ADR-006](docs/adr/ADR-006-comparison.md)). To compare against an accepted reference instead of the previous run, set a baseline with `crabfall baseline [run]` (it goes in `.crabfall/baselines/`; commit it to share it) and use `crabfall compare --baseline`. In the TUI history, `b` sets it. `crabfall schema` prints the JSON Schema of the scenario.
 
-Each `crabfall run` also leaves `report.html` next to `results.json`: a file that opens offline, with per-second charts (iterations, latency, p95 per step, traffic), the findings with their window shaded, the comparison with the previous run and the tables. `crabfall report [run] --open` regenerates it and opens it in the browser ([ADR-009](docs/adr/ADR-009-reporte-html.md)).
+Each `crabfall run` also leaves `report.html` next to `results.json`: a file that opens offline, with per-second charts (iterations, latency, p95 per step, traffic), the findings with their window shaded, the comparison with the previous run and the tables. `crabfall report [run] --open` regenerates it and opens it in the browser ([ADR-009](docs/adr/ADR-009-html-report.md)).
 
 Exit codes: `0` ok · `1` `check` with failed steps, thresholds not met, `setup` failed or `compare` with regressions · `2` invalid scenario or configuration · `3` refused (no valid approval, host not allowed, limits, no terminal, or nobody confirmed `--ask`) · `4` error saving or accessing the keyring.
 
-Full scenario format: [ADR-002](docs/adr/ADR-002-formato-escenario.md).
+Full scenario format: [ADR-002](docs/adr/ADR-002-scenario-format.md).
 
 ## What's next
 
@@ -261,7 +261,7 @@ Still to try for real (the code is done): TLS, compression behind Caddy and the 
 
 **Later, in no particular order:** the `--ask` window on macOS; defenses against a deliberately malicious agent (running it in a sandbox, a short-lived token required by the target); approving in CI without a person, and a GitHub Action; correlation with server metrics (OTLP, Prometheus); HTTP/2, WebSockets, gRPC, Kafka; choosing when to renew a session from `expires_in`; a desktop GUI. New load models (`ramping_vus`, fixed iterations, per-VU arrival) come last.
 
-Details, in Spanish, in the [roadmap](docs/roadmap.md).
+Details in the [roadmap](docs/roadmap.md).
 
 ## Development
 
@@ -278,25 +278,25 @@ To test against more realistic APIs: [shop-api](../shop-api) (local, with plante
 
 ## Documentation
 
-The architecture decision records and the roadmap are in Spanish.
-
 - [Roadmap](docs/roadmap.md)
+- [Study: the diagnosis compared with other tools](docs/studies/diagnosis-comparison.md)
 - [ADR-001 — Claude-first](docs/adr/ADR-001-claude-first.md)
-- [ADR-002 — Scenario format](docs/adr/ADR-002-formato-escenario.md)
-- [ADR-003 — hyper and the scheduler](docs/adr/ADR-003-hyper-y-scheduler.md)
-- [ADR-004 — Approval and threat model](docs/adr/ADR-004-aprobacion.md)
-- [ADR-005 — Diagnosis](docs/adr/ADR-005-diagnostico.md)
-- [ADR-006 — Comparing runs](docs/adr/ADR-006-comparacion.md)
+- [ADR-002 — Scenario format](docs/adr/ADR-002-scenario-format.md)
+- [ADR-003 — hyper and the scheduler](docs/adr/ADR-003-hyper-and-scheduler.md)
+- [ADR-004 — Approval and threat model](docs/adr/ADR-004-approval.md)
+- [ADR-005 — Diagnosis](docs/adr/ADR-005-diagnosis.md)
+- [ADR-006 — Comparing runs](docs/adr/ADR-006-comparison.md)
 - [ADR-007 — Datasets](docs/adr/ADR-007-datasets.md)
-- [ADR-008 — Think time and tweaks by flag](docs/adr/ADR-008-think-time-y-ajustes.md)
-- [ADR-009 — HTML report](docs/adr/ADR-009-reporte-html.md)
-- [ADR-010 — Setup per VU](docs/adr/ADR-010-setup-por-vu.md)
-- [ADR-011 — Session renewal](docs/adr/ADR-011-renovacion-de-sesion.md)
+- [ADR-008 — Think time and tweaks by flag](docs/adr/ADR-008-think-time-and-tweaks.md)
+- [ADR-009 — HTML report](docs/adr/ADR-009-html-report.md)
+- [ADR-010 — Setup per VU](docs/adr/ADR-010-per-vu-setup.md)
+- [ADR-011 — Session renewal](docs/adr/ADR-011-session-renewal.md)
 - [ADR-012 — File uploads (multipart)](docs/adr/ADR-012-multipart.md)
-- [ADR-013 — Bytes sent and received](docs/adr/ADR-013-trafico.md)
-- [ADR-014 — Cookies, redirects, compression and forms](docs/adr/ADR-014-cliente-http-real.md)
+- [ADR-013 — Bytes sent and received](docs/adr/ADR-013-traffic.md)
+- [ADR-014 — Cookies, redirects, compression and forms](docs/adr/ADR-014-real-http-client.md)
 - [ADR-015 — Terminal TUI](docs/adr/ADR-015-tui.md)
-- [ADR-016 — Output language](docs/adr/ADR-016-idioma.md)
+- [ADR-016 — Output language](docs/adr/ADR-016-language.md)
+- [ADR-017 — The agent asks, a person confirms in a window](docs/adr/ADR-017-window-confirmation.md)
 
 ## License
 
