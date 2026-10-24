@@ -156,6 +156,7 @@ When the person changed something (code, configuration, infrastructure) and ran 
    If `warnings` says a step's response or request changed size, mention it next to that step's latency change: it may be the explanation (more data, other pagination, a larger file) rather than a slower server.
 4. **Report** `regressions` and `improvements` with their numbers, and the `resolved` and `new` findings. If a `breaking_point` moved, that is the headline ("the break moved from ~36 to ~140 it/s").
 5. If a finding shows as `resolved` but the diagnosis rule changed between `crabfall` versions, point it out: it is not thanks to the change.
+6. **Capacity with fixed VUs.** A single `constant_vus` run can't show whether the server is at its limit (`fixed_concurrency`). To find out, ask for the same scenario with more VUs (`--vus`, for example twice as many) and compare the two runs: `scaling` says whether the throughput followed the VUs (`scales`), grew less (`near_limit`) or didn't move (`saturated`), with each iteration's time. There, a latency rise is expected and doesn't count as a regression; report the capacity ("saturates at ~1,000 it/s") and then look in the code for the shared resource (a pool, a lock, the CPU).
 
 ## Reference
 

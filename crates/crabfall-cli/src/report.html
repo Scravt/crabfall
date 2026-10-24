@@ -542,6 +542,7 @@ function comparison() {
     el("ul", { class: "plain" }, items.map((i) => el("li", {}, rich(i)))));
   card.append(block(L("Regressions", "Regresiones"), cmp.regressions || [], "critical") || "", block(L("Improvements", "Mejoras"), cmp.improvements || [], "good") || "");
   for (const w of cmp.warnings || []) card.append(el("div", { class: "muted", style: "margin-top:8px" }, L(`Warning: ${w}`, `Aviso: ${w}`)));
+  if (cmp.scaling) card.append(el("div", { style: "margin-top:8px" }, L("Concurrency: ", "Concurrencia: "), rich(cmp.scaling.summary)));
 
   const rows = (cmp.steps || []).filter((s) => s.p95_ms);
   if (rows.length) {

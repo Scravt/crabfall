@@ -993,6 +993,7 @@ fn comparison(project: &Project, finished: &Finished) -> Vec<String> {
                 c.base.run_id
             )];
             out.extend(c.warnings.iter().map(|w| format!("  ! {w}")));
+            out.extend(c.scaling.iter().map(|s| format!("  · {}", s.summary)));
             out.extend(c.regressions.iter().map(|r| format!("  ✗ {r}")));
             out.extend(c.improvements.iter().map(|i| format!("  ✓ {i}")));
             out

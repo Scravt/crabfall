@@ -51,8 +51,18 @@ With `constant_vus` and a slow step (latency p50 ≥ 100 ms), an `info` finding 
 ### 4. What stays out
 
 - ML or an LLM inside the engine: the rules stay deterministic (study, §1).
-- Saturation in the closed model: with `ramping_vus`.
+- Saturation in the closed model within a single run: with `ramping_vus` (across runs, §5).
 - Run phases and the trend across runs: later (study, rules 5 and 6).
+
+### 5. Saturation in the closed model, by comparing runs (slice 27)
+
+One run with fixed VUs can't show saturation (§2), but two runs with a different number of VUs can. Testing slice 26 on `market-api` showed it: 50 VUs gave 992 it/s and 100 VUs gave 1,003 it/s, with each iteration going from 50 to 100 ms.
+
+- **When:** `crabfall compare` of two `constant_vus` runs whose load differs only in `vus`, by at least ×1.25.
+- **Efficiency:** how much of the VU increase became throughput, (rate₂ ÷ rate₁ − 1) ÷ (VUs₂ ÷ VUs₁ − 1). ≤ 0.25 is **saturated** (more VUs only add queue, Little's law), ≥ 0.75 **scales**, in between **close to the limit**. Each run's iteration time, VUs ÷ rate, goes with it.
+- **Output:** `scaling` in `crabfall compare --json`, with one line in the terminal, the TUI and the report. With ≥ 5% errors in either run, the line says part of that throughput failed.
+- **Latency isn't a regression there:** with more VUs it's expected to rise, and `scaling` explains it. Per-step latency changes don't count as regressions or improvements; errors still do.
+- It's comparison, not diagnosis: it doesn't produce a finding, and it doesn't need `ramping_vus`. When `ramping_vus` exists, the same reasoning works inside a single run.
 
 ## Validation
 

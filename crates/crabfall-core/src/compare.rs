@@ -26,6 +26,13 @@ const BREAKING_POINT_MIN_RATIO: f64 = 0.10;
 /// menos) y 1 KB.
 const SIZE_MIN_RATIO: f64 = 1.5;
 const SIZE_MIN_DELTA_BYTES: f64 = 1024.0;
+/// Dos corridas con VUs fijos y distinta cantidad (ADR-018 §5): al menos ×1,25 de diferencia.
+const SCALING_MIN_VU_RATIO: f64 = 1.25;
+/// Qué parte del aumento de VUs se volvió throughput: hasta acá está saturado, desde acá escala.
+const SCALING_SATURATED: f64 = 0.25;
+const SCALING_SCALES: f64 = 0.75;
+/// Con más errores que esto, el throughput de iteraciones no es throughput útil.
+const SCALING_MAX_ERROR_PCT: f64 = 5.0;
 
 /// Lo que se lee de `results.json`; el resto se ignora.
 #[derive(Debug, Deserialize)]
@@ -108,6 +115,34 @@ pub struct Comparison {
     pub steps: Vec<StepDiff>,
     pub findings: Vec<FindingDiff>,
     pub thresholds: Vec<ThresholdDiff>,
+    /// Dos corridas con VUs fijos y distinta cantidad: cuánto escaló el throughput.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scaling: Option<Scaling>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScalingVerdict {
+    Scales,
+    NearLimit,
+    Saturated,
+}
+
+#[derive(Debug, Serialize)]
+pub struct Scaling {
+    pub base_vus: u64,
+    pub new_vus: u64,
+    /// Iteraciones por segundo.
+    pub base_rate: f64,
+    pub new_rate: f64,
+    /// Lo que dura una iteración, VUs ÷ tasa (ley de Little), en ms.
+    pub base_iteration_ms: f64,
+    pub new_iteration_ms: f64,
+    /// Qué parte del aumento de VUs se volvió throughput: 1 escala con los VUs, 0 no sumó nada.
+    pub efficiency: f64,
+    pub verdict: ScalingVerdict,
+    /// Una línea con los números, para la terminal, la TUI y el reporte.
+    pub summary: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -268,8 +303,17 @@ pub fn compare(base: &Run, new: &Run) -> Result<Comparison, String> {
         rate_change(&mut regressions, &mut improvements, what, d);
     }
     let steps = steps(base, new, same_load.then_some(windows.as_slice()));
+    // Con distinta cantidad de VUs fijos, que la latencia cambie es lo esperado: lo explica
+    // `scaling`, no una regresión ni una mejora del código. Los errores siguen contando.
+    let scaling = scaling(base, new);
     for step in &steps {
-        step_changes(&mut regressions, &mut improvements, step, same_load);
+        step_changes(
+            &mut regressions,
+            &mut improvements,
+            step,
+            same_load,
+            scaling.is_none(),
+        );
     }
     let findings = findings(base, new, &mut regressions, &mut improvements);
     let thresholds = thresholds(base, new, &mut regressions, &mut improvements);
@@ -293,6 +337,98 @@ pub fn compare(base: &Run, new: &Run) -> Result<Comparison, String> {
         steps,
         findings,
         thresholds,
+        scaling,
+    })
+}
+
+/// Con VUs fijos la concurrencia no cambia, así que una corrida sola no muestra la saturación
+/// (ADR-018 §2). Dos corridas con distinta cantidad de VUs sí: si los VUs suben y el
+/// throughput no, cada VU de más solo suma cola y la iteración tarda más (ley de Little).
+fn scaling(base: &Run, new: &Run) -> Option<Scaling> {
+    let vus = |r: &Run| {
+        (r.load["executor"] == "constant_vus")
+            .then(|| r.load["vus"].as_u64())
+            .flatten()
+            .filter(|v| *v > 0)
+    };
+    let (base_vus, new_vus) = (vus(base)?, vus(new)?);
+    // Todo lo demás de la carga (duración, pausas, tope de requests) tiene que ser igual.
+    let rest = |r: &Run| {
+        let mut load = r.load.clone();
+        load.as_object_mut().map(|o| o.remove("vus"));
+        load
+    };
+    let (base_rate, new_rate) = (base.totals.iteration_rate, new.totals.iteration_rate);
+    if rest(base) != rest(new) || base_rate <= 0.0 || new_rate <= 0.0 {
+        return None;
+    }
+    let (low_vus, high_vus, low_rate, high_rate) = if base_vus < new_vus {
+        (base_vus, new_vus, base_rate, new_rate)
+    } else {
+        (new_vus, base_vus, new_rate, base_rate)
+    };
+    let vu_gain = high_vus as f64 / low_vus as f64;
+    if vu_gain < SCALING_MIN_VU_RATIO {
+        return None;
+    }
+    let efficiency = (high_rate / low_rate - 1.0) / (vu_gain - 1.0);
+    let verdict = if efficiency <= SCALING_SATURATED {
+        ScalingVerdict::Saturated
+    } else if efficiency >= SCALING_SCALES {
+        ScalingVerdict::Scales
+    } else {
+        ScalingVerdict::NearLimit
+    };
+    let iteration_ms = |vus: u64, rate: f64| vus as f64 / rate * 1000.0;
+    let (base_iteration_ms, new_iteration_ms) = (
+        iteration_ms(base_vus, base_rate),
+        iteration_ms(new_vus, new_rate),
+    );
+    let numbers = crate::tr!(
+        "{base_vus} → {new_vus} VUs (×{:.1}): throughput {base_rate:.1} → {new_rate:.1} it/s ({:+.0}%) and each iteration {} → {} ms",
+        "{base_vus} → {new_vus} VUs (×{:.1}): throughput {base_rate:.1} → {new_rate:.1} it/s ({:+.0}%) y cada iteración {} → {} ms",
+        new_vus as f64 / base_vus as f64,
+        (new_rate / base_rate - 1.0) * 100.0,
+        ms(base_iteration_ms),
+        ms(new_iteration_ms)
+    );
+    let limit = high_rate.max(low_rate);
+    let reading = match verdict {
+        ScalingVerdict::Saturated => crate::tr!(
+            "saturated at ~{limit:.0} it/s: more VUs only add queue (Little's law)",
+            "saturado en ~{limit:.0} it/s: más VUs solo suman cola (ley de Little)"
+        ),
+        ScalingVerdict::NearLimit => crate::tr!(
+            "the throughput grows less than the VUs: close to the limit",
+            "el throughput crece menos que los VUs: cerca del límite"
+        ),
+        ScalingVerdict::Scales => crate::tr!(
+            "it scales with the VUs: the limit is further up",
+            "escala con los VUs: el límite está más arriba"
+        ),
+    };
+    let errors = [base, new]
+        .iter()
+        .filter_map(|r| pct(r.totals.failed + r.totals.non_2xx, r.totals.requests))
+        .fold(0.0, f64::max);
+    let caveat = if errors >= SCALING_MAX_ERROR_PCT {
+        crate::tr!(
+            " (with up to {errors:.0}% errors: part of that throughput failed)",
+            " (con hasta {errors:.0}% de errores: parte de ese throughput falló)"
+        )
+    } else {
+        String::new()
+    };
+    Some(Scaling {
+        base_vus,
+        new_vus,
+        base_rate,
+        new_rate,
+        base_iteration_ms: round1(base_iteration_ms),
+        new_iteration_ms: round1(new_iteration_ms),
+        efficiency: round4(efficiency),
+        verdict,
+        summary: format!("{numbers}: {reading}{caveat}"),
     })
 }
 
@@ -576,8 +712,9 @@ fn step_changes(
     improvements: &mut Vec<String>,
     s: &StepDiff,
     paired: bool,
+    latency: bool,
 ) {
-    if matches!(s.change, Change::Better | Change::Worse) {
+    if latency && matches!(s.change, Change::Better | Change::Worse) {
         let (Some(b), Some(n)) = (s.p95_ms.base, s.p95_ms.new) else {
             return;
         };
@@ -842,6 +979,95 @@ mod tests {
     fn breaking(rate: u64) -> Value {
         json!([{ "id": "breaking_point", "severity": "high", "title": format!("quiebre en ~{rate} it/s"),
                  "step": "a", "evidence": { "offered_iterations_per_s": rate }, "causes": [] }])
+    }
+
+    /// Una corrida con VUs fijos: `vus` y su tasa de iteraciones.
+    fn closed(id: &str, vus: u64, rate: f64) -> Run {
+        let mut r = run(id, &[10.0; 8], json!([]));
+        r.load = json!({ "executor": "constant_vus", "vus": vus, "duration": "30s" });
+        r.totals.iteration_rate = rate;
+        r
+    }
+
+    #[test]
+    fn more_vus_and_the_same_throughput_is_saturation() {
+        // Lo que dio market-api el 24 oct 2026: el doble de VUs, el mismo throughput.
+        let c = compare(&closed("a", 50, 992.7), &closed("b", 100, 1003.5)).unwrap();
+        let s = c
+            .scaling
+            .as_ref()
+            .expect("tenía que comparar la concurrencia");
+        assert_eq!(s.verdict, ScalingVerdict::Saturated);
+        assert!(s.efficiency < 0.05, "{s:?}");
+        assert_eq!((s.base_iteration_ms, s.new_iteration_ms), (50.4, 99.7));
+        assert_eq!(
+            s.summary,
+            "50 → 100 VUs (×2.0): throughput 992.7 → 1003.5 it/s (+1%) y cada iteración 50.4 → 99.7 ms: saturado en ~1004 it/s: más VUs solo suman cola (ley de Little)"
+        );
+    }
+
+    #[test]
+    fn throughput_that_follows_the_vus_scales() {
+        let s = compare(&closed("a", 10, 100.0), &closed("b", 20, 195.0))
+            .unwrap()
+            .scaling
+            .unwrap();
+        assert_eq!(s.verdict, ScalingVerdict::Scales);
+        // En el medio, cerca del límite; y bajando VUs se lee igual.
+        let s = compare(&closed("a", 40, 150.0), &closed("b", 20, 100.0))
+            .unwrap()
+            .scaling
+            .unwrap();
+        assert_eq!(s.verdict, ScalingVerdict::NearLimit, "{s:?}");
+    }
+
+    #[test]
+    fn scaling_needs_two_closed_runs_that_only_differ_in_vus() {
+        // Los mismos VUs, o casi.
+        assert!(
+            compare(&closed("a", 50, 100.0), &closed("b", 50, 100.0))
+                .unwrap()
+                .scaling
+                .is_none()
+        );
+        assert!(
+            compare(&closed("a", 50, 100.0), &closed("b", 55, 100.0))
+                .unwrap()
+                .scaling
+                .is_none()
+        );
+        // Otra duración, o una corrida de modelo abierto.
+        let mut other = closed("b", 100, 100.0);
+        other.load["duration"] = json!("1m");
+        assert!(
+            compare(&closed("a", 50, 100.0), &other)
+                .unwrap()
+                .scaling
+                .is_none()
+        );
+        let open = run("b", &[10.0; 8], json!([]));
+        assert!(
+            compare(&closed("a", 50, 100.0), &open)
+                .unwrap()
+                .scaling
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn scaling_with_errors_says_part_of_the_throughput_failed() {
+        let mut failing = closed("b", 100, 1000.0);
+        failing.totals.failed = 20;
+        let s = compare(&closed("a", 50, 990.0), &failing)
+            .unwrap()
+            .scaling
+            .unwrap();
+        assert!(
+            s.summary
+                .ends_with("(con hasta 20% de errores: parte de ese throughput falló)"),
+            "{}",
+            s.summary
+        );
     }
 
     #[test]
