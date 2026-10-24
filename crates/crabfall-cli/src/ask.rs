@@ -229,8 +229,10 @@ pub fn confirm(
     let current =
         approve::verify(project, plan, env, env_name, tweaks).map_err(|l| l.join("\n"))?;
     prompt(&tr!(
-        "Allow this same plan without asking for a while? Minutes (1-{MAX_MINUTES}), or Enter for no: ",
-        "¿Permitir este mismo plan sin preguntar por un rato? Minutos (1-{MAX_MINUTES}), o Enter para no: "
+        "Optional: to stop asking about this same plan, type how many minutes (1-{MAX_MINUTES}).\n\
+         Enter runs the load now: ",
+        "Opcional: para no volver a preguntar por este mismo plan, escribí cuántos minutos (1-{MAX_MINUTES}).\n\
+         Enter corre la carga ahora: "
     ));
     if let Some(minutes) = answer_line(ANSWER_TIMEOUT)
         .as_deref()
