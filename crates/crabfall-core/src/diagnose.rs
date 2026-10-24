@@ -70,6 +70,15 @@ const BANDWIDTH_MIN_SECONDS: usize = 5;
 const BANDWIDTH_MIN_SHARE: f64 = 0.7;
 /// La carga pide al menos esto por encima de lo que se mueve.
 const BANDWIDTH_DEMAND_FACTOR: f64 = 1.25;
+/// `time_split` (ADR-018): solo pasos con suficientes respuestas y que no sean rápidos.
+const SPLIT_MIN_RESPONSES: u64 = 100;
+const SPLIT_MIN_P50_MS: f64 = 50.0;
+/// La parte que domina se lleva al menos esta fracción del p50 de la latencia.
+const SPLIT_DOMINANT: f64 = 0.6;
+/// Desde acá, el TTFB incluye mandar un body que pesa (una subida).
+const SPLIT_UPLOAD_BYTES: f64 = 64.0 * 1024.0;
+/// `fixed_concurrency`: con VUs fijos, un paso así de lento merece repetir con una rampa.
+const FIXED_SLOW_P50_MS: f64 = 100.0;
 
 pub fn diagnose(load: &LoadPlan, r: &RunResult) -> Vec<Finding> {
     if r.aborted.is_some() {
@@ -107,6 +116,12 @@ pub fn diagnose(load: &LoadPlan, r: &RunResult) -> Vec<Finding> {
             out.extend(long_tail(step));
         }
         out.extend(new_connections(step, load.concurrency()));
+        out.extend(time_split(step, saturated));
+    }
+    if let LoadPlan::Closed { vus, .. } = load
+        && !saturated
+    {
+        out.extend(fixed_concurrency(r, *vus));
     }
     out.sort_by_key(|f| f.severity);
     out
@@ -823,6 +838,178 @@ fn new_connections(step: &StepResult, vus: u32) -> Option<Finding> {
             crate::tr!(
                 "Each new connection adds connect and TLS to the latency and uses up ports and file descriptors.",
                 "Cada conexión nueva suma connect y TLS a la latencia y consume puertos y file descriptors."
+            ),
+        ],
+    })
+}
+
+/// Dónde se va el tiempo de un paso lento (ADR-018): esperar el primer byte (el servidor),
+/// leer el body (la respuesta o el enlace) o lo de antes de mandar (conseguir una conexión,
+/// esperar desde el instante planificado). Las medianas no se suman exacto: alcanzan para
+/// ver qué parte domina.
+fn time_split(step: &StepResult, saturated: bool) -> Option<Finding> {
+    let (latency, ttfb, receive) = (step.latency_ms?, step.ttfb_ms?, step.receive_ms?);
+    if latency.count < SPLIT_MIN_RESPONSES || latency.p50 < SPLIT_MIN_P50_MS {
+        return None;
+    }
+    let total = latency.p50;
+    let server = ttfb.p50.min(total);
+    let download = receive.p50.min(total - server);
+    let before = total - server - download;
+    let (part, ms) = [
+        ("server", server),
+        ("download", download),
+        ("before_sending", before),
+    ]
+    .into_iter()
+    .max_by(|a, b| a.1.total_cmp(&b.1))?;
+    let share = ms / total;
+    if share < SPLIT_DOMINANT || (part == "server" && saturated) {
+        return None;
+    }
+    let per_request = |bytes: u64| bytes as f64 / step.requests.max(1) as f64;
+    let (sent, received) = (
+        per_request(step.bytes_sent),
+        per_request(step.bytes_received),
+    );
+    let size = |bytes: f64| crate::upload::size(bytes as usize);
+    let pct = share * 100.0;
+    let name = &step.name;
+    let (severity, title, causes) = match part {
+        "download" => (
+            Severity::Medium,
+            crate::tr!(
+                "`{name}` spends {pct:.0}% of its time receiving the body (p50 {ms:.0} of {total:.0} ms; {} per response): the response's size or the link, not the server's processing",
+                "`{name}` pasa el {pct:.0}% de su tiempo recibiendo el body (p50 {ms:.0} de {total:.0} ms; {} por respuesta): el tamaño de la respuesta o el enlace, no lo que procesa el servidor",
+                size(received)
+            ),
+            vec![
+                crate::tr!(
+                    "Large responses: pages without a limit, fields nobody uses, binary content that could be a link.",
+                    "Respuestas grandes: páginas sin límite, campos que nadie usa, contenido binario que podría ser un enlace."
+                ),
+                crate::tr!(
+                    "No compression: check that the server answers `content-encoding` to `accept-encoding: gzip, br`.",
+                    "Sin compresión: revisá que el servidor responda `content-encoding` al `accept-encoding: gzip, br`."
+                ),
+                crate::tr!(
+                    "The link between the generator and the server (Wi-Fi, VPN, plan), or a proxy that throttles.",
+                    "El enlace entre el generador y el servidor (Wi-Fi, VPN, plan), o un proxy que limita."
+                ),
+                crate::tr!(
+                    "The server writes the body as it generates it (a cursor, a slow stream): the first byte comes fast and the rest doesn't.",
+                    "El servidor escribe el body a medida que lo genera (un cursor, un stream lento): el primer byte llega rápido y el resto no."
+                ),
+            ],
+        ),
+        "before_sending" => (
+            Severity::Medium,
+            crate::tr!(
+                "`{name}` spends {pct:.0}% of its time before sending the request (p50 {ms:.0} of {total:.0} ms): getting a connection or waiting its turn, not the server",
+                "`{name}` pasa el {pct:.0}% de su tiempo antes de mandar el request (p50 {ms:.0} de {total:.0} ms): conseguir una conexión o esperar su turno, no el servidor"
+            ),
+            vec![
+                crate::tr!(
+                    "New connections on many requests: connect and TLS add up (see `new_connections`, keep-alive).",
+                    "Conexiones nuevas en muchas requests: connect y TLS suman (ver `new_connections`, keep-alive)."
+                ),
+                crate::tr!(
+                    "Slow DNS or TLS: `dns_ms` and `tls_ms` in the step's metrics.",
+                    "DNS o TLS lentos: `dns_ms` y `tls_ms` en las métricas del paso."
+                ),
+                crate::tr!(
+                    "The generator can't keep up (look for `invalid_result`), or the machine running Crabfall is busy.",
+                    "El generador no da abasto (buscá `invalid_result`), o la máquina que corre Crabfall está ocupada."
+                ),
+            ],
+        ),
+        _ => {
+            let upload = if sent >= SPLIT_UPLOAD_BYTES {
+                crate::tr!(
+                    ", including sending {} per request",
+                    ", incluido mandar {} por request",
+                    size(sent)
+                )
+            } else {
+                String::new()
+            };
+            (
+                Severity::Info,
+                crate::tr!(
+                    "`{name}` spends {pct:.0}% of its time waiting for the server's first byte (p50 {ms:.0} of {total:.0} ms{upload}): the time is in the handler and what it calls",
+                    "`{name}` pasa el {pct:.0}% de su tiempo esperando el primer byte del servidor (p50 {ms:.0} de {total:.0} ms{upload}): el tiempo está en el handler y en lo que llama"
+                ),
+                vec![
+                    crate::tr!(
+                        "Queries: missing indexes, N+1, a big `count(*)`; look at the step's `source`.",
+                        "Queries: índices que faltan, N+1, un `count(*)` grande; mirá el `source` del paso."
+                    ),
+                    crate::tr!(
+                        "Calls to other services, or CPU work in the handler (hashing, serialization).",
+                        "Llamadas a otros servicios, o trabajo de CPU en el handler (hashing, serialización)."
+                    ),
+                ],
+            )
+        }
+    };
+    Some(Finding {
+        id: "time_split".into(),
+        severity,
+        title,
+        step: Some(step.name.clone()),
+        source: step.source.clone(),
+        window: None,
+        evidence: json!({
+            "dominant": part,
+            "latency_p50_ms": total,
+            "server_p50_ms": server,
+            "download_p50_ms": download,
+            "before_sending_p50_ms": before,
+            "dominant_share": share,
+            "bytes_sent_per_request": sent.round(),
+            "bytes_received_per_request": received.round(),
+        }),
+        causes,
+    })
+}
+
+/// Con VUs fijos la concurrencia no cambia: el throughput sale plano esté sano o saturado el
+/// servidor, y la latencia es siempre VUs ÷ throughput (ley de Little). No hay un "antes"
+/// contra el cual comparar, así que en lugar de adivinar se dice qué falta (ADR-018).
+fn fixed_concurrency(r: &RunResult, vus: u32) -> Option<Finding> {
+    let (step, p50) = r
+        .steps
+        .iter()
+        .filter_map(|s| Some((s, s.latency_ms?.p50)))
+        .max_by(|a, b| a.1.total_cmp(&b.1))?;
+    if p50 < FIXED_SLOW_P50_MS {
+        return None;
+    }
+    let rate = r.totals.iteration_rate;
+    Some(Finding {
+        id: "fixed_concurrency".into(),
+        severity: Severity::Info,
+        title: crate::tr!(
+            "With {vus} fixed VUs the run did {rate:.1} it/s with `{}` at p50 {p50:.0} ms: a closed model can't show whether that's the limit",
+            "Con {vus} VUs fijos la corrida hizo {rate:.1} it/s con `{}` en p50 {p50:.0} ms: un modelo cerrado no puede mostrar si ese es el límite",
+            step.name
+        ),
+        step: Some(step.name.clone()),
+        source: step.source.clone(),
+        window: None,
+        evidence: json!({
+            "vus": vus,
+            "iterations_per_s": rate,
+            "latency_p50_ms": p50,
+        }),
+        causes: vec![
+            crate::tr!(
+                "Repeat it with a rate ramp to find the breaking point: `--executor ramping_rate --start-rate 1/s --stages <rate>/s:2m --max-vus <vus>`.",
+                "Repetila con una rampa de tasa para encontrar el punto de quiebre: `--executor ramping_rate --start-rate 1/s --stages <tasa>/s:2m --max-vus <vus>`."
+            ),
+            crate::tr!(
+                "If the server is the limit, more VUs only add queue: latency grows and the throughput doesn't (Little's law).",
+                "Si el servidor es el límite, más VUs solo suman cola: la latencia crece y el throughput no (ley de Little)."
             ),
         ],
     })
