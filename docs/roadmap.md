@@ -79,7 +79,7 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente. Al cerrar
 - [x] `limits` y `allowed_hosts` en `config.yaml` (hecho en la rebanada 1)
 - [x] Hook `PreToolUse` (`crabfall hook pre-tool-use`), adelantado a la rebanada 2
 - [x] Tests de la guarda (lista en ADR-004; `--var` agregado el 24 oct 2026: otro valor invalida la aprobación con el diff, el mismo valor del escenario no, y el valor de un secreto tampoco)
-- Listo cuando: apruebo un escenario de `shop-api` en mi terminal, lo ejecuto, y cualquier edición posterior hace que `crabfall run` lo rechace mostrando el diff. **Pendiente de probar a mano:** la parte interactiva no se puede probar desde la shell de Claude, que no tiene terminal.
+- Listo: en `market-api`, con `smoke` aprobado, subir el `rate` de 5/s a 6/s hizo que `crabfall run` en la terminal del usuario rechazara con código 3 y mostrara el diff (24 oct 2026). La prueba destapó dos detalles, ya corregidos: el encabezado del diff salía en español en la salida en inglés, y el `user-agent` por defecto llevaba la versión, así que actualizar Crabfall invalidaba todas las aprobaciones; ahora se firma como `crabfall/<version>` (ADR-004).
 
 **4. Escenario completo**
 - [x] `setup`, `extract` (json, header, regex), `defaults`, varios flows con `weight`
@@ -337,6 +337,7 @@ Cada rebanada funciona de punta a punta antes de pasar a la siguiente. Al cerrar
 | 19 oct 2026 | Nombre: Crabfall; binario `crabfall`, carpeta `.crabfall/`, crates `crabfall-core` y `crabfall-cli` (D2) | — |
 | 19 oct 2026 | TUI en la terminal en lugar de la GUI con Tauri, por ahora; los modelos de carga nuevos van al final | Este documento |
 | 19 oct 2026 | Primera versión v0.1.0: `dev` se mergea a `main`; repo privado en GitHub | — |
+| 24 oct 2026 | El `user-agent` por defecto se firma sin la versión: actualizar Crabfall no invalida las aprobaciones | ADR-004 |
 | 24 oct 2026 | v0.2.0: las rebanadas 14 a 25 a `main`; para la v0.3, MCP, importadores y reglas de diagnóstico después de compararlas con otras herramientas | Versiones |
 | 19 oct 2026 | Cliente HTTP real por defecto: cookies por VU, redirects hacia `allowed_hosts`, gzip y br; `check` nunca sale de loopback | ADR-014 |
 | 19 oct 2026 | TUI: `crabfall` sin argumentos; aprueba con el host tipeado; frena en orden y guarda; el HTML queda para analizar y compartir | ADR-015 |

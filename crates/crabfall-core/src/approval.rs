@@ -218,7 +218,10 @@ pub fn diff(before: &Value, after: &Value) -> String {
     similar::TextDiff::from_lines(&before, &after)
         .unified_diff()
         .context_radius(2)
-        .header("aprobado", "actual")
+        .header(
+            crate::i18n::pick("approved", "aprobado"),
+            crate::i18n::pick("current", "actual"),
+        )
         .to_string()
 }
 

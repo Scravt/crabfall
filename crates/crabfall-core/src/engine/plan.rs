@@ -41,6 +41,12 @@ pub const DEFAULT_REDIRECTS: u32 = 10;
 /// Lo que piden los clientes reales; un header `accept-encoding` del escenario lo pisa.
 pub const DEFAULT_ACCEPT_ENCODING: &str = "gzip, br";
 
+/// El `user-agent` si el escenario no pone otro.
+pub const DEFAULT_USER_AGENT: &str = concat!("crabfall/", env!("CARGO_PKG_VERSION"));
+/// Cómo se firma el `user-agent` por defecto: sin la versión, para que actualizar Crabfall
+/// no invalide las aprobaciones.
+const SIGNED_USER_AGENT: &str = "crabfall/<version>";
+
 /// Lo que se codifica de un valor interpolado en el path: todo menos lo no reservado.
 const PATH_VALUE: &AsciiSet = &NON_ALPHANUMERIC
     .remove(b'-')
@@ -522,7 +528,12 @@ impl Plan {
             let mut headers: Vec<(String, String)> = s
                 .headers
                 .iter()
-                .map(|(k, v)| (k.to_string(), v.source().to_string()))
+                .map(|(k, v)| match v.source() {
+                    DEFAULT_USER_AGENT if *k == USER_AGENT => {
+                        (k.to_string(), SIGNED_USER_AGENT.to_string())
+                    }
+                    source => (k.to_string(), source.to_string()),
+                })
                 .collect();
             headers.sort();
             let body = match &s.body {
@@ -1133,10 +1144,7 @@ fn build_step(
     };
     let mut headers: Vec<(HeaderName, Template)> = vec![
         (HOST, Template::literal(authority)),
-        (
-            USER_AGENT,
-            Template::literal(concat!("crabfall/", env!("CARGO_PKG_VERSION"))),
-        ),
+        (USER_AGENT, Template::literal(DEFAULT_USER_AGENT)),
         (ACCEPT_ENCODING, Template::literal(DEFAULT_ACCEPT_ENCODING)),
     ];
     let mut set_header = |name: &str, value: &str| -> Result<(), String> {
