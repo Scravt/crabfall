@@ -749,7 +749,7 @@ dependencies = [
 
 [[package]]
 name = "crabfall-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -763,7 +763,7 @@ dependencies = [
 
 [[package]]
 name = "crabfall-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "axum",
  "brotli-decompressor 6.1.0",
@@ -1784,7 +1784,7 @@ checksum = "bf36173d4167ed999940f804952e6b08197cae5ad5d572eb4db150ce8ad5d58f"
 
 [[package]]
 name = "lab-server"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "axum",
  "clap",
@@ -1839,7 +1839,7 @@ checksum = "4744e383959f0db86ede514b809b1c53251889093803c05267acc7d4e7030d70"
 
 [[package]]
 name = "load-spike"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bytes",
  "clap",

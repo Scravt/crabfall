@@ -3,7 +3,7 @@
 A load testing tool in Rust, built to be used together with Claude Code:
 Claude designs the scenario and analyzes the results; a person approves and runs the load.
 
-Status: **slice 25** (the `--ask` window on Linux), after v0.1.0. Already working: design with Claude, signed approval (HMAC-SHA256 with the key in the system keyring; see [Approval](#approval-no-load-without-a-person)), runs requested by the agent and confirmed by a person in a window ([`--ask`](#letting-the-agent-ask-for-a-run---ask)), scenarios with `setup`, `extract`, checks and thresholds, three executors, diagnosis, run comparison, datasets, pauses between steps, per-run tweaks by flag, an HTML report per run, login per virtual user (`vu_setup`), token renewal during the load (`vu_refresh`), file uploads (`multipart`), bytes sent and received per second, an HTTP client with cookies, redirects, compression and forms, and output in English or Spanish. See the [roadmap](docs/roadmap.md) (in Spanish).
+Status: **v0.2.0** (slices 0 to 25; see [What's next](#whats-next)). Already working: design with Claude, signed approval (HMAC-SHA256 with the key in the system keyring; see [Approval](#approval-no-load-without-a-person)), runs requested by the agent and confirmed by a person in a window ([`--ask`](#letting-the-agent-ask-for-a-run---ask)), scenarios with `setup`, `extract`, checks and thresholds, three executors, diagnosis, run comparison, datasets, pauses between steps, per-run tweaks by flag, an HTML report per run, login per virtual user (`vu_setup`), token renewal during the load (`vu_refresh`), file uploads (`multipart`), bytes sent and received per second, an HTTP client with cookies, redirects, compression and forms, and output in English or Spanish. See the [roadmap](docs/roadmap.md) (in Spanish).
 
 ## Usage
 
@@ -249,6 +249,19 @@ Each `crabfall run` also leaves `report.html` next to `results.json`: a file tha
 Exit codes: `0` ok · `1` `check` with failed steps, thresholds not met, `setup` failed or `compare` with regressions · `2` invalid scenario or configuration · `3` refused (no valid approval, host not allowed, limits, no terminal, or nobody confirmed `--ask`) · `4` error saving or accessing the keyring.
 
 Full scenario format: [ADR-002](docs/adr/ADR-002-formato-escenario.md).
+
+## What's next
+
+Still to try for real (the code is done): TLS, compression behind Caddy and the bandwidth diagnosis against a remote server; the skill in a fresh Claude Code session; the TUI with someone who has never seen it.
+
+**v0.3:**
+- An MCP server.
+- Importers: OpenAPI, curl, Postman.
+- More diagnosis rules, after comparing what other tools detect, and deciding whether rules can be customized or stay fixed in the engine.
+
+**Later, in no particular order:** the `--ask` window on macOS; defenses against a deliberately malicious agent (running it in a sandbox, a short-lived token required by the target); approving in CI without a person, and a GitHub Action; correlation with server metrics (OTLP, Prometheus); HTTP/2, WebSockets, gRPC, Kafka; choosing when to renew a session from `expires_in`; a desktop GUI. New load models (`ramping_vus`, fixed iterations, per-VU arrival) come last.
+
+Details, in Spanish, in the [roadmap](docs/roadmap.md).
 
 ## Development
 
