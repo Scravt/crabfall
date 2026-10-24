@@ -3,7 +3,7 @@
 A load testing tool in Rust, built to be used together with Claude Code:
 Claude designs the scenario and analyzes the results; a person approves and runs the load.
 
-Status: **slice 24** (the agent asks, a person confirms in a window), after v0.1.0. Already working: design with Claude, signed approval (HMAC-SHA256 with the key in the system keyring; see [Approval](#approval-no-load-without-a-person)), runs requested by the agent and confirmed by a person in a window ([`--ask`](#letting-the-agent-ask-for-a-run---ask)), scenarios with `setup`, `extract`, checks and thresholds, three executors, diagnosis, run comparison, datasets, pauses between steps, per-run tweaks by flag, an HTML report per run, login per virtual user (`vu_setup`), token renewal during the load (`vu_refresh`), file uploads (`multipart`), bytes sent and received per second, an HTTP client with cookies, redirects, compression and forms, and output in English or Spanish. See the [roadmap](docs/roadmap.md) (in Spanish).
+Status: **slice 24** (the agent asks, a person confirms in a window), tested in a real session, after v0.1.0. Already working: design with Claude, signed approval (HMAC-SHA256 with the key in the system keyring; see [Approval](#approval-no-load-without-a-person)), runs requested by the agent and confirmed by a person in a window ([`--ask`](#letting-the-agent-ask-for-a-run---ask)), scenarios with `setup`, `extract`, checks and thresholds, three executors, diagnosis, run comparison, datasets, pauses between steps, per-run tweaks by flag, an HTML report per run, login per virtual user (`vu_setup`), token renewal during the load (`vu_refresh`), file uploads (`multipart`), bytes sent and received per second, an HTTP client with cookies, redirects, compression and forms, and output in English or Spanish. See the [roadmap](docs/roadmap.md) (in Spanish).
 
 ## Usage
 
@@ -87,7 +87,7 @@ So that Claude can iterate (run, compare against the baseline, change the API's 
 
 1. Crabfall builds and checks the plan and the `limits` first: errors go back to Claude without bothering you.
 2. It opens a **new console window** with the risk summary. If the plan has no valid approval (first time, or it changed), it shows the diff and asks you to type the host, as `crabfall approve` does. If it is approved, answering `y` is enough.
-3. Instead of `y`, you can answer a number of **minutes (1-120)**: the same plan runs without asking for that long. The allowance is signed with the same key, is tied to the plan's fingerprint (any change asks again) and is revoked by deleting `.crabfall/approvals/<scenario>.<env>.allow.json`.
+3. Instead of `y`, you can answer a number of **minutes (1-120)**: the same plan runs without asking for that long. After typing the host, the same question comes as an optional step (Enter just runs it). The allowance is signed with the same key, is tied to the plan's fingerprint (any change to the scenario asks again; a change on the server, like dropping an index, doesn't) and is revoked by deleting `.crabfall/approvals/<scenario>.<env>.allow.json`.
 4. **The load runs in that window**, with its progress: Ctrl+C stops it, whatever Claude does. At the end it shows the summary and closes after 30 s (or Enter).
 5. Claude's command prints where the results are and exits with the run's code; Claude reads them with `crabfall findings --json` and `crabfall compare --baseline --json`.
 
