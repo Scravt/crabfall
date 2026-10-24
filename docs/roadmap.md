@@ -276,7 +276,7 @@ Each slice works end to end before moving on to the next. Closing it updates the
 - [x] `fixed_concurrency` (`info`): with `constant_vus` and a step at p50 ≥ 100 ms, the run can't show whether that's the limit; it suggests a rate ramp
 - [x] Readable evidence names in the report, both languages; the skill knows how to read both findings
 - [x] Lab: a body written in pieces (download dominates), a handler that waits (server dominates, plus `fixed_concurrency`), a fast server (neither)
-- Done when: on `market-api`, a real run shows where a slow step's time goes. **Pending:** that run.
+- Done: on `market-api`, `search-ramp` with fixed VUs (`--executor constant_vus`, 30 s, with the index). With 50 VUs: 992 it/s and `search` at p50 49.7 ms, all of it TTFB, and no finding (under the 50 ms floor, as it should be). With 100 VUs: 1,003 it/s and p50 99.4 ms, and `time_split` said "`search` spends 100% of its time waiting for the server's first byte" (download ~0 ms, 2.8 KB per response). `fixed_concurrency` didn't fire, by 0.6 ms (p50 99.4 against 100); the threshold stays (24 Oct 2026). The two runs together show what neither shows alone: twice the VUs, the same throughput and twice the latency (Little's law), so `market-api` saturates at ~1,000 searches/s on this machine. That suggests detecting closed-model saturation by comparing runs with different VUs, without waiting for `ramping_vus`.
 
 ## Versions
 
@@ -307,6 +307,8 @@ Each slice works end to end before moving on to the next. Closing it updates the
 - Reading `expires_in` to choose when to renew on its own.
 - A Tauri GUI (after the TUI).
 - Run phases (NeoLoad style) and the trend across many runs (diagnosis study, points 5 and 6).
+- `crabfall compare` across runs with different VUs: if the VUs rise and the throughput doesn't, the closed model is saturated (seen on 24 Oct 2026, slice 26).
+- Run ids come from each machine's clock (WSL in UTC, Windows in local time), so `latest` can pick the wrong run when both run against the same project.
 
 ## Open decisions
 
