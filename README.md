@@ -3,7 +3,7 @@
 A load testing tool in Rust, built to be used together with Claude Code:
 Claude designs the scenario and analyzes the results; a person approves and runs the load.
 
-Status: **v0.2.0** (slices 0 to 25), working on v0.3: slices 26 (where a slow step's time goes), 27 (saturation with fixed VUs, by comparing runs) and 28 (turning diagnosis rules off and tuning margins) are done ([ADR-018](docs/adr/ADR-018-diagnosis-v03.md)); see [What's next](#whats-next). Already working: design with Claude, signed approval (HMAC-SHA256 with the key in the system keyring; see [Approval](#approval-no-load-without-a-person)), runs requested by the agent and confirmed by a person in a window ([`--ask`](#letting-the-agent-ask-for-a-run---ask)), scenarios with `setup`, `extract`, checks and thresholds, three executors, diagnosis, run comparison, datasets, pauses between steps, per-run tweaks by flag, an HTML report per run, login per virtual user (`vu_setup`), token renewal during the load (`vu_refresh`), file uploads (`multipart`), bytes sent and received per second, an HTTP client with cookies, redirects, compression and forms, and output in English or Spanish. See the [roadmap](docs/roadmap.md).
+Status: **v0.2.0** (slices 0 to 25), working on v0.3: slices 26 (where a slow step's time goes), 27 (saturation with fixed VUs, by comparing runs) and 28 (turning diagnosis rules off and tuning margins) are done, and 29 (an MCP server) is in progress ([ADR-018](docs/adr/ADR-018-diagnosis-v03.md)); see [What's next](#whats-next). Already working: design with Claude, signed approval (HMAC-SHA256 with the key in the system keyring; see [Approval](#approval-no-load-without-a-person)), runs requested by the agent and confirmed by a person in a window ([`--ask`](#letting-the-agent-ask-for-a-run---ask)), scenarios with `setup`, `extract`, checks and thresholds, three executors, diagnosis, run comparison, datasets, pauses between steps, per-run tweaks by flag, an HTML report per run, login per virtual user (`vu_setup`), token renewal during the load (`vu_refresh`), file uploads (`multipart`), bytes sent and received per second, an HTTP client with cookies, redirects, compression and forms, and output in English or Spanish. See the [roadmap](docs/roadmap.md).
 
 ## Usage
 
@@ -249,6 +249,26 @@ Each `crabfall run` also leaves `report.html` next to `results.json`: a file tha
 
 Exit codes: `0` ok · `1` `check` with failed steps, thresholds not met, `setup` failed or `compare` with regressions · `2` invalid scenario or configuration · `3` refused (no valid approval, host not allowed, limits, no terminal, or nobody confirmed `--ask`) · `4` error saving or accessing the keyring.
 
+### With other agents: MCP
+
+`crabfall mcp` is an MCP server over stdio for any agent that speaks MCP ([ADR-019](docs/adr/ADR-019-mcp.md)). Its tools run the same CLI with `--json`, so the same rules and the same guard apply:
+
+| Tool | What it does |
+| --- | --- |
+| `list_scenarios` | scenarios, environments, each one's latest run and baselines |
+| `schema` | the scenario's JSON Schema |
+| `validate` / `check` | validation with tweaks; the smoke check, loopback only |
+| `request_run` | `crabfall run --ask`: a person confirms in a window and the load runs there |
+| `findings` / `compare` | a run's summary; two runs, or against the baseline |
+
+There's no tool to approve or to run without a person. Tools take `scenario`, `env`, `vars` and `tweaks` (`{ "rate": "100/s", "diagnosis_off": ["long_tail"] }`). Register it in the project:
+
+```json
+{ "mcpServers": { "crabfall": { "command": "crabfall", "args": ["mcp"] } } }
+```
+
+That is `.mcp.json` for Claude Code and `.cursor/mcp.json` for Cursor; VS Code uses `.vscode/mcp.json` with `"servers"` instead of `"mcpServers"`. A client that doesn't start it in the project folder (Claude Desktop) needs `"args": ["mcp", "--project", "/path/to/repo"]`. `request_run` waits for the person and the run: raise the client's tool timeout if it cuts long calls.
+
 Full scenario format: [ADR-002](docs/adr/ADR-002-scenario-format.md).
 
 ## What's next
@@ -256,7 +276,7 @@ Full scenario format: [ADR-002](docs/adr/ADR-002-scenario-format.md).
 Still to try for real (the code is done): TLS, compression behind Caddy and the bandwidth diagnosis against a remote server; the skill in a fresh Claude Code session; the TUI with someone who has never seen it.
 
 **v0.3:**
-- An MCP server.
+- An MCP server ([`crabfall mcp`](#with-other-agents-mcp), slice 29; to be tried with a real client).
 - Importers: OpenAPI, curl, Postman.
 - Diagnosis: after [comparing what other tools detect](docs/studies/diagnosis-comparison.md), where a slow step's time goes (done, slice 26), turning rules off and tuning a few margins per scenario (done, slice 28), saturation in the closed model by comparing runs with different VUs (done, slice 27), and within a single run with `ramping_vus` ([ADR-018](docs/adr/ADR-018-diagnosis-v03.md)).
 
@@ -299,6 +319,7 @@ To test against more realistic APIs: [shop-api](../shop-api) (local, with plante
 - [ADR-016 — Output language](docs/adr/ADR-016-language.md)
 - [ADR-017 — The agent asks, a person confirms in a window](docs/adr/ADR-017-window-confirmation.md)
 - [ADR-018 — Diagnosis for v0.3](docs/adr/ADR-018-diagnosis-v03.md)
+- [ADR-019 — An MCP server](docs/adr/ADR-019-mcp.md)
 
 ## License
 
