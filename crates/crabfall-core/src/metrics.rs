@@ -98,6 +98,7 @@ struct StepStats {
     checks: Vec<CheckCount>,
     latency: Histogram<u64>,
     ttfb: Histogram<u64>,
+    receive: Histogram<u64>,
     connect: Histogram<u64>,
     tls: Histogram<u64>,
     dns: Histogram<u64>,
@@ -124,6 +125,7 @@ impl StepStats {
                 .collect(),
             latency: histogram(),
             ttfb: histogram(),
+            receive: histogram(),
             connect: histogram(),
             tls: histogram(),
             dns: histogram(),
@@ -265,6 +267,7 @@ impl Collector {
                 }
                 record(&mut s.latency, latency);
                 record(&mut s.ttfb, timings.ttfb);
+                record(&mut s.receive, timings.receive);
                 for (h, d) in [
                     (&mut s.connect, timings.connect),
                     (&mut s.tls, timings.tls),
@@ -453,6 +456,7 @@ impl Collector {
                         .collect(),
                     latency_ms: Percentiles::from(&s.latency),
                     ttfb_ms: Percentiles::from(&s.ttfb),
+                    receive_ms: Percentiles::from(&s.receive),
                     connect_ms: Percentiles::from(&s.connect),
                     tls_ms: Percentiles::from(&s.tls),
                     dns_ms: Percentiles::from(&s.dns),
@@ -531,6 +535,9 @@ pub struct StepResult {
     pub checks: Vec<CheckResult>,
     pub latency_ms: Option<Percentiles>,
     pub ttfb_ms: Option<Percentiles>,
+    /// Leer el body de la respuesta (ADR-018). Las corridas viejas no lo tienen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub receive_ms: Option<Percentiles>,
     pub connect_ms: Option<Percentiles>,
     pub tls_ms: Option<Percentiles>,
     pub dns_ms: Option<Percentiles>,
@@ -594,6 +601,9 @@ pub struct RunResult {
     pub scheduler_lag_ms: Option<Percentiles>,
     pub steps: Vec<StepResult>,
     pub warnings: Vec<String>,
+    /// Los ajustes del diagnóstico, si no son los de siempre (ADR-018 §3).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diagnosis: Option<crate::diagnose::Settings>,
     /// Hallazgos del diagnóstico, de más a menos grave.
     pub findings: Vec<crate::diagnose::Finding>,
     /// Serie por segundo: la materia prima del diagnóstico.
@@ -671,6 +681,7 @@ impl RunResult {
             scheduler_lag_ms: None,
             steps: Collector::new(plan, Instant::now()).finish(plan),
             warnings: vec![],
+            diagnosis: plan.diagnosis_record(),
             findings: vec![],
             series: Series::default(),
         }

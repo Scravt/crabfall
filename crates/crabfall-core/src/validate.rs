@@ -288,6 +288,11 @@ fn check_rules(s: &Scenario, errors: &mut Vec<Issue>) {
             errors.push(Issue::at(format!("thresholds[{i}]"), e));
         }
     }
+    if let Some(d) = &s.diagnosis {
+        for (path, message) in d.problems() {
+            errors.push(Issue::at(format!("diagnosis.{path}"), message));
+        }
+    }
 }
 
 fn check_step<'a>(
@@ -569,6 +574,48 @@ load:
 
     #[test]
     fn accepts_minimal_scenario() {
+        let s = parse_scenario(&format!(
+            "{OK}diagnosis:
+  off: [long_tail]
+  latency_margin: 100ms
+  min_requests: 50
+"
+        ))
+        .unwrap();
+        let d = s.diagnosis.unwrap();
+        assert_eq!(d.off, ["long_tail"]);
+        assert_eq!(d.min_requests, Some(50));
+    }
+
+    #[test]
+    fn diagnosis_settings_are_checked_with_their_path() {
+        let e = errors(&format!(
+            "{OK}diagnosis:
+  off: [long_tail, invalid_result, nope]
+  latency_margin: 20s
+  min_requests: 1
+"
+        ));
+        let paths: Vec<_> = e.iter().map(|e| e.path.as_str()).collect();
+        assert_eq!(
+            paths,
+            [
+                "diagnosis.off[1]",
+                "diagnosis.off[2]",
+                "diagnosis.latency_margin",
+                "diagnosis.min_requests"
+            ]
+        );
+        assert!(
+            e[0].message.contains("no se puede apagar"),
+            "{}",
+            e[0].message
+        );
+        assert!(e[1].message.contains("time_split"), "{}", e[1].message);
+    }
+
+    #[test]
+    fn accepts_minimal_scenario_without_diagnosis() {
         let s = parse_scenario(OK).unwrap();
         assert_eq!(s.flows["main"].weight, 1);
         assert_eq!(s.max_request_rate(), Some(50.0));

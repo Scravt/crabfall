@@ -1,7 +1,8 @@
 //! `crabfall claude install`: integra Crabfall con Claude Code en el repo actual (ADR-001).
 //!
 //! Escribe el skill `crabfall` y agrega a `.claude/settings.json` el hook que bloquea
-//! `crabfall run`/`crabfall approve` y los permisos para los comandos seguros.
+//! `crabfall run`/`crabfall approve` y los permisos para los comandos seguros. Con `--mcp`,
+//! registra además el servidor MCP en `.mcp.json` (ADR-019).
 
 use std::path::{Path, PathBuf};
 
@@ -20,8 +21,18 @@ const ALLOWED: &[&str] = &[
     "Bash(crabfall compare:*)",
     "Bash(crabfall report:*)",
 ];
+/// Las herramientas del MCP que no generan carga, como los comandos de arriba. `request_run`
+/// no: Claude Code pregunta antes de cada una, además de la ventana.
+const ALLOWED_MCP: &[&str] = &[
+    "mcp__crabfall__list_scenarios",
+    "mcp__crabfall__schema",
+    "mcp__crabfall__validate",
+    "mcp__crabfall__check",
+    "mcp__crabfall__findings",
+    "mcp__crabfall__compare",
+];
 
-pub fn cmd_install() -> u8 {
+pub fn cmd_install(mcp: bool) -> u8 {
     let cwd = std::env::current_dir().unwrap_or_default();
     // La raíz es la carpeta que contiene .crabfall/, o el directorio actual.
     let root = Project::discover(&cwd)
@@ -30,7 +41,11 @@ pub fn cmd_install() -> u8 {
 
     let skill = root.join(".claude/skills/crabfall/SKILL.md");
     let settings = root.join(".claude/settings.json");
-    if let Err(e) = write_skill(&skill).and_then(|_| merge_settings(&settings)) {
+    let mcp_file = root.join(".mcp.json");
+    let written = write_skill(&skill)
+        .and_then(|_| merge_settings(&settings, mcp))
+        .and_then(|_| if mcp { merge_mcp(&mcp_file) } else { Ok(()) });
+    if let Err(e) = written {
         eprintln!("✗ {e}");
         return exit::INVALID;
     }
@@ -44,6 +59,16 @@ pub fn cmd_install() -> u8 {
             display(&settings)
         )
     );
+    if mcp {
+        println!(
+            "{}",
+            crabfall_core::tr!(
+                "✓ MCP server: {} (Claude Code asks you to approve it when the session starts; `/mcp` shows it)",
+                "✓ servidor MCP: {} (Claude Code te pide aprobarlo al abrir la sesión; `/mcp` lo muestra)",
+                display(&mcp_file)
+            )
+        );
+    }
     if !on_path("crabfall") {
         println!(
             "{}",
@@ -77,7 +102,7 @@ fn write_skill(path: &Path) -> Result<(), String> {
     })
 }
 
-fn merge_settings(path: &Path) -> Result<(), String> {
+fn merge_settings(path: &Path, mcp: bool) -> Result<(), String> {
     let mut settings: Value = match std::fs::read_to_string(path) {
         Ok(text) => serde_json::from_str(&text).map_err(|e| {
             crabfall_core::tr!(
@@ -89,7 +114,10 @@ fn merge_settings(path: &Path) -> Result<(), String> {
         Err(_) => json!({}),
     };
     add_hook(&mut settings)?;
-    add_permissions(&mut settings)?;
+    add_permissions(&mut settings, ALLOWED)?;
+    if mcp {
+        add_permissions(&mut settings, ALLOWED_MCP)?;
+    }
     let text = serde_json::to_string_pretty(&settings).unwrap() + "\n";
     std::fs::write(path, text).map_err(|e| {
         crabfall_core::tr!(
@@ -146,13 +174,46 @@ fn add_hook(settings: &mut Value) -> Result<(), String> {
     Ok(())
 }
 
-fn add_permissions(settings: &mut Value) -> Result<(), String> {
+fn add_permissions(settings: &mut Value, rules: &[&str]) -> Result<(), String> {
     let allow = array(object(settings, "permissions")?, "allow")?;
-    for rule in ALLOWED {
+    for rule in rules {
         if !allow.iter().any(|r| r == rule) {
             allow.push(json!(rule));
         }
     }
+    Ok(())
+}
+
+/// `.mcp.json` con el servidor `crabfall`, sin tocar los otros servidores que ya tenga.
+fn merge_mcp(path: &Path) -> Result<(), String> {
+    let mut config: Value = match std::fs::read_to_string(path) {
+        Ok(text) => serde_json::from_str(&text).map_err(|e| {
+            crabfall_core::tr!(
+                "{} is not valid JSON ({e}); leaving it untouched",
+                "{} no es JSON válido ({e}); no lo toco",
+                display(path)
+            )
+        })?,
+        Err(_) => json!({}),
+    };
+    add_mcp_server(&mut config)?;
+    let text = serde_json::to_string_pretty(&config).unwrap()
+        + "
+";
+    std::fs::write(path, text).map_err(|e| {
+        crabfall_core::tr!(
+            "could not write {}: {e}",
+            "no se pudo escribir {}: {e}",
+            display(path)
+        )
+    })
+}
+
+fn add_mcp_server(config: &mut Value) -> Result<(), String> {
+    object(config, "mcpServers")?.insert(
+        "crabfall".into(),
+        json!({ "command": "crabfall", "args": ["mcp"] }),
+    );
     Ok(())
 }
 
@@ -177,7 +238,7 @@ mod tests {
         });
         for _ in 0..2 {
             add_hook(&mut s).unwrap();
-            add_permissions(&mut s).unwrap();
+            add_permissions(&mut s, ALLOWED).unwrap();
         }
         assert_eq!(s["model"], "opus");
         assert_eq!(s["hooks"]["PreToolUse"].as_array().unwrap().len(), 2);
@@ -188,5 +249,21 @@ mod tests {
         let allow = s["permissions"]["allow"].as_array().unwrap();
         assert_eq!(allow.len(), 7);
         assert_eq!(allow[0], "Bash(npm test)");
+    }
+
+    #[test]
+    fn the_mcp_server_is_added_next_to_the_others() {
+        let mut c = json!({ "mcpServers": { "github": { "command": "gh-mcp" } } });
+        for _ in 0..2 {
+            add_mcp_server(&mut c).unwrap();
+        }
+        assert_eq!(c["mcpServers"]["github"]["command"], "gh-mcp");
+        assert_eq!(
+            c["mcpServers"]["crabfall"],
+            json!({ "command": "crabfall", "args": ["mcp"] })
+        );
+        assert!(add_mcp_server(&mut json!({ "mcpServers": [] })).is_err());
+        // Los permisos del MCP no incluyen pedir una corrida.
+        assert!(!ALLOWED_MCP.iter().any(|p| p.contains("request_run")));
     }
 }

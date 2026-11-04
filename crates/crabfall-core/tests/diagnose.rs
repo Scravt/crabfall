@@ -17,7 +17,7 @@ use axum::{
 };
 use crabfall_core::{
     config::Environment,
-    diagnose::{Finding, Severity},
+    diagnose::{Finding, Settings, Severity},
     engine::{self, Progress, plan::Plan},
     metrics::RunResult,
     validate::parse_scenario,
@@ -243,6 +243,37 @@ async fn occasional_slow_requests_show_a_long_tail() {
 
     let f = find(&r, "long_tail");
     assert_eq!(f.severity, Severity::Medium);
+
+    // Los ajustes del diagnóstico (ADR-018 §3) sobre la misma corrida, sin volver a cargar.
+    let load = crabfall_core::load::LoadPlan::Open {
+        ramping: false,
+        segments: vec![],
+        max_vus: 100,
+        graceful_stop: Duration::from_secs(30),
+    };
+    let again = |s: Settings| ids_of(&crabfall_core::diagnose::diagnose(&load, &r, &s));
+    assert!(again(Settings::default()).contains(&"long_tail".to_string()));
+    let off = Settings {
+        off: vec!["long_tail".into()],
+        ..Default::default()
+    };
+    assert!(!again(off).contains(&"long_tail".to_string()));
+    // Un margen de 1 s: 150 ms entre p50 y p99 ya no es cola larga.
+    let wide = Settings {
+        latency_margin_ms: Some(1000.0),
+        ..Default::default()
+    };
+    assert!(!again(wide).contains(&"long_tail".to_string()));
+    // Con más requests mínimas de las que hubo (~300), tampoco.
+    let few = Settings {
+        min_requests: Some(10_000),
+        ..Default::default()
+    };
+    assert!(!again(few).contains(&"long_tail".to_string()));
+}
+
+fn ids_of(findings: &[Finding]) -> Vec<String> {
+    findings.iter().map(|f| f.id.clone()).collect()
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -477,4 +508,80 @@ async fn traffic_that_follows_the_load_is_not_a_bandwidth_limit() {
     let base = big_bodies(false).await;
     let r = run(&base, "/big", BANDWIDTH_RAMP).await;
     assert!(!ids(&r).contains(&"bandwidth_limit"), "{:?}", r.findings);
+}
+
+/// `time_split` (ADR-018). 20 VUs fijos, así hay más de 100 respuestas en pocos segundos.
+const SPLIT_LOAD: &str = "  executor: constant_vus\n  vus: 20\n  duration: 6s\n";
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_body_written_slowly_shows_the_download_dominates() {
+    if skip_timing() {
+        return;
+    }
+    // Los headers salen enseguida y el body en 8 pedazos, uno cada 10 ms.
+    let app = Router::new().route(
+        "/slow-body",
+        get(|| async {
+            let chunks = futures_util::stream::unfold(0u8, |i| async move {
+                if i == 8 {
+                    return None;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+                Some((Ok::<_, std::io::Error>(vec![b'x'; 4096]), i + 1))
+            });
+            axum::body::Body::from_stream(chunks)
+        }),
+    );
+    let base = serve(app).await;
+    let r = run(&base, "/slow-body", SPLIT_LOAD).await;
+    let f = find(&r, "time_split");
+    assert_eq!(f.evidence["dominant"], "download", "{}", f.title);
+    assert_eq!(f.severity, Severity::Medium);
+    assert!(r.steps[0].receive_ms.unwrap().p50 >= 50.0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_handler_that_waits_shows_the_server_dominates() {
+    if skip_timing() {
+        return;
+    }
+    let app = Router::new().route(
+        "/think",
+        get(|| async {
+            tokio::time::sleep(Duration::from_millis(120)).await;
+            "ok"
+        }),
+    );
+    let base = serve(app).await;
+    let r = run(&base, "/think", SPLIT_LOAD).await;
+    let f = find(&r, "time_split");
+    assert_eq!(f.evidence["dominant"], "server", "{}", f.title);
+    assert_eq!(f.severity, Severity::Info);
+    // Con VUs fijos y un paso lento, también dice qué no puede ver.
+    let fixed = find(&r, "fixed_concurrency");
+    assert_eq!(fixed.evidence["vus"], 20);
+    assert!(
+        fixed.causes[0].contains("ramping_rate"),
+        "{:?}",
+        fixed.causes
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_fast_server_has_no_time_split_or_fixed_concurrency() {
+    if skip_timing() {
+        return;
+    }
+    let base = serve(Router::new().route("/ok", get(|| async { "ok" }))).await;
+    let r = run(
+        &base,
+        "/ok",
+        "  executor: constant_vus\n  vus: 5\n  duration: 2s\n",
+    )
+    .await;
+    let found = ids(&r);
+    assert!(
+        !found.contains(&"time_split") && !found.contains(&"fixed_concurrency"),
+        "{found:?}"
+    );
 }

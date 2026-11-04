@@ -239,6 +239,15 @@ const EVIDENCE = ES ? {
   r2: "R²",
   vus: "VUs",
   step: "paso",
+  dominant: "parte que domina",
+  dominant_share: "proporción",
+  latency_p50_ms: "latencia p50 (ms)",
+  server_p50_ms: "servidor, p50 (ms)",
+  download_p50_ms: "descarga, p50 (ms)",
+  before_sending_p50_ms: "antes de mandar, p50 (ms)",
+  bytes_sent_per_request: "bytes enviados por request",
+  bytes_received_per_request: "bytes recibidos por request",
+  iterations_per_s: "iteraciones/s",
 } : {
   offered_iterations_per_s: "offered iterations/s",
   sustained_iterations_per_s: "sustained iterations/s",
@@ -266,6 +275,15 @@ const EVIDENCE = ES ? {
   r2: "R²",
   vus: "VUs",
   step: "step",
+  dominant: "dominant part",
+  dominant_share: "share",
+  latency_p50_ms: "latency p50 (ms)",
+  server_p50_ms: "server, p50 (ms)",
+  download_p50_ms: "download, p50 (ms)",
+  before_sending_p50_ms: "before sending, p50 (ms)",
+  bytes_sent_per_request: "bytes sent per request",
+  bytes_received_per_request: "bytes received per request",
+  iterations_per_s: "iterations/s",
 };
 
 // ---------- Gráfico de líneas: un eje, crosshair y tooltip con todas las series ----------
@@ -452,6 +470,12 @@ function header() {
   row(L("Load", "Carga"), describeLoad(run.load));
   row(L("Pauses", "Pausas"), run.load && run.load.think);
   row(L("Tweaks", "Ajustes"), (run.tweaks || []).join(" "));
+  const diag = run.diagnosis || {};
+  row(L("Diagnosis", "Diagnóstico"), [
+    (diag.off || []).length && L(`off: ${diag.off.join(", ")}`, `apagadas: ${diag.off.join(", ")}`),
+    diag.latency_margin_ms != null && L(`latency margin ${diag.latency_margin_ms} ms`, `margen de latencia ${diag.latency_margin_ms} ms`),
+    diag.min_requests != null && L(`min requests ${diag.min_requests}`, `requests mínimas ${diag.min_requests}`),
+  ].filter(Boolean).join(" · "));
   row(L("Scenario", "Escenario"), run.scenario_file);
   row(L("Approved", "Aprobada"), run.approval && `${run.approval.approved_by} · ${when(run.approval.approved_at)}`);
 
@@ -524,6 +548,7 @@ function comparison() {
     el("ul", { class: "plain" }, items.map((i) => el("li", {}, rich(i)))));
   card.append(block(L("Regressions", "Regresiones"), cmp.regressions || [], "critical") || "", block(L("Improvements", "Mejoras"), cmp.improvements || [], "good") || "");
   for (const w of cmp.warnings || []) card.append(el("div", { class: "muted", style: "margin-top:8px" }, L(`Warning: ${w}`, `Aviso: ${w}`)));
+  if (cmp.scaling) card.append(el("div", { style: "margin-top:8px" }, L("Concurrency: ", "Concurrencia: "), rich(cmp.scaling.summary)));
 
   const rows = (cmp.steps || []).filter((s) => s.p95_ms);
   if (rows.length) {

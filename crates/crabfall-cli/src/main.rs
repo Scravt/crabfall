@@ -6,6 +6,7 @@ mod claude;
 mod compare;
 mod findings;
 mod hook;
+mod mcp;
 mod prepare;
 mod report;
 mod run;
@@ -115,6 +116,15 @@ pub struct Tweaks {
     /// Pass criterion, as in the results: "http.latency.p95<300ms", "http.latency.p99{step=login}<1s", "http.error_rate<1%", "http.rps>=40". If you pass any, they replace the scenario's. They do not change the traffic: no new approval needed. Can be repeated.
     #[arg(long = "threshold", value_name = "METRIC<LIMIT")]
     thresholds: Vec<crabfall_core::scenario::Threshold>,
+    /// Diagnosis rules to turn off, by finding id (long_tail, new_connections…), added to the scenario's. For known noise, not to make a run pass. No new approval needed. Comma-separated or repeated.
+    #[arg(long = "diagnosis-off", value_name = "RULE", value_delimiter = ',')]
+    diagnosis_off: Vec<String>,
+    /// Instead of the 50ms the diagnosis adds to "3× the baseline" (breaking point, bandwidth) and asks between p50 and p99 (long tail). No new approval needed.
+    #[arg(long, value_name = "50ms")]
+    latency_margin: Option<crabfall_core::units::HumanDuration>,
+    /// The fewest requests a step needs for long_tail, new_connections and time_split, instead of 200/100. No new approval needed.
+    #[arg(long, value_name = "N")]
+    min_requests: Option<u64>,
 }
 
 impl Tweaks {
@@ -133,6 +143,9 @@ impl Tweaks {
             data: self.data.clone(),
             pick: self.pick.clone(),
             thresholds: self.thresholds.clone(),
+            diagnosis_off: self.diagnosis_off.clone(),
+            latency_margin: self.latency_margin,
+            min_requests: self.min_requests,
         }
     }
 }
@@ -212,6 +225,12 @@ enum Command {
         #[command(flatten)]
         target: Target,
     },
+    /// MCP server on stdio for agents other than Claude Code (or alongside it): validate, check, findings, compare, schema, and asking a person for a run.
+    Mcp {
+        /// Project folder (the one with .crabfall/). Default: the current one or a parent.
+        #[arg(long, value_name = "DIR")]
+        project: Option<std::path::PathBuf>,
+    },
     /// Runs an approved scenario and saves the results.
     Run {
         #[command(flatten)]
@@ -254,8 +273,8 @@ fn main() -> ExitCode {
     let code = match command {
         Command::Validate { target, json } => cmd_validate(&target, json),
         Command::Claude {
-            action: ClaudeAction::Install,
-        } => claude::cmd_install(),
+            action: ClaudeAction::Install { mcp },
+        } => claude::cmd_install(mcp),
         Command::Hook {
             event: HookEvent::PreToolUse,
         } => hook::cmd_pre_tool_use(),
@@ -275,6 +294,7 @@ fn main() -> ExitCode {
         }
         Command::Check { target, json } => check::cmd_check(&target, json),
         Command::Approve { target } => approve::cmd_approve(&target),
+        Command::Mcp { project } => mcp::cmd_mcp(project.as_deref()),
         Command::Run {
             target,
             json,
@@ -368,6 +388,18 @@ fn spanish_help(command: clap::Command) -> clap::Command {
             "thresholds",
             "Criterio de la corrida, como en los resultados: \"http.latency.p95<300ms\", \"http.latency.p99{step=login}<1s\", \"http.error_rate<1%\", \"http.rps>=40\". Si pasás alguno, reemplazan a los del escenario. No cambian el tráfico: no hace falta volver a aprobar. Se puede repetir",
         ),
+        (
+            "diagnosis_off",
+            "Reglas del diagnóstico que se apagan, por id del hallazgo (long_tail, new_connections…), sumadas a las del escenario. Para ruido conocido, no para que una corrida pase. No hace falta volver a aprobar. Separadas por comas o repetido",
+        ),
+        (
+            "latency_margin",
+            "En lugar de los 50ms que el diagnóstico suma a \"3× la base\" (quiebre, ancho de banda) y pide entre p50 y p99 (cola larga). No hace falta volver a aprobar",
+        ),
+        (
+            "min_requests",
+            "Requests mínimas de un paso para long_tail, new_connections y time_split, en lugar de 200/100. No hace falta volver a aprobar",
+        ),
     ];
     const TWEAKS: &[&str] = &[
         "executor",
@@ -383,6 +415,9 @@ fn spanish_help(command: clap::Command) -> clap::Command {
         "data",
         "pick",
         "thresholds",
+        "diagnosis_off",
+        "latency_margin",
+        "min_requests",
     ];
     let target = |mut c: clap::Command| {
         for (id, help) in TARGET {
@@ -406,6 +441,7 @@ fn spanish_help(command: clap::Command) -> clap::Command {
             c.about("Integra Crabfall con Claude Code en este repo: skill, hook y permisos")
                 .mut_subcommand("install", |c| {
                     c.about("Escribe .claude/skills/crabfall/SKILL.md y agrega el hook y los permisos a .claude/settings.json")
+                        .mut_arg("mcp", |a| a.help("Registra también el servidor MCP en .mcp.json, y permite sus herramientas que no generan carga"))
                 })
         })
         .mut_subcommand("validate", |c| {
@@ -435,6 +471,10 @@ fn spanish_help(command: clap::Command) -> clap::Command {
                     a.help("Compara contra la base del escenario (crabfall baseline) en lugar de la corrida anterior; el único argumento es entonces la corrida nueva")
                 })
                 .mut_arg("json", |a| a.help("Salida JSON para agentes"))
+        })
+        .mut_subcommand("mcp", |c| {
+            c.about("Servidor MCP por stdio para agentes que no son Claude Code (o junto con él): validate, check, findings, compare, schema, y pedirle una corrida a una persona")
+                .mut_arg("project", |a| a.help("Carpeta del proyecto (la que tiene .crabfall/). Por defecto, la actual o una superior"))
         })
         .mut_subcommand("report", |c| {
             c.about("Reporte HTML de una corrida (por defecto, la más reciente): gráficos, hallazgos y comparación")
@@ -591,7 +631,11 @@ fn issue(message: String) -> Issue {
 #[derive(Subcommand)]
 enum ClaudeAction {
     /// Writes .claude/skills/crabfall/SKILL.md and adds the hook and the permissions to .claude/settings.json.
-    Install,
+    Install {
+        /// Also registers the MCP server in .mcp.json, and allows its tools that send no load.
+        #[arg(long)]
+        mcp: bool,
+    },
 }
 
 #[derive(Subcommand)]

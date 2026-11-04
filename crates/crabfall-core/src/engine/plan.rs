@@ -97,6 +97,46 @@ pub struct Plan {
     pub secrets: HashMap<String, String>,
     /// No firman: no cambian el tráfico.
     pub thresholds: Vec<ThresholdPlan>,
+    /// Ajustes del diagnóstico: los del entorno y encima los del escenario. No se firman.
+    pub diagnosis: crate::diagnose::Settings,
+}
+
+impl Plan {
+    /// Lo que va a `results.json`: los ajustes del diagnóstico, si no son los de siempre.
+    pub fn diagnosis_record(&self) -> Option<crate::diagnose::Settings> {
+        (!self.diagnosis.is_default()).then(|| self.diagnosis.clone())
+    }
+}
+
+/// Los del entorno y, encima, los del escenario: sus campos ganan y `off` se suma. Los
+/// problemas del escenario ya los reporta `validate` con su ruta; acá, los del entorno.
+fn diagnosis_settings(
+    env: &Environment,
+    scenario: &Scenario,
+    errors: &mut Vec<String>,
+) -> crate::diagnose::Settings {
+    let (from_env, from_scenario) = (
+        env.diagnosis.clone().unwrap_or_default(),
+        scenario.diagnosis.clone().unwrap_or_default(),
+    );
+    for (path, message) in from_env.problems() {
+        errors.push(crate::tr!(
+            "diagnosis.{path} (environment): {message}",
+            "diagnosis.{path} (entorno): {message}"
+        ));
+    }
+    let mut off = from_env.off;
+    for rule in from_scenario.off {
+        if !off.contains(&rule) {
+            off.push(rule);
+        }
+    }
+    let margin = from_scenario.latency_margin.or(from_env.latency_margin);
+    crate::diagnose::Settings {
+        off,
+        latency_margin_ms: margin.map(|m| m.0.as_secs_f64() * 1000.0),
+        min_requests: from_scenario.min_requests.or(from_env.min_requests),
+    }
 }
 
 pub struct FlowPlan {
@@ -484,6 +524,7 @@ impl Plan {
             data,
             secrets,
             thresholds: Vec::new(),
+            diagnosis: diagnosis_settings(env, scenario, &mut errors),
         };
         errors.extend(data_errors);
         errors.extend(unique_errors);

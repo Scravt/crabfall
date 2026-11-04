@@ -60,6 +60,68 @@ pub struct Scenario {
     /// Pass criteria of the run. If any fails, `crabfall run` exits with code 1.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub thresholds: Vec<Threshold>,
+    /// Diagnosis settings: rules turned off and two named margins. They don't change the traffic, so they need no new approval. The environment in `config.yaml` can set them too; the scenario's win, and `off` adds up.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diagnosis: Option<DiagnosisSpec>,
+}
+
+/// Diagnosis settings (ADR-018). Use them for known noise, not to make a run pass.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DiagnosisSpec {
+    /// Rules to turn off, by the id of their finding: breaking_point, capacity_exceeded, degradation_over_time, error_threshold, long_tail, new_connections, bandwidth_limit, time_split, fixed_concurrency. `invalid_result` can't be turned off.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub off: Vec<String>,
+    /// How much slower than its baseline a second has to be, besides 3×, to count as degraded (breaking point, bandwidth), and the minimum distance between p50 and p99 for a long tail. Default 50ms; from 1ms to 10s.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latency_margin: Option<HumanDuration>,
+    /// The fewest requests a step needs for long_tail (default 200), new_connections and time_split (default 100). From 10 to 100000.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_requests: Option<u64>,
+}
+
+impl DiagnosisSpec {
+    /// Los problemas de cada campo, con su ruta relativa (`off[1]`, `latency_margin`).
+    pub fn problems(&self) -> Vec<(String, String)> {
+        let mut out = Vec::new();
+        for (i, rule) in self.off.iter().enumerate() {
+            if rule == "invalid_result" {
+                out.push((
+                    format!("off[{i}]"),
+                    crate::tr!(
+                        "`invalid_result` can't be turned off: it says whether the numbers are valid",
+                        "`invalid_result` no se puede apagar: dice si los números valen"
+                    ),
+                ));
+            } else if !crate::diagnose::RULES.contains(&rule.as_str()) {
+                out.push((
+                    format!("off[{i}]"),
+                    crate::tr!(
+                        "unknown rule `{rule}`; they are: {}",
+                        "regla desconocida `{rule}`; son: {}",
+                        crate::diagnose::RULES.join(", ")
+                    ),
+                ));
+            }
+        }
+        if let Some(m) = self.latency_margin
+            && !(Duration::from_millis(1)..=Duration::from_secs(10)).contains(&m.0)
+        {
+            out.push((
+                "latency_margin".into(),
+                crate::tr!("use between 1ms and 10s", "usá entre 1ms y 10s"),
+            ));
+        }
+        if let Some(n) = self.min_requests
+            && !(10..=100_000).contains(&n)
+        {
+            out.push((
+                "min_requests".into(),
+                crate::tr!("use between 10 and 100000", "usá entre 10 y 100000"),
+            ));
+        }
+        out
+    }
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]

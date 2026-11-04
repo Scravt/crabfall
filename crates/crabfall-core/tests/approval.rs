@@ -268,3 +268,20 @@ fn the_default_user_agent_is_signed_without_the_version() {
     assert!(canonical.contains("mi-cliente/1"), "{canonical}");
     assert!(!canonical.contains("crabfall/<version>"), "{canonical}");
 }
+
+#[test]
+fn diagnosis_settings_are_not_signed_and_the_scenario_adds_to_the_environment() {
+    let e = env(&format!(
+        "{ENV}diagnosis: {{ off: [long_tail], latency_margin: 80ms, min_requests: 20 }}\n"
+    ));
+    let tuned = format!("{SCENARIO}diagnosis:\n  off: [time_split]\n  min_requests: 50\n");
+    let p = plan(&tuned, &e);
+    assert_eq!(p.diagnosis.off, ["long_tail", "time_split"]);
+    assert_eq!(p.diagnosis.latency_margin_ms, Some(80.0));
+    assert_eq!(p.diagnosis.min_requests, Some(50));
+    // No cambian el tráfico: la aprobación de siempre sigue valiendo.
+    assert_eq!(
+        approval::verify(Some(&approved()), &p, &e, "local", &key()),
+        Ok(())
+    );
+}

@@ -270,6 +270,43 @@ Each slice works end to end before moving on to the next. Closing it updates the
 - [x] Tests: each terminal's arguments, `/proc/<pid>/stat` with odd names, which parents are valid; CI already runs on Linux
 - Done: in WSL2 (Ubuntu 24.04 with WSLg and GNOME Keyring), `smoke --ask` against `market-api` opened the window in gnome-terminal (through `x-terminal-emulator`); the user typed the host, gave a few minutes of allowance, and the next run in xterm went ahead without asking. With the allowance revoked, it asked again; closing the xterm without answering returned code 3 and "the window closed without an answer", with no new run (24 Oct 2026). In WSLg the terminals look gray on black: those are their default colors.
 
+**26. Where a slow step's time goes** (ADR-018)
+- [x] `receive_ms` per step: the time reading the body, next to `ttfb_ms`; in `results.json` and `crabfall findings --json`
+- [x] `time_split`: for a step with ≥ 100 responses and p50 ≥ 50 ms, the part that takes ≥ 60% of the p50: the server (TTFB, `info`, only without saturation), downloading the body or getting a connection (`medium`); with an upload, the title says TTFB includes sending the body
+- [x] `fixed_concurrency` (`info`): with `constant_vus` and a step at p50 ≥ 100 ms, the run can't show whether that's the limit; it suggests a rate ramp
+- [x] Readable evidence names in the report, both languages; the skill knows how to read both findings
+- [x] Lab: a body written in pieces (download dominates), a handler that waits (server dominates, plus `fixed_concurrency`), a fast server (neither)
+- Done: on `market-api`, `search-ramp` with fixed VUs (`--executor constant_vus`, 30 s, with the index). With 50 VUs: 992 it/s and `search` at p50 49.7 ms, all of it TTFB, and no finding (under the 50 ms floor, as it should be). With 100 VUs: 1,003 it/s and p50 99.4 ms, and `time_split` said "`search` spends 100% of its time waiting for the server's first byte" (download ~0 ms, 2.8 KB per response). `fixed_concurrency` didn't fire, by 0.6 ms (p50 99.4 against 100); the threshold stays (24 Oct 2026). The two runs together show what neither shows alone: twice the VUs, the same throughput and twice the latency (Little's law), so `market-api` saturates at ~1,000 searches/s on this machine. That suggests detecting closed-model saturation by comparing runs with different VUs, without waiting for `ramping_vus` (slice 27).
+
+**27. Saturation with fixed VUs, by comparing runs** (ADR-018 §5)
+- [x] `crabfall compare` of two `constant_vus` runs that differ only in `vus` (by ×1.25 or more): `scaling` with the rates, each iteration's time (VUs ÷ rate) and the efficiency, and a verdict: `saturated` (≤ 0.25), `near_limit` or `scales` (≥ 0.75)
+- [x] One line in the terminal, the TUI (comparison and the summary after a run) and the report; with ≥ 5% errors, it says part of the throughput failed
+- [x] There, per-step latency changes don't count as regressions or improvements: more VUs are expected to raise it; errors still count
+- [x] Skill: how to probe capacity with fixed VUs (another run with more `--vus`, then compare)
+- [x] Tests: the real `market-api` numbers (saturated, verdict "no change"), a run that scales, one close to the limit going down in VUs, the cases where it doesn't apply (same VUs, another duration, an open model) and the errors caveat
+- Done: on `market-api`, `crabfall compare` of slice 26's two runs says "50 → 100 VUs (×2.0): throughput 992.7 → 1003.5 it/s (+1%) and each iteration 50.4 → 99.7 ms: saturated at ~1004 it/s: more VUs only add queue (Little's law)", with the verdict "no significant changes" instead of the misleading "worse" it gave before (24 Oct 2026).
+
+**28. Turning diagnosis rules off and tuning margins** (ADR-018 §3)
+- [x] `diagnosis:` in the scenario and in an environment of `config.yaml`: `off` (finding ids; not `invalid_result`), `latency_margin` (1 ms to 10 s, instead of 50 ms) and `min_requests` (10 to 100,000, instead of 200/100); the environment first, the scenario on top, `off` adds up
+- [x] Flags `--diagnosis-off`, `--latency-margin`, `--min-requests` on `validate`, `check`, `approve` and `run`; errors name the flag; help in both languages
+- [x] Not signed (they don't change the traffic); recorded in `results.json` (`diagnosis`) and shown in the `run` header, the report and `crabfall findings --json`; `compare` warns when two runs used different settings
+- [x] Skill: say when a run had settings, and never turn rules off or loosen them to make a run look healthy
+- [x] Tests: validation with paths, flags added to the scenario and described, the environment and the scenario combined without changing the signature, the compare warning, and the long-tail lab re-diagnosed with each setting
+- Done: on `market-api`, slice 26's 100-VU run repeated with `--diagnosis-off time_split` ran with the same approval (the settings aren't signed: the window only asked for `y`), showed `diagnosis: off time_split` in the header, gave no findings and recorded `"diagnosis": {"off": ["time_split"]}`. `crabfall compare` against the earlier run said "the diagnosis settings differ (the usual → off time_split): findings may appear or disappear because of that", with the same load and no significant changes (995 it/s; 24 Oct 2026).
+
+**29. MCP server** (ADR-019)
+- [x] `crabfall mcp [--project DIR]`: MCP over stdio (JSON-RPC, one message per line), written without an SDK; negotiates `2025-06-18`, `2025-03-26` and `2024-11-05`; instructions for the agent in `initialize`
+- [x] Tools that run the same CLI with `--json` in the project: `schema`, `validate`, `check`, `request_run` (`run --ask`), `findings`, `compare`; plus `list_scenarios`, read with the core
+- [x] No approve, no run without a person, no baseline; unknown tweaks, a scenario starting with `-` and internal flags are rejected before running anything; annotations (`readOnlyHint`, `destructiveHint`)
+- [x] Results with the CLI's JSON in `structuredContent`, the exit code and its meaning, and stderr
+- [x] Help in both languages; README with the configuration for Claude Code, Cursor, VS Code and Claude Desktop
+- [x] Tests: units, and a client over stdio against a temporary project and a loopback server, including `request_run` refused before the window (it never opens one)
+- [x] Read-only sessions against `market-api` and `shop-api`: the 17 scenarios validate, latest runs and baselines are listed, and `compare` returns slice 27's saturation (24 Oct 2026)
+- [x] Fixed along the way, because `list_scenarios` showed it: runs are ordered by `started_at` (an absolute instant), not by id. The id comes from each machine's local clock, so on `market-api` a WSL run (UTC) passed as newer than a later Windows one (UTC−3). `latest`, the previous run for `compare`, the TUI history and the MCP use the same order (`runs::all`)
+- [x] `.mcp.json` in `market-api` and `shop-api`, with the skill refreshed
+- [x] `crabfall claude install --mcp`: also writes the `crabfall` server to `.mcp.json` (keeping other servers) and allows the MCP tools that send no load; `request_run` keeps asking. README with the connection steps, client by client
+- Done when: a real MCP client (Claude Code through `.mcp.json`, Cursor or another) designs, checks and analyzes with it, and a person confirms a `request_run`. **Pending:** that session, with the person.
+
 ## Versions
 
 **v0.1.0** (19 Oct 2026): slices 0 to 13 under the name Crabfall (`crabfall` binary, `.crabfall/` folder), on `main` and on GitHub (private at the time). Slice 13 was closed afterwards, with the `upload` run.
@@ -283,9 +320,9 @@ Each slice works end to end before moving on to the next. Closing it updates the
 
 ## Next version (v0.3)
 
-- **MCP server.**
+- **MCP server:** `crabfall mcp`, slice 29 ([ADR-019](adr/ADR-019-mcp.md)); the test with a real client is pending.
 - **Importers:** OpenAPI, curl, Postman.
-- **Diagnosis rules:** the [comparative study](studies/diagnosis-comparison.md) (k6, Gatling, NeoLoad, LoadRunner, Azure, Locust, JMeter, Artillery, Dynatrace) is done (24 Oct 2026), and its recommendations were accepted: deterministic rules; saturation with fixed VUs and server vs payload first, contagion between steps if there's time, and best practices as `validate` warnings; rules can be turned off and a few named margins tuned, recorded in the results; no custom rules. To be written into an ADR, with its lab.
+- **Diagnosis rules:** the [comparative study](studies/diagnosis-comparison.md) (k6, Gatling, NeoLoad, LoadRunner, Azure, Locust, JMeter, Artillery, Dynatrace) is done (24 Oct 2026), and its recommendations were accepted ([ADR-018](adr/ADR-018-diagnosis-v03.md)): deterministic rules; server vs payload (`time_split`, slice 26); turning rules off and tuning a few named margins, recorded in the results; contagion between steps if there's time, and best practices as `validate` warnings; no custom rules. Saturation with fixed VUs turned out not to be detectable with `constant_vus` (the concurrency never changes): it comes with `ramping_vus`, and meanwhile `fixed_concurrency` says what a closed model can't show.
 
 ## Backlog (unordered)
 
@@ -345,4 +382,8 @@ Each slice works end to end before moving on to the next. Closing it updates the
 | 24 Oct 2026 | The default `user-agent` is signed without the version: upgrading Crabfall doesn't invalidate approvals | ADR-004 |
 | 24 Oct 2026 | v0.2.0: slices 14 to 25 to `main`; for v0.3, MCP, importers and diagnosis rules after comparing them with other tools | Versions |
 | 24 Oct 2026 | Diagnosis for v0.3: deterministic rules; they can be turned off and a few margins tuned, recorded in the results; no custom rules | [Study](studies/diagnosis-comparison.md) |
+| 24 Oct 2026 | Diagnosis v0.3: `time_split` and `fixed_concurrency`; saturation in the closed model waits for `ramping_vus`, because with fixed VUs the concurrency never changes | ADR-018 |
+| 24 Oct 2026 | Closed-model saturation by comparing runs with different VUs (`scaling` in `compare`); there, latency changes aren't regressions | ADR-018 §5 |
+| 24 Oct 2026 | Diagnosis settings: rules off and two named margins, by scenario, environment or flag; not signed; recorded and warned about in `compare` | ADR-018 §3 |
+| 24 Oct 2026 | MCP server: each tool runs the same CLI with `--json`; no approve or run without a person; `request_run` is `run --ask` | ADR-019 |
 | 24 Oct 2026 | All the documentation in English (ADRs, roadmap, studies); the test repos (`market-api`, `shop-api`) public on GitHub; MIT OR Apache-2.0 license files | ADR-016 |

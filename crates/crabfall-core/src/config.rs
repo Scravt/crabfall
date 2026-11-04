@@ -31,6 +31,9 @@ pub struct Environment {
     pub vars: BTreeMap<String, Value>,
     #[serde(default)]
     pub limits: Limits,
+    /// Ajustes del diagnóstico para todos los escenarios del entorno (ADR-018). No se firman.
+    #[serde(default)]
+    pub diagnosis: Option<crate::scenario::DiagnosisSpec>,
 }
 
 /// Límites duros. Ni una aprobación los supera.

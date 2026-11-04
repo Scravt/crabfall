@@ -33,6 +33,10 @@ pub struct Overrides {
     pub pick: Vec<(String, Pick)>,
     /// Thresholds que reemplazan a los del escenario. No cambian el tráfico: no afectan la firma.
     pub thresholds: Vec<Threshold>,
+    /// Reglas del diagnóstico que se apagan, sumadas a las del escenario (ADR-018). Tampoco firman.
+    pub diagnosis_off: Vec<String>,
+    pub latency_margin: Option<HumanDuration>,
+    pub min_requests: Option<u64>,
 }
 
 impl Overrides {
@@ -111,6 +115,19 @@ impl Overrides {
         if !self.thresholds.is_empty() {
             s.thresholds = self.thresholds.clone();
         }
+        if !self.diagnosis_off.is_empty()
+            || self.latency_margin.is_some()
+            || self.min_requests.is_some()
+        {
+            let d = s.diagnosis.get_or_insert_default();
+            for rule in &self.diagnosis_off {
+                if !d.off.contains(rule) {
+                    d.off.push(rule.clone());
+                }
+            }
+            set(&mut d.latency_margin, self.latency_margin);
+            set(&mut d.min_requests, self.min_requests);
+        }
 
         let given = self.describe();
         issues.extend(check_scenario(s).into_iter().map(|mut issue| {
@@ -161,6 +178,11 @@ impl Overrides {
         for t in &self.thresholds {
             push("threshold", Some(to_flag(t)));
         }
+        for rule in &self.diagnosis_off {
+            push("diagnosis-off", Some(rule.clone()));
+        }
+        push("latency-margin", self.latency_margin.map(|d| d.to_string()));
+        push("min-requests", self.min_requests.map(|n| n.to_string()));
         out
     }
 }
@@ -200,6 +222,9 @@ fn flag_for(path: &str) -> Option<&'static str> {
         "load.graceful_stop" => "--graceful-stop",
         "load.executor" => "--executor",
         "vu_refresh" | "vu_refresh.every" => "--refresh-every",
+        "diagnosis.latency_margin" => "--latency-margin",
+        "diagnosis.min_requests" => "--min-requests",
+        p if p.starts_with("diagnosis.off") => "--diagnosis-off",
         _ => return None,
     })
 }
@@ -434,5 +459,73 @@ load:
         );
         assert!("ramp".parse::<Executor>().is_err());
         assert!(Overrides::default().is_empty());
+    }
+
+    #[test]
+    fn diagnosis_flags_add_to_the_scenario_and_are_described() {
+        let mut s = parse_scenario(
+            "version: 1
+name: d
+flows:
+  main:
+    steps:
+      - name: a
+        request: { method: GET, url: /a }
+load:
+  executor: constant_rate
+  rate: 1/s
+  duration: 1s
+  max_vus: 1
+diagnosis:
+  off: [long_tail]
+",
+        )
+        .unwrap();
+        let o = Overrides {
+            diagnosis_off: vec!["new_connections".into(), "long_tail".into()],
+            latency_margin: Some("100ms".parse().unwrap()),
+            min_requests: Some(50),
+            ..Default::default()
+        };
+        assert!(o.apply(&mut s).is_empty());
+        let d = s.diagnosis.unwrap();
+        assert_eq!(d.off, ["long_tail", "new_connections"]);
+        assert_eq!(d.min_requests, Some(50));
+        assert_eq!(
+            o.describe(),
+            [
+                "--diagnosis-off new_connections",
+                "--diagnosis-off long_tail",
+                "--latency-margin 100ms",
+                "--min-requests 50"
+            ]
+        );
+        // Una regla desconocida dice qué flag la trajo.
+        let bad = Overrides {
+            diagnosis_off: vec!["nope".into()],
+            ..Default::default()
+        };
+        let issues = bad.apply(
+            &mut parse_scenario(
+                "version: 1
+name: d
+flows:
+  main:
+    steps:
+      - name: a
+        request: { method: GET, url: /a }
+load:
+  executor: constant_rate
+  rate: 1/s
+  duration: 1s
+  max_vus: 1
+",
+            )
+            .unwrap(),
+        );
+        assert!(
+            issues[0].message.ends_with("(sacá --diagnosis-off)"),
+            "{issues:?}"
+        );
     }
 }

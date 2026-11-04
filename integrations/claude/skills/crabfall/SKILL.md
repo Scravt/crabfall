@@ -123,6 +123,8 @@ You can freely use: `crabfall validate`, `crabfall check` (only against loopback
 
    **Tweaks by flag.** To vary a run without touching the YAML ("the same at twice the rate", "try it with 20 users", "with other users"), use flags instead of editing the scenario: `--rate`, `--duration`, `--vus`, `--max-vus`, `--start-rate`, `--stages 100/s:1m,0/s:30s`, `--graceful-stop`, `--executor`, `--think 1s-3s`, `--refresh-every 4m`, `--data users=data/others.csv`, `--pick users=random` and `--threshold "http.latency.p95<300ms"` (list in `crabfall run --help`; `--threshold` replaces the YAML ones and needs no new approval). Validate them with `crabfall validate <name> <flags> --json`: the error says which flag is missing or extra. The same flags go in `crabfall approve` and in `crabfall run`, because the approval signs them. Hand over both commands with the full flags. If a tweak will always be used, it belongs in the YAML.
 
+**MCP.** If the project registers the `crabfall` MCP server, its tools (`list_scenarios`, `validate`, `check`, `request_run`, `findings`, `compare`, `schema`) are the same commands with structured results: use whichever is available. `request_run` is `crabfall run --ask`, with the same rules.
+
 ## Analyzing results
 
 Always start with `crabfall findings --json` (the most recent run; `crabfall findings <id> --json` for another one). It is a compact summary: totals, thresholds, findings and metrics per step. Open `.crabfall/runs/<id>/results.json` only if you need the per-second series (`series`). For the person there is a graphical report in `.crabfall/runs/<id>/report.html` (`crabfall run` generates it; `crabfall report <id>` regenerates it): mention it when you wrap up the analysis. You read the JSON, not the HTML.
@@ -135,6 +137,9 @@ Always start with `crabfall findings --json` (the most recent run; `crabfall fin
    - `degradation_over_time`: with constant load, latency rises steadily.
    - `long_tail`: p99 far from p50 under steady load.
    - `new_connections`: connections are not reused.
+   - `time_split`: where a slow step's time goes, from the medians of TTFB (`server`), reading the body (`download`, `receive_ms`) and the rest (`before_sending`: getting a connection, waiting). `download` or `before_sending` (medium) mean the server's code is probably not the first place to look: the response size, compression, the link, keep-alive or DNS/TLS. `server` (info) sends you to the handler and what it calls; with an upload, TTFB includes sending the body, and the title says so.
+   - **Diagnosis settings.** A run may have used `diagnosis` settings (in `results.json` and `crabfall findings --json`): rules turned off, a different latency margin or fewer minimum requests. Say so when you report: a missing finding may be off, not absent. Never turn off or loosen a rule (`--diagnosis-off`, `--latency-margin`, `--min-requests`, or `diagnosis:` in the YAML) to make a run look healthy; if you think a finding is noise, explain why to the person and let them decide.
+   - `fixed_concurrency` (info): with `constant_vus` and a slow step, the run can't show whether that is the limit (the concurrency never changes). Suggest repeating it with a rate ramp, as the finding says, before concluding anything about capacity.
    - `bandwidth_limit`: traffic (bytes per second) levels off while the load asks for more and latency rises: the limit may be the link, not the server. Before blaming the code, suggest measuring the link or running the generator next to the server.
 3. **Go to the code.** For each finding with a `source`, open that file and symbol and look for what would explain the evidence: synchronous CPU work, small pools, locks, queries without an index, growing collections, external calls without a concurrency limit.
 4. **Report in two parts, always separate:**
@@ -154,6 +159,7 @@ When the person changed something (code, configuration, infrastructure) and ran 
    If `warnings` says a step's response or request changed size, mention it next to that step's latency change: it may be the explanation (more data, other pagination, a larger file) rather than a slower server.
 4. **Report** `regressions` and `improvements` with their numbers, and the `resolved` and `new` findings. If a `breaking_point` moved, that is the headline ("the break moved from ~36 to ~140 it/s").
 5. If a finding shows as `resolved` but the diagnosis rule changed between `crabfall` versions, point it out: it is not thanks to the change.
+6. **Capacity with fixed VUs.** A single `constant_vus` run can't show whether the server is at its limit (`fixed_concurrency`). To find out, ask for the same scenario with more VUs (`--vus`, for example twice as many) and compare the two runs: `scaling` says whether the throughput followed the VUs (`scales`), grew less (`near_limit`) or didn't move (`saturated`), with each iteration's time. There, a latency rise is expected and doesn't count as a regression; report the capacity ("saturates at ~1,000 it/s") and then look in the code for the shared resource (a pool, a lock, the CPU).
 
 ## Reference
 

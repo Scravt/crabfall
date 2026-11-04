@@ -1,11 +1,61 @@
-# Crabfall
+# Crabfall 🦀
 
-A load testing tool in Rust, built to be used together with Claude Code:
-Claude designs the scenario and analyzes the results; a person approves and runs the load.
+**A load tester in Rust that an AI agent can drive, and a person keeps in check.**
+The agent designs the scenario and reads the results; a person approves the exact traffic before any load is sent.
 
-Status: **v0.2.0** (slices 0 to 25; see [What's next](#whats-next)). Already working: design with Claude, signed approval (HMAC-SHA256 with the key in the system keyring; see [Approval](#approval-no-load-without-a-person)), runs requested by the agent and confirmed by a person in a window ([`--ask`](#letting-the-agent-ask-for-a-run---ask)), scenarios with `setup`, `extract`, checks and thresholds, three executors, diagnosis, run comparison, datasets, pauses between steps, per-run tweaks by flag, an HTML report per run, login per virtual user (`vu_setup`), token renewal during the load (`vu_refresh`), file uploads (`multipart`), bytes sent and received per second, an HTTP client with cookies, redirects, compression and forms, and output in English or Spanish. See the [roadmap](docs/roadmap.md).
+[![CI](https://github.com/Scravt/crabfall/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Scravt/crabfall/actions/workflows/ci.yml)
+![version](https://img.shields.io/badge/version-0.2.0-orange)
+![Rust](https://img.shields.io/badge/Rust-stable-b7410e?logo=rust)
+![MCP](https://img.shields.io/badge/MCP-server-6e56cf)
+![license](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)
 
-## Usage
+<!-- TODO: hero GIF of the TUI during a run -> docs/images/tui-run.gif
+![Crabfall's terminal UI during a run](docs/images/tui-run.gif)
+-->
+
+## What you get
+
+- 🔍 **A diagnosis, not just numbers.** The breaking point, capacity exceeded, degradation over time, a long tail, saturation with fixed VUs (by comparing runs), and for a slow step, whether its time goes to the server, the download or getting a connection. Every finding comes with its numbers.
+- ⚖️ **Comparisons that tell a change from noise.** `crabfall compare` says what improved, what got worse and whether the difference is consistent, against the previous run or an accepted baseline.
+- 📺 **A live view while it runs.** The terminal UI shows the last second against the target rate, p95 and errors per second, per step, and warnings as they happen.
+- 📊 **An HTML report per run** that opens offline: per-second charts, findings with their window shaded, the comparison with the previous run.
+- 🤖 **Built for agents.** A Claude Code skill, `--json` everywhere and an MCP server for Claude Code, Cursor, VS Code and others.
+- 🔐 **No load without a person.** The agent can ask for a run, never approve one. Approvals sign the exact traffic, and any change asks again.
+
+## How it works
+
+```mermaid
+flowchart LR
+    A["🤖 Agent writes<br/>the scenario"] --> B["validate + check<br/>(loopback only)"]
+    B --> C{"👤 Person approves<br/>the exact plan"}
+    C -->|"signed (HMAC)"| D["⚡ Load runs<br/>live view"]
+    D --> E["🔍 findings + compare<br/>report.html"]
+    E -->|"agent changes the code"| A
+    C -->|"plan changed"| X["⛔ refused,<br/>with the diff"]
+
+    classDef agent fill:#ede9fe,stroke:#6e56cf,color:#1e1b4b
+    classDef human fill:#fef3c7,stroke:#d97706,color:#451a03
+    classDef run fill:#dcfce7,stroke:#16a34a,color:#052e16
+    classDef stop fill:#fee2e2,stroke:#dc2626,color:#450a0a
+    class A,B agent
+    class C human
+    class D,E run
+    class X stop
+```
+
+The guard lives in the `crabfall` binary, not in the agent's permissions: the agent can edit any file in the repo, so it can't be the one holding the key. See [Approval](#approval-no-load-without-a-person).
+
+> [!NOTE]
+> **Status:** v0.2.0 is released; v0.3 (an MCP server and deeper diagnosis) is in progress on `dev`. See [What's next](#whats-next) and the [roadmap](docs/roadmap.md).
+
+<details>
+<summary>Everything that already works</summary>
+
+Design with Claude, signed approval (HMAC-SHA256 with the key in the system keyring), runs requested by the agent and confirmed by a person in a window ([`--ask`](#letting-the-agent-ask-for-a-run---ask)), an MCP server, scenarios with `setup`, `extract`, checks and thresholds, three executors, diagnosis, run comparison and baselines, datasets, pauses between steps, per-run tweaks by flag, an HTML report per run, a terminal UI, login per virtual user (`vu_setup`), token renewal during the load (`vu_refresh`), file uploads (`multipart`), bytes sent and received per second, an HTTP client with cookies, redirects, compression and forms, and output in English or Spanish.
+
+</details>
+
+## Quick start
 
 ```bash
 cargo install --path crates/crabfall-cli    # installs `crabfall` in ~/.cargo/bin
@@ -79,7 +129,8 @@ What that stops:
 
 Updating Crabfall invalidates the approvals too, since the `user-agent` changes: the traffic is different. Approvals do not expire; they last until something changes.
 
-What it does **not** stop: someone acting deliberately with your user account. Any process running as you can read the keyring key, emulate a terminal, or send load without Crabfall (a `curl` loop). `approved_by` is a signed label, not an authentication. The guard prevents accidents and misuse of this tool; it does not replace trust in the agent or the security of the machine. Without a person or a keyring, approving in CI is not supported yet.
+> [!WARNING]
+> What it does **not** stop: someone acting deliberately with your user account. Any process running as you can read the keyring key, emulate a terminal, or send load without Crabfall (a `curl` loop). `approved_by` is a signed label, not an authentication. The guard prevents accidents and misuse of this tool; it does not replace trust in the agent or the security of the machine. Without a person or a keyring, approving in CI is not supported yet.
 
 ### Letting the agent ask for a run: `--ask`
 
@@ -97,11 +148,16 @@ The window opens on Windows (a new console) and on Linux with a desktop (`DISPLA
 
 Against a deliberately malicious agent this is no stronger than the rest: same-user processes can type into that window (`SendInput`), read the keyring key or send load without Crabfall. What would resist is keeping the agent away from the target and the key (Claude Code's sandbox with a network allowlist, a container or a VM), or making the target require a short-lived token issued off the agent's machine; ADR-017 compares the options.
 
-The only thing that needs no approval is `crabfall check`: each flow once, in series, at most 50 requests, and only to hosts that resolve to loopback, redirects included.
+> [!TIP]
+> The only thing that needs no approval is `crabfall check`: each flow once, in series, at most 50 requests, and only to hosts that resolve to loopback, redirects included.
 
 ### Terminal UI
 
 Run `crabfall` without a subcommand, in a terminal, to open the TUI ([ADR-015](docs/adr/ADR-015-tui.md)):
+
+<!-- TODO: screenshot of the live view -> docs/images/tui-live.png
+![The live view: last second against the target, p95 and errors per step](docs/images/tui-live.png)
+-->
 
 - **Pick** a scenario and the environment (`e`), with each scenario's approval state, its last run and its full description.
 - **Tweak** rate, duration, VUs, pauses, renewal and thresholds; the plan is rebuilt as you type, and it shows the equivalent `crabfall` command.
@@ -230,23 +286,66 @@ crabfall run checkout --executor ramping_rate --stages 50/s:1m,200/s:3m,0/s:30s
 crabfall run login-users --data users=data/others.csv --pick users=random
 crabfall run shop-per-user --duration 10m --refresh-every 4m
 crabfall run checkout --threshold "http.latency.p95<300ms" --threshold "http.error_rate<1%"
+crabfall run checkout --diagnosis-off long_tail --latency-margin 100ms --min-requests 50
 ```
 
-Full list in `crabfall run --help`. The approval signs the ones that change the traffic: pass the same ones to `crabfall approve` and `crabfall run`. `--threshold` replaces the YAML ones and needs no new approval ([ADR-008](docs/adr/ADR-008-think-time-and-tweaks.md)).
+Full list in `crabfall run --help`. The approval signs the ones that change the traffic: pass the same ones to `crabfall approve` and `crabfall run`. `--threshold` replaces the YAML ones and needs no new approval ([ADR-008](docs/adr/ADR-008-think-time-and-tweaks.md)). Neither do the diagnosis settings: `--diagnosis-off` turns rules off by finding id, `--latency-margin` replaces the 50 ms the rules add to "3× the baseline", and `--min-requests` lowers how many requests a step needs. They also go in a `diagnosis:` block in the scenario or in an environment of `config.yaml`; they are recorded in `results.json` and the report, and `compare` warns when two runs used different ones ([ADR-018](docs/adr/ADR-018-diagnosis-v03.md)).
 
 ## With Claude Code
 
 ```bash
 crabfall claude install              # in the repo under test: skill, hook and permissions in .claude/
+crabfall claude install --mcp        # the same, and registers the MCP server in .mcp.json
 ```
 
 Then, in a Claude Code session: *"build me a load test of the checkout flow"*. Claude reads the code, writes the scenario, checks it with `crabfall validate` and `crabfall check` (only against loopback) and hands you the `crabfall approve` and `crabfall run` commands to run yourself. It cannot approve or run on its own ([ADR-001](docs/adr/ADR-001-claude-first.md), ADR-004): when it wants to run, it uses `crabfall run --ask`, and you confirm each run in a window (or allow the same plan for some minutes) while it compares the results and keeps working on the code ([`--ask`](#letting-the-agent-ask-for-a-run---ask)).
 
-`crabfall findings [--json]` shows the findings of the last run (or of one by id). `crabfall compare [base] [new] [--json]` compares two runs (by default, the last one with the previous one of the same scenario): what improved, what got worse and whether the change is consistent or may be noise ([ADR-006](docs/adr/ADR-006-comparison.md)). To compare against an accepted reference instead of the previous run, set a baseline with `crabfall baseline [run]` (it goes in `.crabfall/baselines/`; commit it to share it) and use `crabfall compare --baseline`. In the TUI history, `b` sets it. `crabfall schema` prints the JSON Schema of the scenario.
+`crabfall findings [--json]` shows the findings of the last run (or of one by id): the breaking point, capacity exceeded, errors from a certain rate, degradation over time, a long tail, connections not reused, a bandwidth ceiling, and, for a slow step, whether its time goes to the server, to downloading the body or to getting a connection ([ADR-005](docs/adr/ADR-005-diagnosis.md), [ADR-018](docs/adr/ADR-018-diagnosis-v03.md)). `crabfall compare [base] [new] [--json]` compares two runs (by default, the last one with the previous one of the same scenario): what improved, what got worse and whether the change is consistent or may be noise ([ADR-006](docs/adr/ADR-006-comparison.md)). Two runs with fixed VUs that differ only in how many say whether the throughput followed the VUs or the server is saturated ([ADR-018](docs/adr/ADR-018-diagnosis-v03.md)). To compare against an accepted reference instead of the previous run, set a baseline with `crabfall baseline [run]` (it goes in `.crabfall/baselines/`; commit it to share it) and use `crabfall compare --baseline`. In the TUI history, `b` sets it. `crabfall schema` prints the JSON Schema of the scenario.
 
 Each `crabfall run` also leaves `report.html` next to `results.json`: a file that opens offline, with per-second charts (iterations, latency, p95 per step, traffic), the findings with their window shaded, the comparison with the previous run and the tables. `crabfall report [run] --open` regenerates it and opens it in the browser ([ADR-009](docs/adr/ADR-009-html-report.md)).
 
+<!-- TODO: screenshot of report.html with a finding shaded -> docs/images/report.png
+![report.html: per-second charts with a finding's window shaded](docs/images/report.png)
+-->
+
 Exit codes: `0` ok · `1` `check` with failed steps, thresholds not met, `setup` failed or `compare` with regressions · `2` invalid scenario or configuration · `3` refused (no valid approval, host not allowed, limits, no terminal, or nobody confirmed `--ask`) · `4` error saving or accessing the keyring.
+
+### With MCP: Claude Code, Cursor, VS Code and other agents
+
+`crabfall mcp` is an MCP server over stdio ([ADR-019](docs/adr/ADR-019-mcp.md)). Its tools run the same CLI with `--json`, so the same rules and the same guard apply:
+
+| Tool | What it does |
+| --- | --- |
+| `list_scenarios` | scenarios, environments, each one's latest run and baselines |
+| `schema` | the scenario's JSON Schema |
+| `validate` / `check` | validation with tweaks; the smoke check, loopback only |
+| `request_run` | `crabfall run --ask`: a person confirms in a window and the load runs there |
+| `findings` / `compare` | a run's summary; two runs, or against the baseline |
+
+There's no tool to approve or to run without a person. Tools take `scenario`, `env`, `vars` and `tweaks` (`{ "rate": "100/s", "diagnosis_off": ["long_tail"] }`).
+
+**Connecting it.** The agent doesn't connect it on its own: you register the server once per project, and the client asks you to approve it.
+
+1. **Claude Code**, from the project folder (the one with `.crabfall/`):
+
+   ```bash
+   crabfall claude install --mcp
+   ```
+
+   Besides the skill, the hook and the permissions, it adds the `crabfall` server to `.mcp.json` (keeping any other servers there) and allows the tools that send no load; `request_run` still asks every time. `claude mcp add --scope project crabfall -- crabfall mcp` writes the same `.mcp.json`.
+2. **Open a Claude Code session** in that folder. It detects the server and asks whether to approve it: say yes. `/mcp` shows it connected with its tools.
+3. **Ask for something**: *"list the scenarios and analyze the latest search-ramp run"*. When the agent wants load, it calls `request_run` and the confirmation window opens on your screen.
+
+**Other clients** take the same server, in their own file:
+
+| Client | File | Content |
+| --- | --- | --- |
+| Claude Code | `.mcp.json` | `{ "mcpServers": { "crabfall": { "command": "crabfall", "args": ["mcp"] } } }` |
+| Cursor | `.cursor/mcp.json` | the same |
+| VS Code | `.vscode/mcp.json` | `{ "servers": { "crabfall": { "type": "stdio", "command": "crabfall", "args": ["mcp"] } } }` |
+| Claude Desktop | its `claude_desktop_config.json` | like Claude Code, with `"args": ["mcp", "--project", "/path/to/repo"]`: it doesn't start in the project folder |
+
+`crabfall` has to be on the PATH. `request_run` waits for the person and then the run: raise the client's tool timeout if it cuts long calls.
 
 Full scenario format: [ADR-002](docs/adr/ADR-002-scenario-format.md).
 
@@ -255,9 +354,9 @@ Full scenario format: [ADR-002](docs/adr/ADR-002-scenario-format.md).
 Still to try for real (the code is done): TLS, compression behind Caddy and the bandwidth diagnosis against a remote server; the skill in a fresh Claude Code session; the TUI with someone who has never seen it.
 
 **v0.3:**
-- An MCP server.
+- An MCP server ([`crabfall mcp`](#with-mcp-claude-code-cursor-vs-code-and-other-agents), slice 29; to be tried with a real client).
 - Importers: OpenAPI, curl, Postman.
-- More diagnosis rules, after comparing what other tools detect, and deciding whether rules can be customized or stay fixed in the engine.
+- Diagnosis: after [comparing what other tools detect](docs/studies/diagnosis-comparison.md), where a slow step's time goes (done, slice 26), turning rules off and tuning a few margins per scenario (done, slice 28), saturation in the closed model by comparing runs with different VUs (done, slice 27), and within a single run with `ramping_vus` ([ADR-018](docs/adr/ADR-018-diagnosis-v03.md)).
 
 **Later, in no particular order:** the `--ask` window on macOS; defenses against a deliberately malicious agent (running it in a sandbox, a short-lived token required by the target); approving in CI without a person, and a GitHub Action; correlation with server metrics (OTLP, Prometheus); HTTP/2, WebSockets, gRPC, Kafka; choosing when to renew a session from `expires_in`; a desktop GUI. New load models (`ramping_vus`, fixed iterations, per-VU arrival) come last.
 
@@ -297,6 +396,8 @@ To test against more realistic APIs: [shop-api](../shop-api) (local, with plante
 - [ADR-015 — Terminal TUI](docs/adr/ADR-015-tui.md)
 - [ADR-016 — Output language](docs/adr/ADR-016-language.md)
 - [ADR-017 — The agent asks, a person confirms in a window](docs/adr/ADR-017-window-confirmation.md)
+- [ADR-018 — Diagnosis for v0.3](docs/adr/ADR-018-diagnosis-v03.md)
+- [ADR-019 — An MCP server](docs/adr/ADR-019-mcp.md)
 
 ## License
 

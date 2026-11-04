@@ -63,7 +63,7 @@ Crabfall already gets what generative AI gives through Claude, and marks it as a
 
 | # | Candidate rule | Who has it | Why |
 | --- | --- | --- | --- |
-| 1 | **Saturation with fixed VUs** (`throughput_plateau`) | k6 (*throughput limit*), NeoLoad | With `constant_vus` there are no drops: `capacity_exceeded` never fires and `breaking_point` only looks at ramps. By Little's law (concurrency = throughput × latency), if the VUs are busy and the throughput doesn't rise, latency pays for it. Today that run comes out "no findings". With `ramping_vus` (backlog) it will be the same or worse. |
+| 1 | **Saturation with fixed VUs** (`throughput_plateau`) — *see the correction below* | k6 (*throughput limit*), NeoLoad | With `constant_vus` there are no drops: `capacity_exceeded` never fires and `breaking_point` only looks at ramps. By Little's law (concurrency = throughput × latency), if the VUs are busy and the throughput doesn't rise, latency pays for it. Today that run comes out "no findings". With `ramping_vus` (backlog) it will be the same or worse. |
 | 2 | **Server or payload** (TTFB vs receiving) | — (it was in ADR-005) | We already measure each request's phases. It separates "the server is slow to answer" from "the response is big or the link is slow", and tells Claude where to look in the code. |
 | 3 | **Contagion between steps** as a finding of its own | NeoLoad (partly) | Today it's inside `breaking_point`. A healthy step degrading when another saturates points to a shared resource (pool, CPU, lock). |
 | 4 | **Scenario best practices** | k6 Cloud | No `checks` (a 200 with an error goes unseen), a closed model without `think`, too many distinct URLs. They go as `validate` or `approve` warnings, not as run findings. |
@@ -105,7 +105,9 @@ Accepted on 24 Oct 2026, as recommended:
 3. Customization: B and a bounded C; not D.
 4. Phases (5) and the trend (6) come later.
 
-They go into a new ADR (or extend ADR-005), with their lab.
+They went into [ADR-018](../adr/ADR-018-diagnosis-v03.md), with their lab.
+
+**Correction (24 Oct 2026).** Rule 1 doesn't work as written. With `constant_vus` all VUs start together and the concurrency is N for the whole run, so the throughput is flat whether the server is healthy or saturated, and the latency is always N ÷ throughput: there is no "before" to compare against. k6's *throughput limit* needs VUs that rise. The rule moves to `ramping_vus`; meanwhile, `fixed_concurrency` (ADR-018) says what a closed model can't show.
 
 ## Sources
 
