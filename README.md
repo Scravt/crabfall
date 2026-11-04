@@ -57,11 +57,23 @@ Design with Claude, signed approval (HMAC-SHA256 with the key in the system keyr
 
 ## Quick start
 
+### With Claude Code: no YAML by hand
+
 ```bash
-cargo install --path crates/crabfall-cli    # installs `crabfall` in ~/.cargo/bin
+cargo install --git https://github.com/Scravt/crabfall crabfall-cli   # installs `crabfall`
+cd path/to/your-api
+crabfall claude install --mcp    # skill, hook, permissions and the MCP server, in this repo
 ```
 
-In the repo under test, create `.crabfall/config.yaml`:
+Open Claude Code in that repo and ask:
+
+> *"Build me a load test of the checkout flow."*
+
+Claude reads your code, writes `.crabfall/config.yaml` and the scenario, validates it and smoke-checks it against localhost. When it wants load, a window opens on your screen: you approve the exact plan there, watch it run, and Claude reads the findings and keeps working on the code. More in [With Claude Code](#with-claude-code).
+
+### By hand
+
+From a clone, `cargo install --path crates/crabfall-cli` also works. In the repo under test, create `.crabfall/config.yaml`:
 
 ```yaml
 version: 1
