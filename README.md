@@ -1,11 +1,61 @@
-# Crabfall
+# Crabfall 🦀
 
-A load testing tool in Rust, built to be used together with Claude Code:
-Claude designs the scenario and analyzes the results; a person approves and runs the load.
+**A load tester in Rust that an AI agent can drive, and a person keeps in check.**
+The agent designs the scenario and reads the results; a person approves the exact traffic before any load is sent.
 
-Status: **v0.2.0** (slices 0 to 25), working on v0.3: slices 26 (where a slow step's time goes), 27 (saturation with fixed VUs, by comparing runs) and 28 (turning diagnosis rules off and tuning margins) are done, and 29 (an MCP server) is in progress ([ADR-018](docs/adr/ADR-018-diagnosis-v03.md)); see [What's next](#whats-next). Already working: design with Claude, signed approval (HMAC-SHA256 with the key in the system keyring; see [Approval](#approval-no-load-without-a-person)), runs requested by the agent and confirmed by a person in a window ([`--ask`](#letting-the-agent-ask-for-a-run---ask)), scenarios with `setup`, `extract`, checks and thresholds, three executors, diagnosis, run comparison, datasets, pauses between steps, per-run tweaks by flag, an HTML report per run, login per virtual user (`vu_setup`), token renewal during the load (`vu_refresh`), file uploads (`multipart`), bytes sent and received per second, an HTTP client with cookies, redirects, compression and forms, and output in English or Spanish. See the [roadmap](docs/roadmap.md).
+[![CI](https://github.com/Scravt/crabfall/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Scravt/crabfall/actions/workflows/ci.yml)
+![version](https://img.shields.io/badge/version-0.2.0-orange)
+![Rust](https://img.shields.io/badge/Rust-stable-b7410e?logo=rust)
+![MCP](https://img.shields.io/badge/MCP-server-6e56cf)
+![license](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)
 
-## Usage
+<!-- TODO: hero GIF of the TUI during a run -> docs/images/tui-run.gif
+![Crabfall's terminal UI during a run](docs/images/tui-run.gif)
+-->
+
+## What you get
+
+- 🔍 **A diagnosis, not just numbers.** The breaking point, capacity exceeded, degradation over time, a long tail, saturation with fixed VUs (by comparing runs), and for a slow step, whether its time goes to the server, the download or getting a connection. Every finding comes with its numbers.
+- ⚖️ **Comparisons that tell a change from noise.** `crabfall compare` says what improved, what got worse and whether the difference is consistent, against the previous run or an accepted baseline.
+- 📺 **A live view while it runs.** The terminal UI shows the last second against the target rate, p95 and errors per second, per step, and warnings as they happen.
+- 📊 **An HTML report per run** that opens offline: per-second charts, findings with their window shaded, the comparison with the previous run.
+- 🤖 **Built for agents.** A Claude Code skill, `--json` everywhere and an MCP server for Claude Code, Cursor, VS Code and others.
+- 🔐 **No load without a person.** The agent can ask for a run, never approve one. Approvals sign the exact traffic, and any change asks again.
+
+## How it works
+
+```mermaid
+flowchart LR
+    A["🤖 Agent writes<br/>the scenario"] --> B["validate + check<br/>(loopback only)"]
+    B --> C{"👤 Person approves<br/>the exact plan"}
+    C -->|"signed (HMAC)"| D["⚡ Load runs<br/>live view"]
+    D --> E["🔍 findings + compare<br/>report.html"]
+    E -->|"agent changes the code"| A
+    C -->|"plan changed"| X["⛔ refused,<br/>with the diff"]
+
+    classDef agent fill:#ede9fe,stroke:#6e56cf,color:#1e1b4b
+    classDef human fill:#fef3c7,stroke:#d97706,color:#451a03
+    classDef run fill:#dcfce7,stroke:#16a34a,color:#052e16
+    classDef stop fill:#fee2e2,stroke:#dc2626,color:#450a0a
+    class A,B agent
+    class C human
+    class D,E run
+    class X stop
+```
+
+The guard lives in the `crabfall` binary, not in the agent's permissions: the agent can edit any file in the repo, so it can't be the one holding the key. See [Approval](#approval-no-load-without-a-person).
+
+> [!NOTE]
+> **Status:** v0.2.0 is released; v0.3 (an MCP server and deeper diagnosis) is in progress on `dev`. See [What's next](#whats-next) and the [roadmap](docs/roadmap.md).
+
+<details>
+<summary>Everything that already works</summary>
+
+Design with Claude, signed approval (HMAC-SHA256 with the key in the system keyring), runs requested by the agent and confirmed by a person in a window ([`--ask`](#letting-the-agent-ask-for-a-run---ask)), an MCP server, scenarios with `setup`, `extract`, checks and thresholds, three executors, diagnosis, run comparison and baselines, datasets, pauses between steps, per-run tweaks by flag, an HTML report per run, a terminal UI, login per virtual user (`vu_setup`), token renewal during the load (`vu_refresh`), file uploads (`multipart`), bytes sent and received per second, an HTTP client with cookies, redirects, compression and forms, and output in English or Spanish.
+
+</details>
+
+## Quick start
 
 ```bash
 cargo install --path crates/crabfall-cli    # installs `crabfall` in ~/.cargo/bin
@@ -79,7 +129,8 @@ What that stops:
 
 Updating Crabfall invalidates the approvals too, since the `user-agent` changes: the traffic is different. Approvals do not expire; they last until something changes.
 
-What it does **not** stop: someone acting deliberately with your user account. Any process running as you can read the keyring key, emulate a terminal, or send load without Crabfall (a `curl` loop). `approved_by` is a signed label, not an authentication. The guard prevents accidents and misuse of this tool; it does not replace trust in the agent or the security of the machine. Without a person or a keyring, approving in CI is not supported yet.
+> [!WARNING]
+> What it does **not** stop: someone acting deliberately with your user account. Any process running as you can read the keyring key, emulate a terminal, or send load without Crabfall (a `curl` loop). `approved_by` is a signed label, not an authentication. The guard prevents accidents and misuse of this tool; it does not replace trust in the agent or the security of the machine. Without a person or a keyring, approving in CI is not supported yet.
 
 ### Letting the agent ask for a run: `--ask`
 
@@ -97,11 +148,16 @@ The window opens on Windows (a new console) and on Linux with a desktop (`DISPLA
 
 Against a deliberately malicious agent this is no stronger than the rest: same-user processes can type into that window (`SendInput`), read the keyring key or send load without Crabfall. What would resist is keeping the agent away from the target and the key (Claude Code's sandbox with a network allowlist, a container or a VM), or making the target require a short-lived token issued off the agent's machine; ADR-017 compares the options.
 
-The only thing that needs no approval is `crabfall check`: each flow once, in series, at most 50 requests, and only to hosts that resolve to loopback, redirects included.
+> [!TIP]
+> The only thing that needs no approval is `crabfall check`: each flow once, in series, at most 50 requests, and only to hosts that resolve to loopback, redirects included.
 
 ### Terminal UI
 
 Run `crabfall` without a subcommand, in a terminal, to open the TUI ([ADR-015](docs/adr/ADR-015-tui.md)):
+
+<!-- TODO: screenshot of the live view -> docs/images/tui-live.png
+![The live view: last second against the target, p95 and errors per step](docs/images/tui-live.png)
+-->
 
 - **Pick** a scenario and the environment (`e`), with each scenario's approval state, its last run and its full description.
 - **Tweak** rate, duration, VUs, pauses, renewal and thresholds; the plan is rebuilt as you type, and it shows the equivalent `crabfall` command.
@@ -247,6 +303,10 @@ Then, in a Claude Code session: *"build me a load test of the checkout flow"*. C
 `crabfall findings [--json]` shows the findings of the last run (or of one by id): the breaking point, capacity exceeded, errors from a certain rate, degradation over time, a long tail, connections not reused, a bandwidth ceiling, and, for a slow step, whether its time goes to the server, to downloading the body or to getting a connection ([ADR-005](docs/adr/ADR-005-diagnosis.md), [ADR-018](docs/adr/ADR-018-diagnosis-v03.md)). `crabfall compare [base] [new] [--json]` compares two runs (by default, the last one with the previous one of the same scenario): what improved, what got worse and whether the change is consistent or may be noise ([ADR-006](docs/adr/ADR-006-comparison.md)). Two runs with fixed VUs that differ only in how many say whether the throughput followed the VUs or the server is saturated ([ADR-018](docs/adr/ADR-018-diagnosis-v03.md)). To compare against an accepted reference instead of the previous run, set a baseline with `crabfall baseline [run]` (it goes in `.crabfall/baselines/`; commit it to share it) and use `crabfall compare --baseline`. In the TUI history, `b` sets it. `crabfall schema` prints the JSON Schema of the scenario.
 
 Each `crabfall run` also leaves `report.html` next to `results.json`: a file that opens offline, with per-second charts (iterations, latency, p95 per step, traffic), the findings with their window shaded, the comparison with the previous run and the tables. `crabfall report [run] --open` regenerates it and opens it in the browser ([ADR-009](docs/adr/ADR-009-html-report.md)).
+
+<!-- TODO: screenshot of report.html with a finding shaded -> docs/images/report.png
+![report.html: per-second charts with a finding's window shaded](docs/images/report.png)
+-->
 
 Exit codes: `0` ok · `1` `check` with failed steps, thresholds not met, `setup` failed or `compare` with regressions · `2` invalid scenario or configuration · `3` refused (no valid approval, host not allowed, limits, no terminal, or nobody confirmed `--ask`) · `4` error saving or accessing the keyring.
 
