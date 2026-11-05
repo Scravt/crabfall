@@ -57,6 +57,8 @@ Design with Claude, signed approval (HMAC-SHA256 with the key in the system keyr
 
 ## Quick start
 
+**You need** Rust (stable), installed with [rustup](https://rustup.rs): it brings `cargo`. On Windows, rustup also asks for the Visual Studio C++ build tools. For the Claude path, [Claude Code](https://claude.com/claude-code), or another MCP client.
+
 ### With Claude Code: no YAML by hand
 
 ```bash
